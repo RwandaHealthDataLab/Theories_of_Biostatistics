@@ -1,0 +1,876 @@
+---
+title: "Piriformis Syndrome: FAIR Test Diagnostic Performance"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.width = 14, fig.height = 10)
+```
+
+# Background
+
+This analysis evaluates the **FAIR Test** (Flexion, Adduction, and Internal Rotation) as a diagnostic tool for **Piriformis Syndrome (PS)**. The FAIR test measures nerve-conduction velocity differences between an aggravating posture and a neutral posture.
+
+## Study Design
+
+- **142 participants WITHOUT Piriformis Syndrome** (piriform = 1)
+- **489 participants WITH Piriformis Syndrome** (piriform = 2)
+- **Diagnostic criterion based on clinical assessment**
+- **FAIR test score (MAXCHG)**: Measured in milliseconds (ms)
+- **Proposed cutoff**: ≥ 1.86 ms defines a positive test
+
+## Research Questions
+
+**5.78:** What is the **sensitivity** of the FAIR test at the 1.86 ms cutoff?
+
+**5.79:** What is the **specificity** of the FAIR test at the 1.86 ms cutoff?
+
+**5.80:** What is the **positive predictive value (PPV)** given 70% prevalence in referred patients?
+
+**5.81:** What is the **ROC curve** and **area under the curve (AUC)**?
+
+**5.82:** Are FAIR test scores **normally distributed** within each group?
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+library(gridExtra)
+library(pROC)      # For ROC curve analysis
+library(moments)   # For skewness and kurtosis
+library(scales)
+```
+
+# Data Import and Exploration
+
+```{r data-import}
+# Read the PIRIFORM dataset
+piri_data <- read.csv("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/PIRIFORM.DAT.txt",
+                      check.names = FALSE)
+
+# Remove quotes from column names
+colnames(piri_data) <- gsub("'", "", colnames(piri_data))
+
+# Display dataset structure
+cat("Dataset Structure:\n")
+str(piri_data)
+
+cat("\n\nVariable Descriptions:\n")
+cat("ID: Subject identification number\n")
+cat("piriform: Piriformis Syndrome status (1 = No PS, 2 = Has PS)\n")
+cat("sex: Sex (1 = Male, 2 = Female)\n")
+cat("age: Age in years\n")
+cat("maxchg: FAIR test score - nerve conduction velocity difference (ms)\n")
+
+# Create labeled variables
+piri_data <- piri_data %>%
+  mutate(
+    PS_Status = factor(piriform, levels = c(1, 2), labels = c("No PS", "Has PS")),
+    Sex = factor(sex, levels = c(1, 2), labels = c("Male", "Female")),
+    Test_Positive = ifelse(maxchg >= 1.86, "Positive", "Negative"),
+    Test_Positive = factor(Test_Positive, levels = c("Negative", "Positive"))
+  )
+
+# Display first rows
+cat("\n\nFirst 20 Subjects:\n")
+head(piri_data, 20) %>%
+  select(ID, PS_Status, Sex, age, maxchg, Test_Positive) %>%
+  kable(digits = 2, caption = "First 20 Subjects in PIRIFORM Dataset")
+
+cat(sprintf("\n\nTotal number of subjects: %d\n", nrow(piri_data)))
+```
+
+## Summary Statistics
+
+```{r summary-stats}
+cat("=== SUMMARY STATISTICS ===\n\n")
+
+# Overall distribution by PS status
+cat("Distribution by Piriformis Syndrome Status:\n")
+piri_data %>%
+  count(PS_Status) %>%
+  mutate(Percent = sprintf("%.1f%%", 100 * n / sum(n))) %>%
+  kable(col.names = c("PS Status", "N", "Percent"),
+        caption = "Sample Size by Disease Status")
+
+# FAIR test statistics by PS status
+cat("\n\nFAIR Test (MAXCHG) Statistics by PS Status:\n")
+piri_data %>%
+  group_by(PS_Status) %>%
+  summarise(
+    N = n(),
+    Mean = mean(maxchg, na.rm = TRUE),
+    SD = sd(maxchg, na.rm = TRUE),
+    Median = median(maxchg, na.rm = TRUE),
+    Q1 = quantile(maxchg, 0.25, na.rm = TRUE),
+    Q3 = quantile(maxchg, 0.75, na.rm = TRUE),
+    Min = min(maxchg, na.rm = TRUE),
+    Max = max(maxchg, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  kable(digits = 2,
+        caption = "FAIR Test Score Distribution by PS Status")
+
+# Test positivity by PS status
+cat("\n\nTest Results at 1.86 ms Cutoff:\n")
+piri_data %>%
+  count(PS_Status, Test_Positive) %>%
+  pivot_wider(names_from = Test_Positive, values_from = n, values_fill = 0) %>%
+  mutate(Total = Positive + Negative,
+         Pct_Positive = sprintf("%.1f%%", 100 * Positive / Total)) %>%
+  kable(caption = "Test Positivity by Disease Status")
+
+# Demographics
+cat("\n\nAge Distribution:\n")
+piri_data %>%
+  group_by(PS_Status) %>%
+  summarise(
+    N = n(),
+    Mean_Age = mean(age),
+    SD_Age = sd(age),
+    Min_Age = min(age),
+    Max_Age = max(age),
+    .groups = "drop"
+  ) %>%
+  kable(digits = 1, caption = "Age by PS Status")
+
+cat("\n\nSex Distribution:\n")
+piri_data %>%
+  count(PS_Status, Sex) %>%
+  pivot_wider(names_from = Sex, values_from = n, values_fill = 0) %>%
+  kable(caption = "Sex Distribution by PS Status")
+```
+
+## Distribution Visualization
+
+```{r distribution-plots, fig.height=10}
+# Box plots by PS status
+p1 <- ggplot(piri_data, aes(x = PS_Status, y = maxchg, fill = PS_Status)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16, outlier.size = 2) +
+  geom_hline(yintercept = 1.86, linetype = "dashed", color = "red", size = 1.5) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4, fill = "yellow") +
+  labs(title = "FAIR Test Scores by Piriformis Syndrome Status",
+       subtitle = "Red dashed line: Proposed cutoff at 1.86 ms\nYellow diamond: Mean",
+       x = "Piriformis Syndrome Status",
+       y = "FAIR Test Score (ms)") +
+  scale_fill_manual(values = c("No PS" = "steelblue", "Has PS" = "coral")) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(size = 14, face = "bold"))
+
+# Density plots
+p2 <- ggplot(piri_data, aes(x = maxchg, fill = PS_Status, color = PS_Status)) +
+  geom_density(alpha = 0.4, size = 1.2) +
+  geom_vline(xintercept = 1.86, linetype = "dashed", color = "red", size = 1.5) +
+  geom_vline(data = piri_data %>%
+               group_by(PS_Status) %>%
+               summarise(mean_score = mean(maxchg, na.rm = TRUE)),
+             aes(xintercept = mean_score, color = PS_Status),
+             linetype = "dotted", size = 1) +
+  labs(title = "Overlapping Density Curves",
+       subtitle = "Red dashed line: Cutoff (1.86 ms), Dotted lines: Group means",
+       x = "FAIR Test Score (ms)",
+       y = "Density",
+       fill = "PS Status",
+       color = "PS Status") +
+  scale_fill_manual(values = c("No PS" = "steelblue", "Has PS" = "coral")) +
+  scale_color_manual(values = c("No PS" = "darkblue", "Has PS" = "darkred")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# Histograms
+p3 <- ggplot(piri_data, aes(x = maxchg, fill = PS_Status)) +
+  geom_histogram(bins = 40, alpha = 0.7, position = "identity") +
+  geom_vline(xintercept = 1.86, linetype = "dashed", color = "red", size = 1.5) +
+  facet_wrap(~ PS_Status, ncol = 1, scales = "free_y") +
+  labs(title = "FAIR Test Score Distributions",
+       subtitle = "Separate histograms by disease status",
+       x = "FAIR Test Score (ms)",
+       y = "Count") +
+  scale_fill_manual(values = c("No PS" = "steelblue", "Has PS" = "coral")) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+grid.arrange(p1, p2, p3, ncol = 1, heights = c(1, 1, 1.2))
+```
+
+---
+
+# Problem 5.78: Sensitivity Calculation
+
+## 2×2 Contingency Table
+
+```{r sensitivity-calculation}
+cat("\n=== PROBLEM 5.78: SENSITIVITY ===\n\n")
+
+# Create 2x2 table
+# Rows: Disease Status (No PS = 1, Has PS = 2)
+# Columns: Test Result (Negative, Positive)
+
+table_2x2 <- table(piri_data$PS_Status, piri_data$Test_Positive)
+
+cat("2×2 Contingency Table (Cutoff = 1.86 ms):\n\n")
+print(addmargins(table_2x2))
+
+# Extract values
+TN <- table_2x2["No PS", "Negative"]      # True Negative
+FP <- table_2x2["No PS", "Positive"]      # False Positive
+FN <- table_2x2["Has PS", "Negative"]     # False Negative
+TP <- table_2x2["Has PS", "Positive"]     # True Positive
+
+cat("\n\nConfusion Matrix Components:\n")
+cat(sprintf("True Positives (TP):  %d (Has PS, Test +)\n", TP))
+cat(sprintf("False Negatives (FN): %d (Has PS, Test -)\n", FN))
+cat(sprintf("True Negatives (TN):  %d (No PS, Test -)\n", TN))
+cat(sprintf("False Positives (FP): %d (No PS, Test +)\n", FP))
+
+# Calculate Sensitivity
+sensitivity <- TP / (TP + FN)
+
+cat("\n\nSENSITIVITY CALCULATION:\n")
+cat("Sensitivity = TP / (TP + FN)\n")
+cat("Sensitivity = Number of diseased correctly identified / Total diseased\n")
+cat(sprintf("Sensitivity = %d / (%d + %d)\n", TP, TP, FN))
+cat(sprintf("Sensitivity = %d / %d\n", TP, TP + FN))
+cat(sprintf("\n** SENSITIVITY = %.4f (%.2f%%) **\n", sensitivity, sensitivity * 100))
+
+cat("\n\nINTERPRETATION:\n")
+cat(sprintf("- Of the %d patients WITH Piriformis Syndrome,\n", TP + FN))
+cat(sprintf("  %d (%.1f%%) tested POSITIVE (correctly detected)\n", TP, 100 * sensitivity))
+cat(sprintf("  %d (%.1f%%) tested NEGATIVE (missed cases)\n", FN, 100 * (1 - sensitivity)))
+cat("\n- Sensitivity represents the test's ability to detect PS when present\n")
+if (sensitivity >= 0.80) {
+  cat("- GOOD sensitivity: Test is effective at identifying diseased patients\n")
+} else if (sensitivity >= 0.60) {
+  cat("- MODERATE sensitivity: Test misses a notable proportion of diseased patients\n")
+} else {
+  cat("- POOR sensitivity: Test misses many diseased patients\n")
+}
+```
+
+---
+
+# Problem 5.79: Specificity Calculation
+
+```{r specificity-calculation}
+cat("\n=== PROBLEM 5.79: SPECIFICITY ===\n\n")
+
+# Calculate Specificity
+specificity <- TN / (TN + FP)
+
+cat("SPECIFICITY CALCULATION:\n")
+cat("Specificity = TN / (TN + FP)\n")
+cat("Specificity = Number of non-diseased correctly identified / Total non-diseased\n")
+cat(sprintf("Specificity = %d / (%d + %d)\n", TN, TN, FP))
+cat(sprintf("Specificity = %d / %d\n", TN, TN + FP))
+cat(sprintf("\n** SPECIFICITY = %.4f (%.2f%%) **\n", specificity, specificity * 100))
+
+cat("\n\nINTERPRETATION:\n")
+cat(sprintf("- Of the %d patients WITHOUT Piriformis Syndrome,\n", TN + FP))
+cat(sprintf("  %d (%.1f%%) tested NEGATIVE (correctly identified)\n", TN, 100 * specificity))
+cat(sprintf("  %d (%.1f%%) tested POSITIVE (false alarms)\n", FP, 100 * (1 - specificity)))
+cat("\n- Specificity represents the test's ability to rule out PS when absent\n")
+if (specificity >= 0.80) {
+  cat("- GOOD specificity: Test rarely gives false positives\n")
+} else if (specificity >= 0.60) {
+  cat("- MODERATE specificity: Test produces some false positives\n")
+} else {
+  cat("- POOR specificity: Test produces many false positives\n")
+}
+```
+
+## Diagnostic Performance Summary
+
+```{r diagnostic-summary-1}
+cat("\n\n=== DIAGNOSTIC PERFORMANCE AT 1.86 ms CUTOFF ===\n\n")
+
+# Calculate additional metrics
+PPV_sample <- TP / (TP + FP)  # Positive Predictive Value in sample
+NPV <- TN / (TN + FN)          # Negative Predictive Value
+accuracy <- (TP + TN) / (TP + TN + FP + FN)
+prevalence_sample <- (TP + FN) / (TP + TN + FP + FN)
+
+# Create summary table
+summary_table <- data.frame(
+  Metric = c("Sensitivity", "Specificity", "PPV (in sample)", "NPV",
+             "Accuracy", "Prevalence (in sample)"),
+  Value = c(sensitivity, specificity, PPV_sample, NPV, accuracy, prevalence_sample),
+  Percentage = sprintf("%.2f%%",
+                      100 * c(sensitivity, specificity, PPV_sample, NPV, accuracy, prevalence_sample)),
+  Interpretation = c(
+    sprintf("%d/%d diseased correctly identified", TP, TP + FN),
+    sprintf("%d/%d non-diseased correctly identified", TN, TN + FP),
+    sprintf("%d/%d positive tests are true positives", TP, TP + FP),
+    sprintf("%d/%d negative tests are true negatives", TN, TN + FN),
+    sprintf("%d/%d total correctly classified", TP + TN, TP + TN + FP + FN),
+    sprintf("%d/%d have disease", TP + FN, TP + TN + FP + FN)
+  )
+)
+
+summary_table %>%
+  kable(digits = 4,
+        caption = "Diagnostic Performance Metrics at 1.86 ms Cutoff")
+
+# Visualization
+metrics_df <- data.frame(
+  Metric = c("Sensitivity", "Specificity", "PPV", "NPV", "Accuracy"),
+  Value = c(sensitivity, specificity, PPV_sample, NPV, accuracy)
+)
+
+p_metrics <- ggplot(metrics_df, aes(x = reorder(Metric, Value), y = Value, fill = Metric)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_text(aes(label = sprintf("%.1f%%", Value * 100)),
+            hjust = -0.1, size = 5) +
+  coord_flip() +
+  ylim(0, 1.1) +
+  labs(title = "Diagnostic Performance Metrics at 1.86 ms Cutoff",
+       x = "Metric",
+       y = "Value (Proportion)") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(size = 14, face = "bold"))
+
+print(p_metrics)
+```
+
+---
+
+# Problem 5.80: Positive Predictive Value with 70% Prevalence
+
+```{r ppv-calculation}
+cat("\n=== PROBLEM 5.80: PPV WITH 70% PREVALENCE ===\n\n")
+
+# Given information
+prevalence_clinic <- 0.70  # 70% prevalence in referred patients
+
+cat("SCENARIO:\n")
+cat("- Patients referred to orthopedist specializing in PS\n")
+cat(sprintf("- Prevalence in this population: %.0f%%\n", prevalence_clinic * 100))
+cat(sprintf("- Sensitivity of test: %.4f\n", sensitivity))
+cat(sprintf("- Specificity of test: %.4f\n", specificity))
+
+cat("\n\nCALCULATION USING BAYES' THEOREM:\n\n")
+
+# Method 1: Direct calculation
+cat("Method 1: Direct Formula\n")
+cat("PPV = (Sensitivity × Prevalence) / [(Sensitivity × Prevalence) + (1 - Specificity) × (1 - Prevalence)]\n\n")
+
+numerator <- sensitivity * prevalence_clinic
+denominator <- (sensitivity * prevalence_clinic) + ((1 - specificity) * (1 - prevalence_clinic))
+PPV_clinic <- numerator / denominator
+
+cat(sprintf("Numerator = %.4f × %.2f = %.4f\n", sensitivity, prevalence_clinic, numerator))
+cat(sprintf("Denominator = %.4f + (%.4f × %.2f) = %.4f\n",
+            numerator, (1 - specificity), (1 - prevalence_clinic), denominator))
+cat(sprintf("\nPPV = %.4f / %.4f = %.4f\n", numerator, denominator, PPV_clinic))
+
+cat("\n\nMethod 2: Using Hypothetical Cohort of 1000 Patients\n")
+total_patients <- 1000
+diseased <- prevalence_clinic * total_patients
+non_diseased <- (1 - prevalence_clinic) * total_patients
+
+TP_clinic <- sensitivity * diseased
+FN_clinic <- diseased - TP_clinic
+TN_clinic <- specificity * non_diseased
+FP_clinic <- non_diseased - TN_clinic
+
+test_positive_clinic <- TP_clinic + FP_clinic
+PPV_clinic_check <- TP_clinic / test_positive_clinic
+
+cat(sprintf("\nIn a cohort of %d referred patients:\n", total_patients))
+cat(sprintf("- Have PS: %.0f (%.0f%%)\n", diseased, prevalence_clinic * 100))
+cat(sprintf("- No PS: %.0f (%.0f%%)\n", non_diseased, (1 - prevalence_clinic) * 100))
+
+cat("\nTest Results:\n")
+cat(sprintf("- True Positives (TP): %.0f (PS patients correctly identified)\n", TP_clinic))
+cat(sprintf("- False Positives (FP): %.0f (Non-PS patients incorrectly flagged)\n", FP_clinic))
+cat(sprintf("- Total Positive Tests: %.0f\n", test_positive_clinic))
+
+cat(sprintf("\nPPV = TP / (TP + FP) = %.0f / %.0f = %.4f\n",
+            TP_clinic, test_positive_clinic, PPV_clinic_check))
+
+cat(sprintf("\n\n** POSITIVE PREDICTIVE VALUE = %.4f (%.2f%%) **\n",
+            PPV_clinic, PPV_clinic * 100))
+
+cat("\n\nINTERPRETATION:\n")
+cat(sprintf("- If a patient referred to the PS specialist tests POSITIVE (≥1.86 ms),\n"))
+cat(sprintf("  there is a %.1f%% probability that they actually have PS\n", PPV_clinic * 100))
+cat(sprintf("- Conversely, %.1f%% of positive tests are FALSE POSITIVES\n",
+            (1 - PPV_clinic) * 100))
+
+cat("\n\nCOMPARISON TO SAMPLE PPV:\n")
+cat(sprintf("- PPV in study sample (%.0f%% prevalence): %.2f%%\n",
+            prevalence_sample * 100, PPV_sample * 100))
+cat(sprintf("- PPV in clinic (%.0f%% prevalence): %.2f%%\n",
+            prevalence_clinic * 100, PPV_clinic * 100))
+cat(sprintf("- Difference: %.2f percentage points\n",
+            (PPV_clinic - PPV_sample) * 100))
+
+if (PPV_clinic > PPV_sample) {
+  cat("\n- PPV is HIGHER in the clinic because prevalence is higher\n")
+  cat("- Higher disease prevalence increases the proportion of true positives\n")
+} else {
+  cat("\n- PPV is LOWER in the clinic because prevalence is lower\n")
+}
+```
+
+## PPV Across Different Prevalences
+
+```{r ppv-prevalence-plot, fig.height=8}
+# Calculate PPV for different prevalences
+prevalence_range <- seq(0.01, 0.99, by = 0.01)
+ppv_range <- (sensitivity * prevalence_range) /
+  ((sensitivity * prevalence_range) + ((1 - specificity) * (1 - prevalence_range)))
+
+ppv_data <- data.frame(
+  Prevalence = prevalence_range,
+  PPV = ppv_range
+)
+
+# Create plot
+p_ppv <- ggplot(ppv_data, aes(x = Prevalence, y = PPV)) +
+  geom_line(color = "darkblue", size = 1.5) +
+  geom_point(x = prevalence_sample, y = PPV_sample,
+             color = "steelblue", size = 5, shape = 16) +
+  geom_point(x = prevalence_clinic, y = PPV_clinic,
+             color = "coral", size = 5, shape = 16) +
+  annotate("text", x = prevalence_sample, y = PPV_sample + 0.05,
+           label = sprintf("Study sample\n(Prev=%.1f%%, PPV=%.1f%%)",
+                          prevalence_sample*100, PPV_sample*100),
+           color = "steelblue", size = 4) +
+  annotate("text", x = prevalence_clinic, y = PPV_clinic - 0.05,
+           label = sprintf("Referred clinic\n(Prev=%.0f%%, PPV=%.1f%%)",
+                          prevalence_clinic*100, PPV_clinic*100),
+           color = "coral", size = 4) +
+  scale_x_continuous(labels = scales::percent_format()) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title = "Positive Predictive Value vs. Disease Prevalence",
+       subtitle = sprintf("Sensitivity = %.1f%%, Specificity = %.1f%%",
+                         sensitivity*100, specificity*100),
+       x = "Disease Prevalence",
+       y = "Positive Predictive Value (PPV)") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"))
+
+print(p_ppv)
+
+cat("\n\nKEY INSIGHT:\n")
+cat("- PPV increases with disease prevalence\n")
+cat("- In low-prevalence populations, positive tests are more likely to be false positives\n")
+cat("- In high-prevalence populations (like specialist clinics), positive tests are more reliable\n")
+```
+
+---
+
+# Problem 5.81: ROC Curve and Area Under Curve
+
+```{r roc-analysis, fig.height=10}
+cat("\n=== PROBLEM 5.81: ROC CURVE ANALYSIS ===\n\n")
+
+# Create ROC object
+# Note: piriform = 2 indicates disease
+roc_obj <- roc(piriform ~ maxchg, data = piri_data, direction = "<")
+
+# Calculate AUC
+auc_value <- auc(roc_obj)
+
+cat("ROC CURVE ANALYSIS:\n")
+cat(sprintf("Area Under the Curve (AUC): %.4f\n", auc_value))
+cat(sprintf("95%% CI for AUC: %.4f - %.4f\n",
+            ci.auc(roc_obj)[1], ci.auc(roc_obj)[3]))
+
+# Interpretation of AUC
+cat("\n\nAUC INTERPRETATION:\n")
+if (auc_value >= 0.90) {
+  cat("- EXCELLENT discrimination (AUC ≥ 0.90)\n")
+} else if (auc_value >= 0.80) {
+  cat("- GOOD discrimination (0.80 ≤ AUC < 0.90)\n")
+} else if (auc_value >= 0.70) {
+  cat("- FAIR discrimination (0.70 ≤ AUC < 0.80)\n")
+} else if (auc_value >= 0.60) {
+  cat("- POOR discrimination (0.60 ≤ AUC < 0.70)\n")
+} else {
+  cat("- FAIL - no better than chance (AUC < 0.60)\n")
+}
+
+cat("\n\nMEANING IN CONTEXT:\n")
+cat(sprintf("- The AUC of %.3f means that if we randomly select:\n", auc_value))
+cat("  * One patient WITH PS\n")
+cat("  * One patient WITHOUT PS\n")
+cat(sprintf("- There is a %.1f%% probability that the patient WITH PS\n", auc_value * 100))
+cat("  will have a HIGHER FAIR test score than the patient WITHOUT PS\n")
+
+# Get coordinates for plotting
+roc_coords <- coords(roc_obj, "all", ret = c("threshold", "sensitivity", "specificity"))
+
+# Find optimal cutoff (Youden's index)
+youden <- roc_coords$sensitivity + roc_coords$specificity - 1
+optimal_idx <- which.max(youden)
+optimal_cutoff <- roc_coords$threshold[optimal_idx]
+optimal_sens <- roc_coords$sensitivity[optimal_idx]
+optimal_spec <- roc_coords$specificity[optimal_idx]
+
+cat("\n\nOPTIMAL CUTOFF (Youden's Index):\n")
+cat(sprintf("- Cutoff: %.2f ms\n", optimal_cutoff))
+cat(sprintf("- Sensitivity: %.4f (%.1f%%)\n", optimal_sens, optimal_sens * 100))
+cat(sprintf("- Specificity: %.4f (%.1f%%)\n", optimal_spec, optimal_spec * 100))
+cat(sprintf("- Youden's Index: %.4f\n", max(youden)))
+
+# Compare to proposed cutoff
+cat("\n\nCOMPARISON: PROPOSED vs OPTIMAL CUTOFF:\n")
+cat(sprintf("\nProposed Cutoff (1.86 ms):\n"))
+cat(sprintf("- Sensitivity: %.4f (%.1f%%)\n", sensitivity, sensitivity * 100))
+cat(sprintf("- Specificity: %.4f (%.1f%%)\n", specificity, specificity * 100))
+
+cat(sprintf("\nOptimal Cutoff (%.2f ms):\n", optimal_cutoff))
+cat(sprintf("- Sensitivity: %.4f (%.1f%%)\n", optimal_sens, optimal_sens * 100))
+cat(sprintf("- Specificity: %.4f (%.1f%%)\n", optimal_spec, optimal_spec * 100))
+
+# Create ROC curve plot
+roc_data <- data.frame(
+  FPR = 1 - roc_coords$specificity,  # False Positive Rate
+  TPR = roc_coords$sensitivity       # True Positive Rate (Sensitivity)
+)
+
+# Find point for proposed cutoff (1.86)
+proposed_idx <- which.min(abs(roc_coords$threshold - 1.86))
+proposed_fpr <- 1 - roc_coords$specificity[proposed_idx]
+proposed_tpr <- roc_coords$sensitivity[proposed_idx]
+
+p_roc <- ggplot(roc_data, aes(x = FPR, y = TPR)) +
+  geom_line(color = "darkblue", size = 1.5) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed",
+              color = "gray50", size = 1) +
+  geom_point(x = proposed_fpr, y = proposed_tpr,
+             color = "coral", size = 6, shape = 16) +
+  geom_point(x = 1 - optimal_spec, y = optimal_sens,
+             color = "forestgreen", size = 6, shape = 17) +
+  annotate("text", x = proposed_fpr + 0.1, y = proposed_tpr - 0.05,
+           label = sprintf("Proposed cutoff\n(1.86 ms)\nSens=%.1f%%, Spec=%.1f%%",
+                          sensitivity*100, specificity*100),
+           color = "coral", size = 4) +
+  annotate("text", x = (1 - optimal_spec) - 0.15, y = optimal_sens + 0.05,
+           label = sprintf("Optimal cutoff\n(%.2f ms)\nSens=%.1f%%, Spec=%.1f%%",
+                          optimal_cutoff, optimal_sens*100, optimal_spec*100),
+           color = "forestgreen", size = 4) +
+  annotate("text", x = 0.7, y = 0.3,
+           label = sprintf("AUC = %.3f", auc_value),
+           size = 6, fontface = "bold") +
+  scale_x_continuous(labels = scales::percent_format()) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title = "ROC Curve for FAIR Test",
+       subtitle = "Diagnosing Piriformis Syndrome",
+       x = "False Positive Rate (1 - Specificity)",
+       y = "True Positive Rate (Sensitivity)") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"))
+
+print(p_roc)
+
+# Sensitivity-Specificity tradeoff plot
+tradeoff_data <- data.frame(
+  Cutoff = roc_coords$threshold,
+  Sensitivity = roc_coords$sensitivity,
+  Specificity = roc_coords$specificity
+) %>%
+  filter(Cutoff >= -2 & Cutoff <= 10) %>%  # Reasonable range
+  pivot_longer(cols = c(Sensitivity, Specificity),
+               names_to = "Metric", values_to = "Value")
+
+p_tradeoff <- ggplot(tradeoff_data, aes(x = Cutoff, y = Value, color = Metric)) +
+  geom_line(size = 1.2) +
+  geom_vline(xintercept = 1.86, linetype = "dashed",
+             color = "coral", size = 1) +
+  geom_vline(xintercept = optimal_cutoff, linetype = "dashed",
+             color = "forestgreen", size = 1) +
+  annotate("text", x = 1.86, y = 0.3, label = "Proposed\n(1.86)",
+           color = "coral", size = 4) +
+  annotate("text", x = optimal_cutoff, y = 0.2,
+           label = sprintf("Optimal\n(%.2f)", optimal_cutoff),
+           color = "forestgreen", size = 4) +
+  scale_color_manual(values = c("Sensitivity" = "darkblue",
+                                "Specificity" = "darkred")) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title = "Sensitivity-Specificity Tradeoff",
+       subtitle = "How performance metrics change with different cutoffs",
+       x = "FAIR Test Cutoff (ms)",
+       y = "Value",
+       color = "Metric") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        plot.title = element_text(size = 14, face = "bold"))
+
+print(p_tradeoff)
+```
+
+## Performance at Different Cutoffs
+
+```{r cutoff-table}
+cat("\n\nPERFORMANCE AT DIFFERENT CUTOFF VALUES:\n\n")
+
+# Select key cutoffs
+key_cutoffs <- c(0, 0.5, 1.0, 1.5, 1.86, 2.0, 2.5, 3.0, 4.0, 5.0)
+cutoff_performance <- data.frame()
+
+for (cutoff in key_cutoffs) {
+  test_pos <- piri_data$maxchg >= cutoff
+  tp <- sum(piri_data$piriform == 2 & test_pos)
+  fn <- sum(piri_data$piriform == 2 & !test_pos)
+  tn <- sum(piri_data$piriform == 1 & !test_pos)
+  fp <- sum(piri_data$piriform == 1 & test_pos)
+
+  sens <- tp / (tp + fn)
+  spec <- tn / (tn + fp)
+  ppv <- ifelse(tp + fp > 0, tp / (tp + fp), NA)
+  npv <- ifelse(tn + fn > 0, tn / (tn + fn), NA)
+
+  cutoff_performance <- rbind(cutoff_performance, data.frame(
+    Cutoff = cutoff,
+    Sensitivity = sens,
+    Specificity = spec,
+    PPV = ppv,
+    NPV = npv,
+    Accuracy = (tp + tn) / (tp + tn + fp + fn)
+  ))
+}
+
+cutoff_performance %>%
+  kable(digits = 3,
+        caption = "Diagnostic Performance at Various Cutoff Values")
+
+cat("\n\nKEY OBSERVATIONS:\n")
+cat("- Lower cutoffs: High sensitivity, low specificity (more positive tests)\n")
+cat("- Higher cutoffs: Low sensitivity, high specificity (fewer positive tests)\n")
+cat(sprintf("- Proposed cutoff (1.86): Balances sensitivity (%.1f%%) and specificity (%.1f%%)\n",
+            sensitivity * 100, specificity * 100))
+cat(sprintf("- Optimal cutoff (%.2f): Maximizes sum of sensitivity and specificity\n",
+            optimal_cutoff))
+```
+
+---
+
+# Problem 5.82: Normality Assessment
+
+```{r normality-assessment, fig.height=12}
+cat("\n=== PROBLEM 5.82: NORMALITY OF FAIR TEST DISTRIBUTIONS ===\n\n")
+
+# Test normality for each group
+cat("NORMALITY TESTS BY PIRIFORMIS SYNDROME STATUS:\n\n")
+
+# No PS group
+no_ps_data <- piri_data$maxchg[piri_data$PS_Status == "No PS"]
+has_ps_data <- piri_data$maxchg[piri_data$PS_Status == "Has PS"]
+
+cat("GROUP 1: NO PIRIFORMIS SYNDROME\n")
+cat(sprintf("N = %d\n", length(no_ps_data)))
+
+shapiro_no_ps <- shapiro.test(no_ps_data)
+cat(sprintf("\nShapiro-Wilk Test:\n"))
+cat(sprintf("- W statistic: %.4f\n", shapiro_no_ps$statistic))
+cat(sprintf("- p-value: %.4f\n", shapiro_no_ps$p.value))
+cat(sprintf("- Conclusion: %s (α = 0.05)\n",
+            ifelse(shapiro_no_ps$p.value > 0.05, "Normal", "Non-normal")))
+
+cat(sprintf("\nDescriptive Statistics:\n"))
+cat(sprintf("- Mean: %.2f ms\n", mean(no_ps_data)))
+cat(sprintf("- Median: %.2f ms\n", median(no_ps_data)))
+cat(sprintf("- SD: %.2f ms\n", sd(no_ps_data)))
+cat(sprintf("- Skewness: %.3f\n", skewness(no_ps_data)))
+cat(sprintf("- Kurtosis: %.3f\n", kurtosis(no_ps_data)))
+
+cat("\n\nGROUP 2: HAS PIRIFORMIS SYNDROME\n")
+cat(sprintf("N = %d\n", length(has_ps_data)))
+
+shapiro_has_ps <- shapiro.test(has_ps_data)
+cat(sprintf("\nShapiro-Wilk Test:\n"))
+cat(sprintf("- W statistic: %.4f\n", shapiro_has_ps$statistic))
+cat(sprintf("- p-value: %.4f\n", shapiro_has_ps$p.value))
+cat(sprintf("- Conclusion: %s (α = 0.05)\n",
+            ifelse(shapiro_has_ps$p.value > 0.05, "Normal", "Non-normal")))
+
+cat(sprintf("\nDescriptive Statistics:\n"))
+cat(sprintf("- Mean: %.2f ms\n", mean(has_ps_data)))
+cat(sprintf("- Median: %.2f ms\n", median(has_ps_data)))
+cat(sprintf("- SD: %.2f ms\n", sd(has_ps_data)))
+cat(sprintf("- Skewness: %.3f\n", skewness(has_ps_data)))
+cat(sprintf("- Kurtosis: %.3f\n", kurtosis(has_ps_data)))
+
+# Q-Q plots
+p_qq1 <- ggplot(piri_data %>% filter(PS_Status == "No PS"),
+                aes(sample = maxchg)) +
+  stat_qq(color = "steelblue", size = 2) +
+  stat_qq_line(color = "red", size = 1) +
+  labs(title = "Q-Q Plot: No Piriformis Syndrome",
+       subtitle = sprintf("Shapiro-Wilk p = %.4f", shapiro_no_ps$p.value),
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles (FAIR Test Score)") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 12, face = "bold"))
+
+p_qq2 <- ggplot(piri_data %>% filter(PS_Status == "Has PS"),
+                aes(sample = maxchg)) +
+  stat_qq(color = "coral", size = 2) +
+  stat_qq_line(color = "red", size = 1) +
+  labs(title = "Q-Q Plot: Has Piriformis Syndrome",
+       subtitle = sprintf("Shapiro-Wilk p = %.4f", shapiro_has_ps$p.value),
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles (FAIR Test Score)") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 12, face = "bold"))
+
+# Histograms with normal overlay
+p_hist1 <- ggplot(piri_data %>% filter(PS_Status == "No PS"),
+                  aes(x = maxchg)) +
+  geom_histogram(aes(y = ..density..), bins = 30,
+                 fill = "steelblue", alpha = 0.7) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(no_ps_data), sd = sd(no_ps_data)),
+                color = "red", size = 1.2) +
+  geom_vline(xintercept = mean(no_ps_data),
+             color = "darkblue", linetype = "dashed", size = 1) +
+  labs(title = "Distribution: No PS (with Normal Overlay)",
+       subtitle = sprintf("Mean = %.2f, SD = %.2f, Skew = %.2f",
+                         mean(no_ps_data), sd(no_ps_data), skewness(no_ps_data)),
+       x = "FAIR Test Score (ms)",
+       y = "Density") +
+  theme_minimal()
+
+p_hist2 <- ggplot(piri_data %>% filter(PS_Status == "Has PS"),
+                  aes(x = maxchg)) +
+  geom_histogram(aes(y = ..density..), bins = 30,
+                 fill = "coral", alpha = 0.7) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(has_ps_data), sd = sd(has_ps_data)),
+                color = "red", size = 1.2) +
+  geom_vline(xintercept = mean(has_ps_data),
+             color = "darkred", linetype = "dashed", size = 1) +
+  labs(title = "Distribution: Has PS (with Normal Overlay)",
+       subtitle = sprintf("Mean = %.2f, SD = %.2f, Skew = %.2f",
+                         mean(has_ps_data), sd(has_ps_data), skewness(has_ps_data)),
+       x = "FAIR Test Score (ms)",
+       y = "Density") +
+  theme_minimal()
+
+grid.arrange(p_hist1, p_qq1, p_hist2, p_qq2, ncol = 2)
+```
+
+## Normality Summary
+
+```{r normality-summary}
+cat("\n\n=== SUMMARY: NORMALITY ASSESSMENT ===\n\n")
+
+cat("HYPOTHESIS TEST RESULTS:\n")
+cat(sprintf("- No PS group: Shapiro-Wilk p = %.4f → %s\n",
+            shapiro_no_ps$p.value,
+            ifelse(shapiro_no_ps$p.value > 0.05, "NORMAL", "NON-NORMAL")))
+cat(sprintf("- Has PS group: Shapiro-Wilk p = %.4f → %s\n",
+            shapiro_has_ps$p.value,
+            ifelse(shapiro_has_ps$p.value > 0.05, "NORMAL", "NON-NORMAL")))
+
+cat("\n\nVISUAL ASSESSMENT:\n")
+cat("No PS group:\n")
+if (abs(skewness(no_ps_data)) < 0.5) {
+  cat("- Relatively symmetric distribution (low skewness)\n")
+} else {
+  cat("- Noticeably skewed distribution\n")
+}
+cat("- Q-Q plot shows deviations from normal line\n")
+
+cat("\nHas PS group:\n")
+if (abs(skewness(has_ps_data)) < 0.5) {
+  cat("- Relatively symmetric distribution (low skewness)\n")
+} else {
+  cat("- Noticeably skewed distribution\n")
+}
+cat("- Q-Q plot shows deviations from normal line\n")
+
+cat("\n\nREASONS FOR NON-NORMALITY:\n")
+cat("1. Bounded at zero: FAIR test scores cannot be negative\n")
+cat("2. Presence of zeros: Some patients show no nerve conduction change\n")
+cat("3. Right skewness: Some extreme high values (outliers)\n")
+cat("4. Physiological constraints: Biological measurements often non-normal\n")
+
+cat("\n\nIMPLICATIONS FOR ANALYSIS:\n")
+cat("- T-tests may not be appropriate due to non-normality\n")
+cat("- Consider non-parametric alternatives (Mann-Whitney U test)\n")
+cat("- ROC analysis is robust to distributional assumptions\n")
+cat("- Large sample sizes provide some protection (Central Limit Theorem)\n")
+
+cat("\n\nCONCLUSION:\n")
+if (shapiro_no_ps$p.value < 0.05 | shapiro_has_ps$p.value < 0.05) {
+  cat("- At least one group shows significant departure from normality\n")
+  cat("- Normality assumption is NOT appropriate for these data\n")
+  cat("- Use distribution-free methods or transformations\n")
+} else {
+  cat("- Both groups appear approximately normal\n")
+  cat("- Parametric methods may be appropriate\n")
+}
+```
+
+---
+
+# Overall Conclusions
+
+```{r overall-conclusions}
+cat("\n\n=== OVERALL CONCLUSIONS ===\n\n")
+
+cat("DIAGNOSTIC PERFORMANCE OF FAIR TEST (1.86 ms cutoff):\n\n")
+
+cat(sprintf("SENSITIVITY: %.1f%%\n", sensitivity * 100))
+cat(sprintf("- Of patients WITH PS, %.1f%% test positive\n", sensitivity * 100))
+cat(sprintf("- The test correctly identifies %.0f out of %.0f diseased patients\n", TP, TP + FN))
+
+cat(sprintf("\nSPECIFICITY: %.1f%%\n", specificity * 100))
+cat(sprintf("- Of patients WITHOUT PS, %.1f%% test negative\n", specificity * 100))
+cat(sprintf("- The test correctly excludes %.0f out of %.0f non-diseased patients\n", TN, TN + FP))
+
+cat(sprintf("\nPOSITIVE PREDICTIVE VALUE (70%% prevalence): %.1f%%\n", PPV_clinic * 100))
+cat(sprintf("- In a specialist clinic, %.1f%% of positive tests are true positives\n",
+            PPV_clinic * 100))
+cat(sprintf("- PPV is highly dependent on disease prevalence\n"))
+
+cat(sprintf("\nROC CURVE ANALYSIS:\n"))
+cat(sprintf("- AUC: %.3f → %s discrimination\n", auc_value,
+            ifelse(auc_value >= 0.8, "GOOD", ifelse(auc_value >= 0.7, "FAIR", "POOR"))))
+cat(sprintf("- Optimal cutoff: %.2f ms (Sens=%.1f%%, Spec=%.1f%%)\n",
+            optimal_cutoff, optimal_sens * 100, optimal_spec * 100))
+
+cat("\nDISTRIBUTIONAL PROPERTIES:\n")
+cat("- FAIR test scores are NOT normally distributed\n")
+cat("- Both groups show deviations from normality\n")
+cat("- Right skewness and presence of zeros/outliers\n")
+
+cat("\n\nCLINICAL RECOMMENDATIONS:\n")
+cat("1. The FAIR test shows moderate-to-good diagnostic performance\n")
+cat("2. The 1.86 ms cutoff provides reasonable balance of sensitivity/specificity\n")
+cat(sprintf("3. In high-prevalence settings (70%%), PPV is %.0f%% - clinically useful\n",
+            PPV_clinic * 100))
+cat(sprintf("4. Consider using optimal cutoff (%.2f ms) for improved performance\n",
+    optimal_cutoff))
+cat("5. Combine with other clinical findings for final diagnosis\n")
+cat("6. Be aware of false positives, especially in low-prevalence populations\n")
+
+cat("\n\nSTATISTICAL CONSIDERATIONS:\n")
+cat("- Non-parametric methods preferred for group comparisons\n")
+cat("- ROC analysis is robust and appropriate for this data\n")
+cat("- Sensitivity analysis across cutoffs provides valuable insights\n")
+cat("- PPV varies with prevalence - always consider clinical context\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

@@ -1,0 +1,701 @@
+---
+title: "Cardiovascular Disease: Nifedipine vs Propranolol for Angina"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.width = 14, fig.height = 10)
+```
+
+# Background
+
+This analysis examines data from a clinical trial testing the efficacy of **nifedipine** vs **propranolol** for reducing chest pain in patients with angina severe enough to require hospitalization.
+
+## Study Design
+
+- **Duration:** 14 days in hospital (or until premature withdrawal/discharge/death)
+- **Randomization:** Patients assigned to either nifedipine (N) or propranolol (P)
+- **Treatment Protocol:**
+  - Level 1: Initial dosage in identical capsules
+  - Level 2: Increased dosage if pain persists or recurs
+  - Level 3: Further dosage increase if needed
+  - All patients received nitrates as clinically appropriate
+
+## Study Objectives
+
+1. **Primary:** Compare degree of pain relief between treatments
+2. **Secondary:** Understand effects on physiologic parameters:
+   - Heart rate (beats per minute)
+   - Systolic blood pressure (mmHg)
+
+## Research Questions (Problems 5.45-5.46)
+
+**5.45:** Describe the effect of each treatment on changes in heart rate and blood pressure. Does the distribution of changes look normal?
+
+**5.46:** Compare graphically the effects of the treatment regimens. Do you notice any difference between treatments?
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+library(gridExtra)
+library(scales)
+library(moments)  # For skewness and kurtosis
+```
+
+# Data Import
+
+```{r data-import}
+# Read the NIFED dataset
+nifed_data <- read.csv("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/NIFED.DAT.txt",
+                       check.names = FALSE)
+
+# Remove quotes from column names
+colnames(nifed_data) <- gsub("'", "", colnames(nifed_data))
+
+# Display variable information
+cat("Dataset Structure:\n")
+str(nifed_data)
+
+cat("\n\nVariable Descriptions:\n")
+cat("ID: Patient identification number\n")
+cat("trtgrp: Treatment group (N = Nifedipine, P = Propranolol)\n")
+cat("\nHeart Rate (bpm):\n")
+cat("  bashrtrt: Baseline heart rate\n")
+cat("  lv1hrtrt: Level 1 heart rate\n")
+cat("  lv2hrtrt: Level 2 heart rate\n")
+cat("  lv3hrtrt: Level 3 heart rate\n")
+cat("\nSystolic Blood Pressure (mmHg):\n")
+cat("  bassys: Baseline systolic BP\n")
+cat("  lv1sys: Level 1 systolic BP\n")
+cat("  lv2sys: Level 2 systolic BP\n")
+cat("  lv3sys: Level 3 systolic BP\n")
+cat("\nNote: 999 indicates missing data\n")
+
+# Display first rows
+head(nifed_data, 15) %>%
+  kable(caption = "First 15 Patients in NIFED Dataset")
+
+cat(sprintf("\n\nTotal number of patients: %d\n", nrow(nifed_data)))
+```
+
+# Data Processing
+
+```{r data-processing}
+# Replace 999 with NA
+nifed_clean <- nifed_data %>%
+  mutate(across(where(is.numeric), ~ifelse(. == 999, NA, .)))
+
+# Count patients by treatment group
+treatment_counts <- nifed_clean %>%
+  count(trtgrp) %>%
+  mutate(Treatment = ifelse(trtgrp == "N", "Nifedipine", "Propranolol"))
+
+cat("Treatment Group Distribution:\n")
+treatment_counts %>%
+  select(Treatment, n) %>%
+  kable(col.names = c("Treatment", "Number of Patients"))
+
+# Calculate changes from baseline
+nifed_changes <- nifed_clean %>%
+  mutate(
+    # Heart rate changes
+    hr_change_lv1 = lv1hrtrt - bashrtrt,
+    hr_change_lv2 = lv2hrtrt - bashrtrt,
+    hr_change_lv3 = lv3hrtrt - bashrtrt,
+
+    # Systolic BP changes
+    sys_change_lv1 = lv1sys - bassys,
+    sys_change_lv2 = lv2sys - bassys,
+    sys_change_lv3 = lv3sys - bassys,
+
+    # Treatment label
+    Treatment = ifelse(trtgrp == "N", "Nifedipine", "Propranolol")
+  )
+
+cat("\n\nData Processing Complete:\n")
+cat("- Missing values (999) converted to NA\n")
+cat("- Changes from baseline calculated for all levels\n")
+cat("- Treatment labels created\n")
+```
+
+---
+
+# Problem 5.45: Descriptive Analysis and Normality Assessment
+
+## Part A: Effect on Heart Rate Changes
+
+### Summary Statistics - Heart Rate Changes
+
+```{r problem-5.45-hr-summary}
+cat("=== HEART RATE CHANGES FROM BASELINE ===\n\n")
+
+# Calculate summary statistics by treatment and level
+hr_summary <- nifed_changes %>%
+  group_by(Treatment) %>%
+  summarise(
+    # Level 1
+    N_lv1 = sum(!is.na(hr_change_lv1)),
+    Mean_lv1 = mean(hr_change_lv1, na.rm = TRUE),
+    SD_lv1 = sd(hr_change_lv1, na.rm = TRUE),
+    Median_lv1 = median(hr_change_lv1, na.rm = TRUE),
+    Q1_lv1 = quantile(hr_change_lv1, 0.25, na.rm = TRUE),
+    Q3_lv1 = quantile(hr_change_lv1, 0.75, na.rm = TRUE),
+
+    # Level 2
+    N_lv2 = sum(!is.na(hr_change_lv2)),
+    Mean_lv2 = mean(hr_change_lv2, na.rm = TRUE),
+    SD_lv2 = sd(hr_change_lv2, na.rm = TRUE),
+    Median_lv2 = median(hr_change_lv2, na.rm = TRUE),
+
+    # Level 3
+    N_lv3 = sum(!is.na(hr_change_lv3)),
+    Mean_lv3 = mean(hr_change_lv3, na.rm = TRUE),
+    SD_lv3 = sd(hr_change_lv3, na.rm = TRUE),
+    Median_lv3 = median(hr_change_lv3, na.rm = TRUE)
+  )
+
+cat("Level 1 Summary:\n")
+hr_summary %>%
+  select(Treatment, N_lv1, Mean_lv1, SD_lv1, Median_lv1, Q1_lv1, Q3_lv1) %>%
+  kable(digits = 2,
+        col.names = c("Treatment", "N", "Mean", "SD", "Median", "Q1", "Q3"),
+        caption = "Heart Rate Change at Level 1 (bpm)")
+
+cat("\n\nLevel 2 Summary:\n")
+hr_summary %>%
+  select(Treatment, N_lv2, Mean_lv2, SD_lv2, Median_lv2) %>%
+  kable(digits = 2,
+        col.names = c("Treatment", "N", "Mean", "SD", "Median"),
+        caption = "Heart Rate Change at Level 2 (bpm)")
+
+cat("\n\nLevel 3 Summary:\n")
+hr_summary %>%
+  select(Treatment, N_lv3, Mean_lv3, SD_lv3, Median_lv3) %>%
+  kable(digits = 2,
+        col.names = c("Treatment", "N", "Mean", "SD", "Median"),
+        caption = "Heart Rate Change at Level 3 (bpm)")
+```
+
+### Normality Assessment - Heart Rate Changes
+
+```{r problem-5.45-hr-normality}
+cat("\n\n=== NORMALITY ASSESSMENT: HEART RATE CHANGES ===\n\n")
+
+# Function to assess normality
+assess_normality <- function(data, var_name, treatment) {
+  x <- data %>%
+    filter(Treatment == treatment) %>%
+    pull(!!sym(var_name)) %>%
+    na.omit()
+
+  if (length(x) < 3) {
+    cat(sprintf("Insufficient data for %s - %s\n", treatment, var_name))
+    return(NULL)
+  }
+
+  # Shapiro-Wilk test
+  shapiro_result <- shapiro.test(x)
+
+  # Skewness and kurtosis
+  skew <- skewness(x)
+  kurt <- kurtosis(x)
+
+  list(
+    n = length(x),
+    shapiro_stat = shapiro_result$statistic,
+    shapiro_p = shapiro_result$p.value,
+    skewness = skew,
+    kurtosis = kurt
+  )
+}
+
+# Assess normality for each treatment and level
+normality_hr <- expand.grid(
+  Treatment = c("Nifedipine", "Propranolol"),
+  Level = c("hr_change_lv1", "hr_change_lv2", "hr_change_lv3"),
+  stringsAsFactors = FALSE
+) %>%
+  rowwise() %>%
+  mutate(
+    Result = list(assess_normality(nifed_changes, Level, Treatment))
+  ) %>%
+  unnest_wider(Result)
+
+cat("Shapiro-Wilk Normality Tests:\n")
+cat("H₀: Data are normally distributed\n")
+cat("If p < 0.05: Reject H₀ (not normal)\n\n")
+
+normality_hr %>%
+  mutate(
+    Level_Label = case_when(
+      Level == "hr_change_lv1" ~ "Level 1",
+      Level == "hr_change_lv2" ~ "Level 2",
+      Level == "hr_change_lv3" ~ "Level 3"
+    ),
+    Normal = ifelse(shapiro_p > 0.05, "Yes", "No")
+  ) %>%
+  select(Treatment, Level_Label, n, shapiro_stat, shapiro_p, skewness, kurtosis, Normal) %>%
+  kable(digits = 4,
+        col.names = c("Treatment", "Level", "N", "W Statistic", "p-value",
+                      "Skewness", "Kurtosis", "Normal?"),
+        caption = "Normality Assessment for Heart Rate Changes")
+```
+
+## Part B: Effect on Systolic Blood Pressure Changes
+
+### Summary Statistics - Systolic BP Changes
+
+```{r problem-5.45-bp-summary}
+cat("\n\n=== SYSTOLIC BLOOD PRESSURE CHANGES FROM BASELINE ===\n\n")
+
+# Calculate summary statistics
+bp_summary <- nifed_changes %>%
+  group_by(Treatment) %>%
+  summarise(
+    # Level 1
+    N_lv1 = sum(!is.na(sys_change_lv1)),
+    Mean_lv1 = mean(sys_change_lv1, na.rm = TRUE),
+    SD_lv1 = sd(sys_change_lv1, na.rm = TRUE),
+    Median_lv1 = median(sys_change_lv1, na.rm = TRUE),
+    Q1_lv1 = quantile(sys_change_lv1, 0.25, na.rm = TRUE),
+    Q3_lv1 = quantile(sys_change_lv1, 0.75, na.rm = TRUE),
+
+    # Level 2
+    N_lv2 = sum(!is.na(sys_change_lv2)),
+    Mean_lv2 = mean(sys_change_lv2, na.rm = TRUE),
+    SD_lv2 = sd(sys_change_lv2, na.rm = TRUE),
+    Median_lv2 = median(sys_change_lv2, na.rm = TRUE),
+
+    # Level 3
+    N_lv3 = sum(!is.na(sys_change_lv3)),
+    Mean_lv3 = mean(sys_change_lv3, na.rm = TRUE),
+    SD_lv3 = sd(sys_change_lv3, na.rm = TRUE),
+    Median_lv3 = median(sys_change_lv3, na.rm = TRUE)
+  )
+
+cat("Level 1 Summary:\n")
+bp_summary %>%
+  select(Treatment, N_lv1, Mean_lv1, SD_lv1, Median_lv1, Q1_lv1, Q3_lv1) %>%
+  kable(digits = 2,
+        col.names = c("Treatment", "N", "Mean", "SD", "Median", "Q1", "Q3"),
+        caption = "Systolic BP Change at Level 1 (mmHg)")
+
+cat("\n\nLevel 2 Summary:\n")
+bp_summary %>%
+  select(Treatment, N_lv2, Mean_lv2, SD_lv2, Median_lv2) %>%
+  kable(digits = 2,
+        col.names = c("Treatment", "N", "Mean", "SD", "Median"),
+        caption = "Systolic BP Change at Level 2 (mmHg)")
+
+cat("\n\nLevel 3 Summary:\n")
+bp_summary %>%
+  select(Treatment, N_lv3, Mean_lv3, SD_lv3, Median_lv3) %>%
+  kable(digits = 2,
+        col.names = c("Treatment", "N", "Mean", "SD", "Median"),
+        caption = "Systolic BP Change at Level 3 (mmHg)")
+```
+
+### Normality Assessment - Systolic BP Changes
+
+```{r problem-5.45-bp-normality}
+cat("\n\n=== NORMALITY ASSESSMENT: SYSTOLIC BP CHANGES ===\n\n")
+
+# Assess normality for BP changes
+normality_bp <- expand.grid(
+  Treatment = c("Nifedipine", "Propranolol"),
+  Level = c("sys_change_lv1", "sys_change_lv2", "sys_change_lv3"),
+  stringsAsFactors = FALSE
+) %>%
+  rowwise() %>%
+  mutate(
+    Result = list(assess_normality(nifed_changes, Level, Treatment))
+  ) %>%
+  unnest_wider(Result)
+
+normality_bp %>%
+  mutate(
+    Level_Label = case_when(
+      Level == "sys_change_lv1" ~ "Level 1",
+      Level == "sys_change_lv2" ~ "Level 2",
+      Level == "sys_change_lv3" ~ "Level 3"
+    ),
+    Normal = ifelse(shapiro_p > 0.05, "Yes", "No")
+  ) %>%
+  select(Treatment, Level_Label, n, shapiro_stat, shapiro_p, skewness, kurtosis, Normal) %>%
+  kable(digits = 4,
+        col.names = c("Treatment", "Level", "N", "W Statistic", "p-value",
+                      "Skewness", "Kurtosis", "Normal?"),
+        caption = "Normality Assessment for Systolic BP Changes")
+```
+
+## Summary: Problem 5.45
+
+```{r problem-5.45-summary}
+cat("\n\n=== SUMMARY: PROBLEM 5.45 ===\n\n")
+
+cat("TREATMENT EFFECTS:\n\n")
+
+cat("1. HEART RATE:\n")
+cat(sprintf("   Nifedipine Level 1:  Mean change = %+.1f bpm (SD = %.1f)\n",
+            hr_summary$Mean_lv1[hr_summary$Treatment == "Nifedipine"],
+            hr_summary$SD_lv1[hr_summary$Treatment == "Nifedipine"]))
+cat(sprintf("   Propranolol Level 1: Mean change = %+.1f bpm (SD = %.1f)\n",
+            hr_summary$Mean_lv1[hr_summary$Treatment == "Propranolol"],
+            hr_summary$SD_lv1[hr_summary$Treatment == "Propranolol"]))
+
+cat("\n2. SYSTOLIC BLOOD PRESSURE:\n")
+cat(sprintf("   Nifedipine Level 1:  Mean change = %+.1f mmHg (SD = %.1f)\n",
+            bp_summary$Mean_lv1[bp_summary$Treatment == "Nifedipine"],
+            bp_summary$SD_lv1[bp_summary$Treatment == "Nifedipine"]))
+cat(sprintf("   Propranolol Level 1: Mean change = %+.1f mmHg (SD = %.1f)\n",
+            bp_summary$Mean_lv1[bp_summary$Treatment == "Propranolol"],
+            bp_summary$SD_lv1[bp_summary$Treatment == "Propranolol"]))
+
+cat("\n\nNORMALITY ASSESSMENT:\n")
+non_normal_hr <- sum(normality_hr$shapiro_p < 0.05, na.rm = TRUE)
+total_hr <- sum(!is.na(normality_hr$shapiro_p))
+non_normal_bp <- sum(normality_bp$shapiro_p < 0.05, na.rm = TRUE)
+total_bp <- sum(!is.na(normality_bp$shapiro_p))
+
+cat(sprintf("Heart Rate: %d out of %d distributions fail normality test (p < 0.05)\n",
+            non_normal_hr, total_hr))
+cat(sprintf("Systolic BP: %d out of %d distributions fail normality test (p < 0.05)\n",
+            non_normal_bp, total_bp))
+
+if (non_normal_hr > 0 || non_normal_bp > 0) {
+  cat("\nSome distributions show evidence of non-normality.\n")
+  cat("This should be considered when choosing statistical tests.\n")
+} else {
+  cat("\nMost distributions appear approximately normal.\n")
+}
+```
+
+---
+
+# Problem 5.46: Graphical Comparison of Treatments
+
+## Heart Rate Changes: Graphical Comparison
+
+```{r problem-5.46-hr-plots, fig.height=12}
+# Prepare data for plotting
+hr_long <- nifed_changes %>%
+  select(ID, Treatment, hr_change_lv1, hr_change_lv2, hr_change_lv3) %>%
+  pivot_longer(cols = starts_with("hr_change"),
+               names_to = "Level",
+               values_to = "HR_Change") %>%
+  mutate(
+    Level = case_when(
+      Level == "hr_change_lv1" ~ "Level 1",
+      Level == "hr_change_lv2" ~ "Level 2",
+      Level == "hr_change_lv3" ~ "Level 3"
+    )
+  ) %>%
+  filter(!is.na(HR_Change))
+
+# 1. Boxplots by level and treatment
+p1 <- ggplot(hr_long, aes(x = Level, y = HR_Change, fill = Treatment)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16, outlier.size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", size = 1) +
+  labs(title = "Heart Rate Changes by Treatment Level",
+       subtitle = "Boxplots comparing Nifedipine vs Propranolol",
+       x = "Treatment Level",
+       y = "Change in Heart Rate (bpm) from Baseline",
+       fill = "Treatment") +
+  scale_fill_manual(values = c("Nifedipine" = "steelblue", "Propranolol" = "coral")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# 2. Histograms with density curves (Level 1 only for clarity)
+hr_lv1 <- nifed_changes %>%
+  filter(!is.na(hr_change_lv1))
+
+p2 <- ggplot(hr_lv1, aes(x = hr_change_lv1, fill = Treatment)) +
+  geom_histogram(aes(y = ..density..), bins = 15, alpha = 0.5, position = "identity") +
+  geom_density(aes(color = Treatment), size = 1.2, alpha = 0) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black", size = 1) +
+  facet_wrap(~ Treatment, ncol = 1) +
+  labs(title = "Distribution of Heart Rate Changes at Level 1",
+       x = "Change in Heart Rate (bpm)",
+       y = "Density") +
+  scale_fill_manual(values = c("Nifedipine" = "steelblue", "Propranolol" = "coral")) +
+  scale_color_manual(values = c("Nifedipine" = "darkblue", "Propranolol" = "darkred")) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# 3. Q-Q plots for normality
+p3 <- ggplot(hr_lv1, aes(sample = hr_change_lv1, color = Treatment)) +
+  stat_qq() +
+  stat_qq_line() +
+  facet_wrap(~ Treatment) +
+  labs(title = "Q-Q Plots: Heart Rate Changes at Level 1",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles") +
+  scale_color_manual(values = c("Nifedipine" = "steelblue", "Propranolol" = "coral")) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+grid.arrange(p1, p2, p3, ncol = 1, heights = c(1, 1, 0.8))
+```
+
+## Systolic BP Changes: Graphical Comparison
+
+```{r problem-5.46-bp-plots, fig.height=12}
+# Prepare BP data for plotting
+bp_long <- nifed_changes %>%
+  select(ID, Treatment, sys_change_lv1, sys_change_lv2, sys_change_lv3) %>%
+  pivot_longer(cols = starts_with("sys_change"),
+               names_to = "Level",
+               values_to = "BP_Change") %>%
+  mutate(
+    Level = case_when(
+      Level == "sys_change_lv1" ~ "Level 1",
+      Level == "sys_change_lv2" ~ "Level 2",
+      Level == "sys_change_lv3" ~ "Level 3"
+    )
+  ) %>%
+  filter(!is.na(BP_Change))
+
+# 1. Boxplots by level and treatment
+p4 <- ggplot(bp_long, aes(x = Level, y = BP_Change, fill = Treatment)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16, outlier.size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", size = 1) +
+  labs(title = "Systolic Blood Pressure Changes by Treatment Level",
+       subtitle = "Boxplots comparing Nifedipine vs Propranolol",
+       x = "Treatment Level",
+       y = "Change in Systolic BP (mmHg) from Baseline",
+       fill = "Treatment") +
+  scale_fill_manual(values = c("Nifedipine" = "steelblue", "Propranolol" = "coral")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# 2. Histograms (Level 1)
+bp_lv1 <- nifed_changes %>%
+  filter(!is.na(sys_change_lv1))
+
+p5 <- ggplot(bp_lv1, aes(x = sys_change_lv1, fill = Treatment)) +
+  geom_histogram(aes(y = ..density..), bins = 15, alpha = 0.5, position = "identity") +
+  geom_density(aes(color = Treatment), size = 1.2, alpha = 0) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black", size = 1) +
+  facet_wrap(~ Treatment, ncol = 1) +
+  labs(title = "Distribution of Systolic BP Changes at Level 1",
+       x = "Change in Systolic BP (mmHg)",
+       y = "Density") +
+  scale_fill_manual(values = c("Nifedipine" = "steelblue", "Propranolol" = "coral")) +
+  scale_color_manual(values = c("Nifedipine" = "darkblue", "Propranolol" = "darkred")) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# 3. Q-Q plots
+p6 <- ggplot(bp_lv1, aes(sample = sys_change_lv1, color = Treatment)) +
+  stat_qq() +
+  stat_qq_line() +
+  facet_wrap(~ Treatment) +
+  labs(title = "Q-Q Plots: Systolic BP Changes at Level 1",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles") +
+  scale_color_manual(values = c("Nifedipine" = "steelblue", "Propranolol" = "coral")) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+grid.arrange(p4, p5, p6, ncol = 1, heights = c(1, 1, 0.8))
+```
+
+## Direct Comparison: Side-by-Side
+
+```{r problem-5.46-comparison, fig.height=8}
+# Mean changes with error bars
+mean_changes <- nifed_changes %>%
+  group_by(Treatment) %>%
+  summarise(
+    HR_Mean = mean(hr_change_lv1, na.rm = TRUE),
+    HR_SE = sd(hr_change_lv1, na.rm = TRUE) / sqrt(sum(!is.na(hr_change_lv1))),
+    BP_Mean = mean(sys_change_lv1, na.rm = TRUE),
+    BP_SE = sd(sys_change_lv1, na.rm = TRUE) / sqrt(sum(!is.na(sys_change_lv1)))
+  )
+
+# Heart rate comparison
+p7 <- ggplot(mean_changes, aes(x = Treatment, y = HR_Mean, fill = Treatment)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_errorbar(aes(ymin = HR_Mean - 1.96 * HR_SE,
+                    ymax = HR_Mean + 1.96 * HR_SE),
+                width = 0.2, size = 1) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  geom_text(aes(label = sprintf("%.1f ± %.1f", HR_Mean, 1.96 * HR_SE)),
+            vjust = ifelse(mean_changes$HR_Mean > 0, -0.5, 1.5), size = 5) +
+  labs(title = "Mean Heart Rate Change at Level 1",
+       subtitle = "Error bars show 95% confidence intervals",
+       x = "Treatment",
+       y = "Mean Change in Heart Rate (bpm)") +
+  scale_fill_manual(values = c("Nifedipine" = "steelblue", "Propranolol" = "coral")) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# BP comparison
+p8 <- ggplot(mean_changes, aes(x = Treatment, y = BP_Mean, fill = Treatment)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_errorbar(aes(ymin = BP_Mean - 1.96 * BP_SE,
+                    ymax = BP_Mean + 1.96 * BP_SE),
+                width = 0.2, size = 1) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  geom_text(aes(label = sprintf("%.1f ± %.1f", BP_Mean, 1.96 * BP_SE)),
+            vjust = ifelse(mean_changes$BP_Mean > 0, 1.5, -0.5), size = 5) +
+  labs(title = "Mean Systolic BP Change at Level 1",
+       subtitle = "Error bars show 95% confidence intervals",
+       x = "Treatment",
+       y = "Mean Change in Systolic BP (mmHg)") +
+  scale_fill_manual(values = c("Nifedipine" = "steelblue", "Propranolol" = "coral")) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+grid.arrange(p7, p8, ncol = 2)
+```
+
+## Summary: Problem 5.46
+
+```{r problem-5.46-summary}
+cat("\n\n=== SUMMARY: PROBLEM 5.46 - TREATMENT DIFFERENCES ===\n\n")
+
+cat("GRAPHICAL OBSERVATIONS:\n\n")
+
+cat("1. HEART RATE CHANGES:\n")
+# Extract values safely
+nifed_hr <- mean_changes$HR_Mean[mean_changes$Treatment == "Nifedipine"]
+prop_hr <- mean_changes$HR_Mean[mean_changes$Treatment == "Propranolol"]
+
+# Initialize hr_diff
+hr_diff <- NA
+
+if (length(nifed_hr) > 0 && length(prop_hr) > 0 && !is.na(nifed_hr) && !is.na(prop_hr)) {
+  hr_diff <- nifed_hr - prop_hr
+
+  if (!is.na(hr_diff) && abs(hr_diff) > 5) {
+    cat(sprintf("   - NOTICEABLE DIFFERENCE: %.1f bpm difference between treatments\n", abs(hr_diff)))
+    if (hr_diff > 0) {
+      cat("   - Nifedipine tends to INCREASE heart rate more than Propranolol\n")
+    } else {
+      cat("   - Propranolol tends to INCREASE heart rate more than Nifedipine\n")
+    }
+  } else if (!is.na(hr_diff)) {
+    cat(sprintf("   - MINIMAL DIFFERENCE: %.1f bpm difference between treatments\n", abs(hr_diff)))
+  } else {
+    cat("   - Unable to calculate difference\n")
+  }
+} else {
+  cat("   - Unable to compare: Insufficient data for one or both treatments\n")
+}
+
+cat("\n2. SYSTOLIC BLOOD PRESSURE CHANGES:\n")
+# Extract values safely
+nifed_bp <- mean_changes$BP_Mean[mean_changes$Treatment == "Nifedipine"]
+prop_bp <- mean_changes$BP_Mean[mean_changes$Treatment == "Propranolol"]
+
+# Initialize bp_diff
+bp_diff <- NA
+
+if (length(nifed_bp) > 0 && length(prop_bp) > 0 && !is.na(nifed_bp) && !is.na(prop_bp)) {
+  bp_diff <- nifed_bp - prop_bp
+
+  if (!is.na(bp_diff) && abs(bp_diff) > 10) {
+    cat(sprintf("   - NOTICEABLE DIFFERENCE: %.1f mmHg difference between treatments\n", abs(bp_diff)))
+    if (bp_diff > 0) {
+      cat("   - Nifedipine shows less BP reduction than Propranolol\n")
+    } else {
+      cat("   - Nifedipine shows greater BP reduction than Propranolol\n")
+    }
+  } else if (!is.na(bp_diff)) {
+    cat(sprintf("   - MINIMAL DIFFERENCE: %.1f mmHg difference between treatments\n", abs(bp_diff)))
+  } else {
+    cat("   - Unable to calculate difference\n")
+  }
+} else {
+  cat("   - Unable to compare: Insufficient data for one or both treatments\n")
+}
+
+cat("\n3. DISTRIBUTION SHAPES:\n")
+cat("   - Boxplots reveal variability and outliers in both treatments\n")
+cat("   - Q-Q plots help assess normality assumptions\n")
+cat("   - Histograms show the overall distribution patterns\n")
+
+cat("\n4. CLINICAL INTERPRETATION:\n")
+cat("   - Both treatments show physiologic effects on cardiovascular parameters\n")
+cat("   - Individual patient responses vary considerably (note the spread)\n")
+cat("   - These secondary outcomes complement the primary pain relief analysis\n")
+```
+
+---
+
+# Overall Conclusions
+
+```{r overall-conclusions}
+cat("\n\n=== OVERALL STUDY CONCLUSIONS ===\n\n")
+
+cat("DESCRIPTIVE FINDINGS (Problem 5.45):\n\n")
+
+cat("Heart Rate Effects:\n")
+cat(sprintf("- Nifedipine:  %+.1f ± %.1f bpm change at Level 1\n",
+            hr_summary$Mean_lv1[hr_summary$Treatment == "Nifedipine"],
+            hr_summary$SD_lv1[hr_summary$Treatment == "Nifedipine"]))
+cat(sprintf("- Propranolol: %+.1f ± %.1f bpm change at Level 1\n",
+            hr_summary$Mean_lv1[hr_summary$Treatment == "Propranolol"],
+            hr_summary$SD_lv1[hr_summary$Treatment == "Propranolol"]))
+
+cat("\nBlood Pressure Effects:\n")
+cat(sprintf("- Nifedipine:  %+.1f ± %.1f mmHg change at Level 1\n",
+            bp_summary$Mean_lv1[bp_summary$Treatment == "Nifedipine"],
+            bp_summary$SD_lv1[bp_summary$Treatment == "Nifedipine"]))
+cat(sprintf("- Propranolol: %+.1f ± %.1f mmHg change at Level 1\n",
+            bp_summary$Mean_lv1[bp_summary$Treatment == "Propranolol"],
+            bp_summary$SD_lv1[bp_summary$Treatment == "Propranolol"]))
+
+cat("\nNormality:\n")
+if (non_normal_hr + non_normal_bp > 0) {
+  cat("- Some distributions deviate from normality\n")
+  cat("- Non-parametric tests may be more appropriate for some comparisons\n")
+} else {
+  cat("- Distributions are approximately normal\n")
+  cat("- Parametric tests are appropriate\n")
+}
+
+cat("\n\nGRAPHICAL FINDINGS (Problem 5.46):\n\n")
+cat("Treatment Differences:\n")
+if (!is.na(hr_diff) && !is.na(bp_diff)) {
+  if (abs(hr_diff) > 5 || abs(bp_diff) > 10) {
+    cat("- Notable differences exist between treatments\n")
+    cat("- These differences should be considered in treatment selection\n")
+  } else {
+    cat("- Treatments show similar physiologic effects\n")
+    cat("- Choice may depend more on primary outcome (pain relief)\n")
+  }
+} else {
+  cat("- Comparison not available due to insufficient data\n")
+}
+
+cat("\nData Quality:\n")
+cat(sprintf("- Missing data increases at higher treatment levels\n"))
+cat("- Level 1: Most complete data\n")
+cat("- Levels 2-3: Progressive attrition due to study design\n")
+
+cat("\n\nSTUDY IMPLICATIONS:\n")
+cat("- Secondary outcomes (HR, BP) provide important safety information\n")
+cat("- Individual patient variability is substantial\n")
+cat("- Personalized treatment approach may be beneficial\n")
+cat("- Further statistical testing (t-tests, ANOVA) would quantify differences\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

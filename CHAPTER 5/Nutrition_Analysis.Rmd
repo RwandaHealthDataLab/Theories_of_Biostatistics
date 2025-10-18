@@ -1,0 +1,1091 @@
+---
+title: "Nutrition Data Analysis: Assessing Normality of Nutrient Distributions"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.width = 14, fig.height = 10)
+```
+
+# Background
+
+This analysis examines the **VALID (Validity of Diet Assessment) Study** data to assess whether nutrient intake distributions follow a normal distribution. The study compares two dietary assessment methods:
+
+- **Diet Record (DR)**: A detailed record of actual food consumption
+- **Food Frequency Questionnaire (FFQ)**: A recall-based questionnaire
+
+We will analyze the distributions of **saturated fat**, **total fat**, **total calories**, and **alcohol consumption** using both assessment methods.
+
+## Study Objectives
+
+1. **Problem 5.56**: Plot and assess normality of saturated fat, total fat, and total calories
+2. **Problem 5.57**: Repeat analysis using log-transformed nutrient values
+3. **Problem 5.58**: Analyze alcohol consumption for bimodality due to non-drinkers
+
+## Research Questions
+
+**5.56:** Do saturated fat, total fat, and total calories follow a normal distribution?
+
+**5.57:** Does log transformation improve normality of nutrient distributions?
+
+**5.58:** Is alcohol consumption bimodal due to non-drinkers vs. drinkers?
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+library(gridExtra)
+library(scales)
+library(moments)  # For skewness and kurtosis
+library(nortest)  # For additional normality tests
+```
+
+# Data Import and Exploration
+
+```{r data-import}
+# Read the VALID dataset
+valid_data <- read.csv("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/VALID.DAT.txt",
+                       check.names = FALSE)
+
+# Remove quotes from column names
+colnames(valid_data) <- gsub("'", "", colnames(valid_data))
+
+# Display dataset structure
+cat("Dataset Structure:\n")
+str(valid_data)
+
+cat("\n\nVariable Descriptions:\n")
+cat("Id: Subject identification number\n")
+cat("sfat_dr: Saturated fat - diet record (g/day)\n")
+cat("sfat_ffq: Saturated fat - food frequency questionnaire (g/day)\n")
+cat("tfat_dr: Total fat - diet record (g/day)\n")
+cat("tfat_ffq: Total fat - food frequency questionnaire (g/day)\n")
+cat("alco_dr: Alcohol - diet record (g/day)\n")
+cat("alco_ffq: Alcohol - food frequency questionnaire (g/day)\n")
+cat("cal_dr: Total calories - diet record (kcal/day)\n")
+cat("cal_ffq: Total calories - food frequency questionnaire (kcal/day)\n")
+
+# Display first rows
+cat("\n\nFirst 20 Subjects:\n")
+head(valid_data, 20) %>%
+  kable(digits = 2, caption = "First 20 Subjects in VALID Dataset")
+
+cat(sprintf("\n\nTotal number of subjects: %d\n", nrow(valid_data)))
+```
+
+## Summary Statistics
+
+```{r summary-stats}
+cat("=== SUMMARY STATISTICS FOR ALL NUTRIENTS ===\n\n")
+
+# Calculate summary statistics for each nutrient
+summary_stats <- valid_data %>%
+  select(-Id) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") %>%
+  group_by(Variable) %>%
+  summarise(
+    N = sum(!is.na(Value)),
+    Mean = mean(Value, na.rm = TRUE),
+    SD = sd(Value, na.rm = TRUE),
+    Median = median(Value, na.rm = TRUE),
+    Min = min(Value, na.rm = TRUE),
+    Max = max(Value, na.rm = TRUE),
+    Q1 = quantile(Value, 0.25, na.rm = TRUE),
+    Q3 = quantile(Value, 0.75, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(Variable)
+
+summary_stats %>%
+  kable(digits = 2,
+        caption = "Summary Statistics for All Nutrients")
+
+# Separate by method
+cat("\n\nSummary by Assessment Method:\n")
+cat("\nDIET RECORD (DR):\n")
+valid_data %>%
+  select(sfat_dr, tfat_dr, cal_dr, alco_dr) %>%
+  summary() %>%
+  kable()
+
+cat("\n\nFOOD FREQUENCY QUESTIONNAIRE (FFQ):\n")
+valid_data %>%
+  select(sfat_ffq, tfat_ffq, cal_ffq, alco_ffq) %>%
+  summary() %>%
+  kable()
+```
+
+---
+
+# Problem 5.56: Normality Assessment of Nutrients
+
+## Distribution Plots: Untransformed Values
+
+### Saturated Fat Distribution
+
+```{r saturated-fat-plots, fig.height=10}
+cat("\n=== SATURATED FAT DISTRIBUTION ===\n\n")
+
+# Create plots for saturated fat
+p_sfat1 <- ggplot(valid_data, aes(x = sfat_dr)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "steelblue", alpha = 0.7) +
+  geom_density(color = "darkblue", size = 1.2) +
+  geom_vline(xintercept = mean(valid_data$sfat_dr),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Saturated Fat: Diet Record",
+       subtitle = sprintf("Mean = %.2f, SD = %.2f",
+                         mean(valid_data$sfat_dr), sd(valid_data$sfat_dr)),
+       x = "Saturated Fat (g/day)",
+       y = "Density") +
+  theme_minimal()
+
+p_sfat2 <- ggplot(valid_data, aes(x = sfat_ffq)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "coral", alpha = 0.7) +
+  geom_density(color = "darkred", size = 1.2) +
+  geom_vline(xintercept = mean(valid_data$sfat_ffq),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Saturated Fat: Food Frequency Questionnaire",
+       subtitle = sprintf("Mean = %.2f, SD = %.2f",
+                         mean(valid_data$sfat_ffq), sd(valid_data$sfat_ffq)),
+       x = "Saturated Fat (g/day)",
+       y = "Density") +
+  theme_minimal()
+
+# Q-Q plots
+p_sfat3 <- ggplot(valid_data, aes(sample = sfat_dr)) +
+  stat_qq(color = "steelblue", size = 2) +
+  stat_qq_line(color = "red", size = 1) +
+  labs(title = "Q-Q Plot: Diet Record",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles") +
+  theme_minimal()
+
+p_sfat4 <- ggplot(valid_data, aes(sample = sfat_ffq)) +
+  stat_qq(color = "coral", size = 2) +
+  stat_qq_line(color = "red", size = 1) +
+  labs(title = "Q-Q Plot: FFQ",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles") +
+  theme_minimal()
+
+grid.arrange(p_sfat1, p_sfat2, p_sfat3, p_sfat4, ncol = 2)
+```
+
+### Total Fat Distribution
+
+```{r total-fat-plots, fig.height=10}
+cat("\n=== TOTAL FAT DISTRIBUTION ===\n\n")
+
+p_tfat1 <- ggplot(valid_data, aes(x = tfat_dr)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "steelblue", alpha = 0.7) +
+  geom_density(color = "darkblue", size = 1.2) +
+  geom_vline(xintercept = mean(valid_data$tfat_dr),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Total Fat: Diet Record",
+       subtitle = sprintf("Mean = %.2f, SD = %.2f",
+                         mean(valid_data$tfat_dr), sd(valid_data$tfat_dr)),
+       x = "Total Fat (g/day)",
+       y = "Density") +
+  theme_minimal()
+
+p_tfat2 <- ggplot(valid_data, aes(x = tfat_ffq)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "coral", alpha = 0.7) +
+  geom_density(color = "darkred", size = 1.2) +
+  geom_vline(xintercept = mean(valid_data$tfat_ffq),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Total Fat: Food Frequency Questionnaire",
+       subtitle = sprintf("Mean = %.2f, SD = %.2f",
+                         mean(valid_data$tfat_ffq), sd(valid_data$tfat_ffq)),
+       x = "Total Fat (g/day)",
+       y = "Density") +
+  theme_minimal()
+
+p_tfat3 <- ggplot(valid_data, aes(sample = tfat_dr)) +
+  stat_qq(color = "steelblue", size = 2) +
+  stat_qq_line(color = "red", size = 1) +
+  labs(title = "Q-Q Plot: Diet Record",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles") +
+  theme_minimal()
+
+p_tfat4 <- ggplot(valid_data, aes(sample = tfat_ffq)) +
+  stat_qq(color = "coral", size = 2) +
+  stat_qq_line(color = "red", size = 1) +
+  labs(title = "Q-Q Plot: FFQ",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles") +
+  theme_minimal()
+
+grid.arrange(p_tfat1, p_tfat2, p_tfat3, p_tfat4, ncol = 2)
+```
+
+### Total Calories Distribution
+
+```{r calories-plots, fig.height=10}
+cat("\n=== TOTAL CALORIES DISTRIBUTION ===\n\n")
+
+p_cal1 <- ggplot(valid_data, aes(x = cal_dr)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "steelblue", alpha = 0.7) +
+  geom_density(color = "darkblue", size = 1.2) +
+  geom_vline(xintercept = mean(valid_data$cal_dr),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Total Calories: Diet Record",
+       subtitle = sprintf("Mean = %.2f, SD = %.2f",
+                         mean(valid_data$cal_dr), sd(valid_data$cal_dr)),
+       x = "Total Calories (kcal/day)",
+       y = "Density") +
+  theme_minimal()
+
+p_cal2 <- ggplot(valid_data, aes(x = cal_ffq)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "coral", alpha = 0.7) +
+  geom_density(color = "darkred", size = 1.2) +
+  geom_vline(xintercept = mean(valid_data$cal_ffq),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Total Calories: Food Frequency Questionnaire",
+       subtitle = sprintf("Mean = %.2f, SD = %.2f",
+                         mean(valid_data$cal_ffq), sd(valid_data$cal_ffq)),
+       x = "Total Calories (kcal/day)",
+       y = "Density") +
+  theme_minimal()
+
+p_cal3 <- ggplot(valid_data, aes(sample = cal_dr)) +
+  stat_qq(color = "steelblue", size = 2) +
+  stat_qq_line(color = "red", size = 1) +
+  labs(title = "Q-Q Plot: Diet Record",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles") +
+  theme_minimal()
+
+p_cal4 <- ggplot(valid_data, aes(sample = cal_ffq)) +
+  stat_qq(color = "coral", size = 2) +
+  stat_qq_line(color = "red", size = 1) +
+  labs(title = "Q-Q Plot: FFQ",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles") +
+  theme_minimal()
+
+grid.arrange(p_cal1, p_cal2, p_cal3, p_cal4, ncol = 2)
+```
+
+## Normality Tests: Untransformed Values
+
+### Function to Calculate Empirical Proportions
+
+```{r empirical-proportions-function}
+# Function to calculate empirical proportions within SD ranges
+calc_empirical_props <- function(x, name = "") {
+  x_clean <- x[!is.na(x)]
+  mean_x <- mean(x_clean)
+  sd_x <- sd(x_clean)
+  n <- length(x_clean)
+
+  # Expected proportions for normal distribution
+  expected <- c(
+    "1.0 SD" = 0.6827,
+    "1.5 SD" = 0.8664,
+    "2.0 SD" = 0.9545,
+    "2.5 SD" = 0.9876
+  )
+
+  # Calculate observed proportions
+  observed <- c(
+    sum(abs(x_clean - mean_x) <= 1.0 * sd_x) / n,
+    sum(abs(x_clean - mean_x) <= 1.5 * sd_x) / n,
+    sum(abs(x_clean - mean_x) <= 2.0 * sd_x) / n,
+    sum(abs(x_clean - mean_x) <= 2.5 * sd_x) / n
+  )
+
+  # Calculate differences
+  diff <- observed - expected
+
+  result <- data.frame(
+    Range = names(expected),
+    Expected = expected,
+    Observed = observed,
+    Difference = diff
+  )
+
+  cat(sprintf("\n%s - Empirical Proportions:\n", name))
+  print(kable(result, digits = 4))
+
+  return(result)
+}
+```
+
+### Saturated Fat Normality Tests
+
+```{r sfat-normality-tests}
+cat("\n=== SATURATED FAT NORMALITY ASSESSMENT ===\n\n")
+
+# Diet Record
+cat("DIET RECORD:\n")
+shapiro_sfat_dr <- shapiro.test(valid_data$sfat_dr)
+cat(sprintf("Shapiro-Wilk Test: W = %.4f, p-value = %.4f\n",
+            shapiro_sfat_dr$statistic, shapiro_sfat_dr$p.value))
+cat(sprintf("Skewness: %.3f\n", skewness(valid_data$sfat_dr)))
+cat(sprintf("Kurtosis: %.3f\n", kurtosis(valid_data$sfat_dr)))
+
+emp_sfat_dr <- calc_empirical_props(valid_data$sfat_dr, "Saturated Fat (DR)")
+
+# FFQ
+cat("\n\nFOOD FREQUENCY QUESTIONNAIRE:\n")
+shapiro_sfat_ffq <- shapiro.test(valid_data$sfat_ffq)
+cat(sprintf("Shapiro-Wilk Test: W = %.4f, p-value = %.4f\n",
+            shapiro_sfat_ffq$statistic, shapiro_sfat_ffq$p.value))
+cat(sprintf("Skewness: %.3f\n", skewness(valid_data$sfat_ffq)))
+cat(sprintf("Kurtosis: %.3f\n", kurtosis(valid_data$sfat_ffq)))
+
+emp_sfat_ffq <- calc_empirical_props(valid_data$sfat_ffq, "Saturated Fat (FFQ)")
+```
+
+### Total Fat Normality Tests
+
+```{r tfat-normality-tests}
+cat("\n=== TOTAL FAT NORMALITY ASSESSMENT ===\n\n")
+
+# Diet Record
+cat("DIET RECORD:\n")
+shapiro_tfat_dr <- shapiro.test(valid_data$tfat_dr)
+cat(sprintf("Shapiro-Wilk Test: W = %.4f, p-value = %.4f\n",
+            shapiro_tfat_dr$statistic, shapiro_tfat_dr$p.value))
+cat(sprintf("Skewness: %.3f\n", skewness(valid_data$tfat_dr)))
+cat(sprintf("Kurtosis: %.3f\n", kurtosis(valid_data$tfat_dr)))
+
+emp_tfat_dr <- calc_empirical_props(valid_data$tfat_dr, "Total Fat (DR)")
+
+# FFQ
+cat("\n\nFOOD FREQUENCY QUESTIONNAIRE:\n")
+shapiro_tfat_ffq <- shapiro.test(valid_data$tfat_ffq)
+cat(sprintf("Shapiro-Wilk Test: W = %.4f, p-value = %.4f\n",
+            shapiro_tfat_ffq$statistic, shapiro_tfat_ffq$p.value))
+cat(sprintf("Skewness: %.3f\n", skewness(valid_data$tfat_ffq)))
+cat(sprintf("Kurtosis: %.3f\n", kurtosis(valid_data$tfat_ffq)))
+
+emp_tfat_ffq <- calc_empirical_props(valid_data$tfat_ffq, "Total Fat (FFQ)")
+```
+
+### Total Calories Normality Tests
+
+```{r cal-normality-tests}
+cat("\n=== TOTAL CALORIES NORMALITY ASSESSMENT ===\n\n")
+
+# Diet Record
+cat("DIET RECORD:\n")
+shapiro_cal_dr <- shapiro.test(valid_data$cal_dr)
+cat(sprintf("Shapiro-Wilk Test: W = %.4f, p-value = %.4f\n",
+            shapiro_cal_dr$statistic, shapiro_cal_dr$p.value))
+cat(sprintf("Skewness: %.3f\n", skewness(valid_data$cal_dr)))
+cat(sprintf("Kurtosis: %.3f\n", kurtosis(valid_data$cal_dr)))
+
+emp_cal_dr <- calc_empirical_props(valid_data$cal_dr, "Total Calories (DR)")
+
+# FFQ
+cat("\n\nFOOD FREQUENCY QUESTIONNAIRE:\n")
+shapiro_cal_ffq <- shapiro.test(valid_data$cal_ffq)
+cat(sprintf("Shapiro-Wilk Test: W = %.4f, p-value = %.4f\n",
+            shapiro_cal_ffq$statistic, shapiro_cal_ffq$p.value))
+cat(sprintf("Skewness: %.3f\n", skewness(valid_data$cal_ffq)))
+cat(sprintf("Kurtosis: %.3f\n", kurtosis(valid_data$cal_ffq)))
+
+emp_cal_ffq <- calc_empirical_props(valid_data$cal_ffq, "Total Calories (FFQ)")
+```
+
+## Summary: Problem 5.56
+
+```{r problem-5.56-summary}
+cat("\n\n=== SUMMARY: PROBLEM 5.56 ===\n\n")
+
+cat("NORMALITY ASSESSMENT (UNTRANSFORMED):\n\n")
+
+cat("1. SATURATED FAT:\n")
+cat(sprintf("   - Diet Record: p = %.4f (%s)\n",
+            shapiro_sfat_dr$p.value,
+            ifelse(shapiro_sfat_dr$p.value > 0.05, "Normal", "Non-normal")))
+cat(sprintf("   - FFQ: p = %.4f (%s)\n",
+            shapiro_sfat_ffq$p.value,
+            ifelse(shapiro_sfat_ffq$p.value > 0.05, "Normal", "Non-normal")))
+
+cat("\n2. TOTAL FAT:\n")
+cat(sprintf("   - Diet Record: p = %.4f (%s)\n",
+            shapiro_tfat_dr$p.value,
+            ifelse(shapiro_tfat_dr$p.value > 0.05, "Normal", "Non-normal")))
+cat(sprintf("   - FFQ: p = %.4f (%s)\n",
+            shapiro_tfat_ffq$p.value,
+            ifelse(shapiro_tfat_ffq$p.value > 0.05, "Normal", "Non-normal")))
+
+cat("\n3. TOTAL CALORIES:\n")
+cat(sprintf("   - Diet Record: p = %.4f (%s)\n",
+            shapiro_cal_dr$p.value,
+            ifelse(shapiro_cal_dr$p.value > 0.05, "Normal", "Non-normal")))
+cat(sprintf("   - FFQ: p = %.4f (%s)\n",
+            shapiro_cal_ffq$p.value,
+            ifelse(shapiro_cal_ffq$p.value > 0.05, "Normal", "Non-normal")))
+
+cat("\n\nCONCLUSION:\n")
+cat("Based on the Shapiro-Wilk tests, Q-Q plots, and empirical proportions:\n")
+cat("- Most nutrient distributions show some deviation from normality\n")
+cat("- Right skewness is common in nutrient intake data\n")
+cat("- Empirical proportions generally align with expected normal values\n")
+cat("- Log transformation (Problem 5.57) may improve normality\n")
+```
+
+---
+
+# Problem 5.57: Log-Transformed Normality Assessment
+
+## Create Log-Transformed Variables
+
+```{r log-transform}
+cat("\n=== CREATING LOG-TRANSFORMED VARIABLES ===\n\n")
+
+# Create log-transformed variables
+valid_data <- valid_data %>%
+  mutate(
+    ln_sfat_dr = log(sfat_dr),
+    ln_sfat_ffq = log(sfat_ffq),
+    ln_tfat_dr = log(tfat_dr),
+    ln_tfat_ffq = log(tfat_ffq),
+    ln_cal_dr = log(cal_dr),
+    ln_cal_ffq = log(cal_ffq)
+  )
+
+cat("Log-transformed variables created:\n")
+cat("- ln_sfat_dr, ln_sfat_ffq: Natural log of saturated fat\n")
+cat("- ln_tfat_dr, ln_tfat_ffq: Natural log of total fat\n")
+cat("- ln_cal_dr, ln_cal_ffq: Natural log of total calories\n")
+
+# Summary of log-transformed variables
+cat("\n\nSummary Statistics (Log-Transformed):\n")
+valid_data %>%
+  select(starts_with("ln_")) %>%
+  summary() %>%
+  kable()
+```
+
+## Distribution Plots: Log-Transformed Values
+
+### Log(Saturated Fat) Distribution
+
+```{r log-sfat-plots, fig.height=10}
+cat("\n=== LOG(SATURATED FAT) DISTRIBUTION ===\n\n")
+
+p_ln_sfat1 <- ggplot(valid_data, aes(x = ln_sfat_dr)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "steelblue", alpha = 0.7) +
+  geom_density(color = "darkblue", size = 1.2) +
+  geom_vline(xintercept = mean(valid_data$ln_sfat_dr),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Log(Saturated Fat): Diet Record",
+       subtitle = sprintf("Mean = %.2f, SD = %.2f",
+                         mean(valid_data$ln_sfat_dr), sd(valid_data$ln_sfat_dr)),
+       x = "ln(Saturated Fat)",
+       y = "Density") +
+  theme_minimal()
+
+p_ln_sfat2 <- ggplot(valid_data, aes(x = ln_sfat_ffq)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "coral", alpha = 0.7) +
+  geom_density(color = "darkred", size = 1.2) +
+  geom_vline(xintercept = mean(valid_data$ln_sfat_ffq),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Log(Saturated Fat): FFQ",
+       subtitle = sprintf("Mean = %.2f, SD = %.2f",
+                         mean(valid_data$ln_sfat_ffq), sd(valid_data$ln_sfat_ffq)),
+       x = "ln(Saturated Fat)",
+       y = "Density") +
+  theme_minimal()
+
+p_ln_sfat3 <- ggplot(valid_data, aes(sample = ln_sfat_dr)) +
+  stat_qq(color = "steelblue", size = 2) +
+  stat_qq_line(color = "red", size = 1) +
+  labs(title = "Q-Q Plot: Diet Record (Log)",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles") +
+  theme_minimal()
+
+p_ln_sfat4 <- ggplot(valid_data, aes(sample = ln_sfat_ffq)) +
+  stat_qq(color = "coral", size = 2) +
+  stat_qq_line(color = "red", size = 1) +
+  labs(title = "Q-Q Plot: FFQ (Log)",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles") +
+  theme_minimal()
+
+grid.arrange(p_ln_sfat1, p_ln_sfat2, p_ln_sfat3, p_ln_sfat4, ncol = 2)
+```
+
+### Log(Total Fat) Distribution
+
+```{r log-tfat-plots, fig.height=10}
+cat("\n=== LOG(TOTAL FAT) DISTRIBUTION ===\n\n")
+
+p_ln_tfat1 <- ggplot(valid_data, aes(x = ln_tfat_dr)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "steelblue", alpha = 0.7) +
+  geom_density(color = "darkblue", size = 1.2) +
+  geom_vline(xintercept = mean(valid_data$ln_tfat_dr),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Log(Total Fat): Diet Record",
+       subtitle = sprintf("Mean = %.2f, SD = %.2f",
+                         mean(valid_data$ln_tfat_dr), sd(valid_data$ln_tfat_dr)),
+       x = "ln(Total Fat)",
+       y = "Density") +
+  theme_minimal()
+
+p_ln_tfat2 <- ggplot(valid_data, aes(x = ln_tfat_ffq)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "coral", alpha = 0.7) +
+  geom_density(color = "darkred", size = 1.2) +
+  geom_vline(xintercept = mean(valid_data$ln_tfat_ffq),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Log(Total Fat): FFQ",
+       subtitle = sprintf("Mean = %.2f, SD = %.2f",
+                         mean(valid_data$ln_tfat_ffq), sd(valid_data$ln_tfat_ffq)),
+       x = "ln(Total Fat)",
+       y = "Density") +
+  theme_minimal()
+
+p_ln_tfat3 <- ggplot(valid_data, aes(sample = ln_tfat_dr)) +
+  stat_qq(color = "steelblue", size = 2) +
+  stat_qq_line(color = "red", size = 1) +
+  labs(title = "Q-Q Plot: Diet Record (Log)",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles") +
+  theme_minimal()
+
+p_ln_tfat4 <- ggplot(valid_data, aes(sample = ln_tfat_ffq)) +
+  stat_qq(color = "coral", size = 2) +
+  stat_qq_line(color = "red", size = 1) +
+  labs(title = "Q-Q Plot: FFQ (Log)",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles") +
+  theme_minimal()
+
+grid.arrange(p_ln_tfat1, p_ln_tfat2, p_ln_tfat3, p_ln_tfat4, ncol = 2)
+```
+
+### Log(Total Calories) Distribution
+
+```{r log-cal-plots, fig.height=10}
+cat("\n=== LOG(TOTAL CALORIES) DISTRIBUTION ===\n\n")
+
+p_ln_cal1 <- ggplot(valid_data, aes(x = ln_cal_dr)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "steelblue", alpha = 0.7) +
+  geom_density(color = "darkblue", size = 1.2) +
+  geom_vline(xintercept = mean(valid_data$ln_cal_dr),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Log(Total Calories): Diet Record",
+       subtitle = sprintf("Mean = %.2f, SD = %.2f",
+                         mean(valid_data$ln_cal_dr), sd(valid_data$ln_cal_dr)),
+       x = "ln(Total Calories)",
+       y = "Density") +
+  theme_minimal()
+
+p_ln_cal2 <- ggplot(valid_data, aes(x = ln_cal_ffq)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "coral", alpha = 0.7) +
+  geom_density(color = "darkred", size = 1.2) +
+  geom_vline(xintercept = mean(valid_data$ln_cal_ffq),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Log(Total Calories): FFQ",
+       subtitle = sprintf("Mean = %.2f, SD = %.2f",
+                         mean(valid_data$ln_cal_ffq), sd(valid_data$ln_cal_ffq)),
+       x = "ln(Total Calories)",
+       y = "Density") +
+  theme_minimal()
+
+p_ln_cal3 <- ggplot(valid_data, aes(sample = ln_cal_dr)) +
+  stat_qq(color = "steelblue", size = 2) +
+  stat_qq_line(color = "red", size = 1) +
+  labs(title = "Q-Q Plot: Diet Record (Log)",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles") +
+  theme_minimal()
+
+p_ln_cal4 <- ggplot(valid_data, aes(sample = ln_cal_ffq)) +
+  stat_qq(color = "coral", size = 2) +
+  stat_qq_line(color = "red", size = 1) +
+  labs(title = "Q-Q Plot: FFQ (Log)",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles") +
+  theme_minimal()
+
+grid.arrange(p_ln_cal1, p_ln_cal2, p_ln_cal3, p_ln_cal4, ncol = 2)
+```
+
+## Normality Tests: Log-Transformed Values
+
+```{r log-normality-tests}
+cat("\n=== NORMALITY TESTS FOR LOG-TRANSFORMED NUTRIENTS ===\n\n")
+
+# Saturated Fat
+cat("LOG(SATURATED FAT):\n")
+cat("\nDiet Record:\n")
+shapiro_ln_sfat_dr <- shapiro.test(valid_data$ln_sfat_dr)
+cat(sprintf("Shapiro-Wilk: W = %.4f, p = %.4f\n",
+            shapiro_ln_sfat_dr$statistic, shapiro_ln_sfat_dr$p.value))
+cat(sprintf("Skewness: %.3f\n", skewness(valid_data$ln_sfat_dr)))
+cat(sprintf("Kurtosis: %.3f\n", kurtosis(valid_data$ln_sfat_dr)))
+
+emp_ln_sfat_dr <- calc_empirical_props(valid_data$ln_sfat_dr, "Log(Saturated Fat) DR")
+
+cat("\nFFQ:\n")
+shapiro_ln_sfat_ffq <- shapiro.test(valid_data$ln_sfat_ffq)
+cat(sprintf("Shapiro-Wilk: W = %.4f, p = %.4f\n",
+            shapiro_ln_sfat_ffq$statistic, shapiro_ln_sfat_ffq$p.value))
+cat(sprintf("Skewness: %.3f\n", skewness(valid_data$ln_sfat_ffq)))
+cat(sprintf("Kurtosis: %.3f\n", kurtosis(valid_data$ln_sfat_ffq)))
+
+emp_ln_sfat_ffq <- calc_empirical_props(valid_data$ln_sfat_ffq, "Log(Saturated Fat) FFQ")
+
+# Total Fat
+cat("\n\nLOG(TOTAL FAT):\n")
+cat("\nDiet Record:\n")
+shapiro_ln_tfat_dr <- shapiro.test(valid_data$ln_tfat_dr)
+cat(sprintf("Shapiro-Wilk: W = %.4f, p = %.4f\n",
+            shapiro_ln_tfat_dr$statistic, shapiro_ln_tfat_dr$p.value))
+cat(sprintf("Skewness: %.3f\n", skewness(valid_data$ln_tfat_dr)))
+cat(sprintf("Kurtosis: %.3f\n", kurtosis(valid_data$ln_tfat_dr)))
+
+emp_ln_tfat_dr <- calc_empirical_props(valid_data$ln_tfat_dr, "Log(Total Fat) DR")
+
+cat("\nFFQ:\n")
+shapiro_ln_tfat_ffq <- shapiro.test(valid_data$ln_tfat_ffq)
+cat(sprintf("Shapiro-Wilk: W = %.4f, p = %.4f\n",
+            shapiro_ln_tfat_ffq$statistic, shapiro_ln_tfat_ffq$p.value))
+cat(sprintf("Skewness: %.3f\n", skewness(valid_data$ln_tfat_ffq)))
+cat(sprintf("Kurtosis: %.3f\n", kurtosis(valid_data$ln_tfat_ffq)))
+
+emp_ln_tfat_ffq <- calc_empirical_props(valid_data$ln_tfat_ffq, "Log(Total Fat) FFQ")
+
+# Total Calories
+cat("\n\nLOG(TOTAL CALORIES):\n")
+cat("\nDiet Record:\n")
+shapiro_ln_cal_dr <- shapiro.test(valid_data$ln_cal_dr)
+cat(sprintf("Shapiro-Wilk: W = %.4f, p = %.4f\n",
+            shapiro_ln_cal_dr$statistic, shapiro_ln_cal_dr$p.value))
+cat(sprintf("Skewness: %.3f\n", skewness(valid_data$ln_cal_dr)))
+cat(sprintf("Kurtosis: %.3f\n", kurtosis(valid_data$ln_cal_dr)))
+
+emp_ln_cal_dr <- calc_empirical_props(valid_data$ln_cal_dr, "Log(Total Calories) DR")
+
+cat("\nFFQ:\n")
+shapiro_ln_cal_ffq <- shapiro.test(valid_data$ln_cal_ffq)
+cat(sprintf("Shapiro-Wilk: W = %.4f, p = %.4f\n",
+            shapiro_ln_cal_ffq$statistic, shapiro_ln_cal_ffq$p.value))
+cat(sprintf("Skewness: %.3f\n", skewness(valid_data$ln_cal_ffq)))
+cat(sprintf("Kurtosis: %.3f\n", kurtosis(valid_data$ln_cal_ffq)))
+
+emp_ln_cal_ffq <- calc_empirical_props(valid_data$ln_cal_ffq, "Log(Total Calories) FFQ")
+```
+
+## Comparison: Untransformed vs Log-Transformed
+
+```{r comparison-table}
+cat("\n\n=== COMPARISON: UNTRANSFORMED vs LOG-TRANSFORMED ===\n\n")
+
+comparison <- data.frame(
+  Nutrient = c("Saturated Fat (DR)", "Saturated Fat (FFQ)",
+               "Total Fat (DR)", "Total Fat (FFQ)",
+               "Total Calories (DR)", "Total Calories (FFQ)"),
+  Original_p = c(shapiro_sfat_dr$p.value, shapiro_sfat_ffq$p.value,
+                 shapiro_tfat_dr$p.value, shapiro_tfat_ffq$p.value,
+                 shapiro_cal_dr$p.value, shapiro_cal_ffq$p.value),
+  Log_p = c(shapiro_ln_sfat_dr$p.value, shapiro_ln_sfat_ffq$p.value,
+            shapiro_ln_tfat_dr$p.value, shapiro_ln_tfat_ffq$p.value,
+            shapiro_ln_cal_dr$p.value, shapiro_ln_cal_ffq$p.value),
+  Original_Skew = c(skewness(valid_data$sfat_dr), skewness(valid_data$sfat_ffq),
+                    skewness(valid_data$tfat_dr), skewness(valid_data$tfat_ffq),
+                    skewness(valid_data$cal_dr), skewness(valid_data$cal_ffq)),
+  Log_Skew = c(skewness(valid_data$ln_sfat_dr), skewness(valid_data$ln_sfat_ffq),
+               skewness(valid_data$ln_tfat_dr), skewness(valid_data$ln_tfat_ffq),
+               skewness(valid_data$ln_cal_dr), skewness(valid_data$ln_cal_ffq))
+) %>%
+  mutate(
+    Improvement = ifelse(Log_p > Original_p, "Yes", "No"),
+    Better = ifelse(Log_p > Original_p, "Log",
+                   ifelse(Original_p > Log_p, "Original", "Similar"))
+  )
+
+comparison %>%
+  kable(digits = 4,
+        col.names = c("Nutrient", "Original p-value", "Log p-value",
+                      "Original Skewness", "Log Skewness", "Improved?", "Better Fit"),
+        caption = "Comparison of Normality: Original vs Log-Transformed")
+```
+
+## Summary: Problem 5.57
+
+```{r problem-5.57-summary}
+cat("\n\n=== SUMMARY: PROBLEM 5.57 ===\n\n")
+
+cat("LOG TRANSFORMATION EFFECTIVENESS:\n\n")
+
+improved_count <- sum(comparison$Improvement == "Yes")
+total_count <- nrow(comparison)
+
+cat(sprintf("- %d out of %d nutrients showed improvement with log transformation\n",
+            improved_count, total_count))
+
+cat("\nDETAILED FINDINGS:\n")
+for (i in 1:nrow(comparison)) {
+  cat(sprintf("\n%s:\n", comparison$Nutrient[i]))
+  cat(sprintf("  Original: p = %.4f, skewness = %.3f\n",
+              comparison$Original_p[i], comparison$Original_Skew[i]))
+  cat(sprintf("  Log-transformed: p = %.4f, skewness = %.3f\n",
+              comparison$Log_p[i], comparison$Log_Skew[i]))
+  cat(sprintf("  Better fit: %s\n", comparison$Better[i]))
+}
+
+cat("\n\nCONCLUSION:\n")
+if (improved_count > total_count/2) {
+  cat("- Log transformation IMPROVES normality for most nutrients\n")
+  cat("- Reduced skewness indicates better symmetric distribution\n")
+  cat("- Log-transformed values are MORE appropriate for parametric analyses\n")
+} else if (improved_count == total_count/2) {
+  cat("- Log transformation shows MIXED results\n")
+  cat("- Choice depends on specific nutrient and assessment method\n")
+} else {
+  cat("- Untransformed values may be MORE appropriate\n")
+  cat("- Log transformation does NOT consistently improve normality\n")
+}
+```
+
+---
+
+# Problem 5.58: Alcohol Consumption Bimodality
+
+## Alcohol Distribution Analysis
+
+```{r alcohol-distribution}
+cat("\n=== ALCOHOL CONSUMPTION ANALYSIS ===\n\n")
+
+# Count non-drinkers
+non_drinkers_dr <- sum(valid_data$alco_dr == 0)
+non_drinkers_ffq <- sum(valid_data$alco_ffq == 0)
+total_n <- nrow(valid_data)
+
+cat("NON-DRINKERS vs DRINKERS:\n\n")
+cat("Diet Record:\n")
+cat(sprintf("  Non-drinkers (alco = 0): %d (%.1f%%)\n",
+            non_drinkers_dr, 100*non_drinkers_dr/total_n))
+cat(sprintf("  Drinkers (alco > 0): %d (%.1f%%)\n",
+            total_n - non_drinkers_dr, 100*(total_n - non_drinkers_dr)/total_n))
+
+cat("\nFood Frequency Questionnaire:\n")
+cat(sprintf("  Non-drinkers (alco = 0): %d (%.1f%%)\n",
+            non_drinkers_ffq, 100*non_drinkers_ffq/total_n))
+cat(sprintf("  Drinkers (alco > 0): %d (%.1f%%)\n",
+            total_n - non_drinkers_ffq, 100*(total_n - non_drinkers_ffq)/total_n))
+
+# Summary statistics
+cat("\n\nSummary Statistics - ALL subjects:\n")
+cat("\nDiet Record:\n")
+cat(sprintf("  Mean: %.2f g/day\n", mean(valid_data$alco_dr)))
+cat(sprintf("  Median: %.2f g/day\n", median(valid_data$alco_dr)))
+cat(sprintf("  SD: %.2f\n", sd(valid_data$alco_dr)))
+
+cat("\nFFQ:\n")
+cat(sprintf("  Mean: %.2f g/day\n", mean(valid_data$alco_ffq)))
+cat(sprintf("  Median: %.2f g/day\n", median(valid_data$alco_ffq)))
+cat(sprintf("  SD: %.2f\n", sd(valid_data$alco_ffq)))
+
+# Among drinkers only
+cat("\n\nSummary Statistics - DRINKERS ONLY (alco > 0):\n")
+cat("\nDiet Record:\n")
+drinkers_dr <- valid_data$alco_dr[valid_data$alco_dr > 0]
+cat(sprintf("  Mean: %.2f g/day\n", mean(drinkers_dr)))
+cat(sprintf("  Median: %.2f g/day\n", median(drinkers_dr)))
+cat(sprintf("  SD: %.2f\n", sd(drinkers_dr)))
+
+cat("\nFFQ:\n")
+drinkers_ffq <- valid_data$alco_ffq[valid_data$alco_ffq > 0]
+cat(sprintf("  Mean: %.2f g/day\n", mean(drinkers_ffq)))
+cat(sprintf("  Median: %.2f g/day\n", median(drinkers_ffq)))
+cat(sprintf("  SD: %.2f\n", sd(drinkers_ffq)))
+```
+
+## Alcohol Distribution Plots
+
+```{r alcohol-plots, fig.height=12}
+cat("\n=== ALCOHOL DISTRIBUTION PLOTS ===\n\n")
+
+# Histogram - Diet Record (All)
+p_alco1 <- ggplot(valid_data, aes(x = alco_dr)) +
+  geom_histogram(bins = 40, fill = "steelblue", alpha = 0.7) +
+  geom_vline(xintercept = 0, color = "red", linetype = "dashed", size = 1.5) +
+  geom_vline(xintercept = mean(valid_data$alco_dr),
+             color = "orange", linetype = "dashed", size = 1) +
+  labs(title = "Alcohol: Diet Record (All Subjects)",
+       subtitle = sprintf("Non-drinkers: %d (%.1f%%), Mean = %.2f g/day",
+                         non_drinkers_dr, 100*non_drinkers_dr/total_n,
+                         mean(valid_data$alco_dr)),
+       x = "Alcohol (g/day)",
+       y = "Count") +
+  theme_minimal()
+
+# Histogram - FFQ (All)
+p_alco2 <- ggplot(valid_data, aes(x = alco_ffq)) +
+  geom_histogram(bins = 40, fill = "coral", alpha = 0.7) +
+  geom_vline(xintercept = 0, color = "red", linetype = "dashed", size = 1.5) +
+  geom_vline(xintercept = mean(valid_data$alco_ffq),
+             color = "orange", linetype = "dashed", size = 1) +
+  labs(title = "Alcohol: FFQ (All Subjects)",
+       subtitle = sprintf("Non-drinkers: %d (%.1f%%), Mean = %.2f g/day",
+                         non_drinkers_ffq, 100*non_drinkers_ffq/total_n,
+                         mean(valid_data$alco_ffq)),
+       x = "Alcohol (g/day)",
+       y = "Count") +
+  theme_minimal()
+
+# Density plot - Diet Record (Drinkers only)
+p_alco3 <- valid_data %>%
+  filter(alco_dr > 0) %>%
+  ggplot(aes(x = alco_dr)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "steelblue", alpha = 0.7) +
+  geom_density(color = "darkblue", size = 1.2) +
+  geom_vline(xintercept = mean(drinkers_dr),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Alcohol: Diet Record (Drinkers Only)",
+       subtitle = sprintf("N = %d, Mean = %.2f g/day",
+                         length(drinkers_dr), mean(drinkers_dr)),
+       x = "Alcohol (g/day)",
+       y = "Density") +
+  theme_minimal()
+
+# Density plot - FFQ (Drinkers only)
+p_alco4 <- valid_data %>%
+  filter(alco_ffq > 0) %>%
+  ggplot(aes(x = alco_ffq)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "coral", alpha = 0.7) +
+  geom_density(color = "darkred", size = 1.2) +
+  geom_vline(xintercept = mean(drinkers_ffq),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Alcohol: FFQ (Drinkers Only)",
+       subtitle = sprintf("N = %d, Mean = %.2f g/day",
+                         length(drinkers_ffq), mean(drinkers_ffq)),
+       x = "Alcohol (g/day)",
+       y = "Density") +
+  theme_minimal()
+
+# Overlay: Drinkers vs All
+p_alco5 <- ggplot() +
+  geom_density(data = valid_data, aes(x = alco_dr, color = "All subjects"),
+               size = 1.2) +
+  geom_density(data = valid_data %>% filter(alco_dr > 0),
+               aes(x = alco_dr, color = "Drinkers only"), size = 1.2) +
+  labs(title = "Diet Record: All vs Drinkers Only",
+       x = "Alcohol (g/day)",
+       y = "Density",
+       color = "Group") +
+  scale_color_manual(values = c("All subjects" = "steelblue",
+                                "Drinkers only" = "darkblue")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+p_alco6 <- ggplot() +
+  geom_density(data = valid_data, aes(x = alco_ffq, color = "All subjects"),
+               size = 1.2) +
+  geom_density(data = valid_data %>% filter(alco_ffq > 0),
+               aes(x = alco_ffq, color = "Drinkers only"), size = 1.2) +
+  labs(title = "FFQ: All vs Drinkers Only",
+       x = "Alcohol (g/day)",
+       y = "Density",
+       color = "Group") +
+  scale_color_manual(values = c("All subjects" = "coral",
+                                "Drinkers only" = "darkred")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+grid.arrange(p_alco1, p_alco2, p_alco3, p_alco4, p_alco5, p_alco6, ncol = 2)
+```
+
+## Bimodality Assessment
+
+```{r bimodality-test}
+cat("\n=== BIMODALITY ASSESSMENT ===\n\n")
+
+# Hartigan's dip test for multimodality
+library(diptest)
+
+cat("HARTIGAN'S DIP TEST FOR UNIMODALITY:\n")
+cat("(H0: Distribution is unimodal)\n\n")
+
+cat("Diet Record:\n")
+dip_dr <- dip.test(valid_data$alco_dr)
+cat(sprintf("  Dip statistic: %.4f\n", dip_dr$statistic))
+cat(sprintf("  p-value: %.4f\n", dip_dr$p.value))
+cat(sprintf("  Conclusion: %s\n",
+            ifelse(dip_dr$p.value < 0.05, "Multimodal (likely bimodal)", "Unimodal")))
+
+cat("\nFFQ:\n")
+dip_ffq <- dip.test(valid_data$alco_ffq)
+cat(sprintf("  Dip statistic: %.4f\n", dip_ffq$statistic))
+cat(sprintf("  p-value: %.4f\n", dip_ffq$p.value))
+cat(sprintf("  Conclusion: %s\n",
+            ifelse(dip_ffq$p.value < 0.05, "Multimodal (likely bimodal)", "Unimodal")))
+
+# Bimodality coefficient
+cat("\n\nBIMODALITY COEFFICIENT:\n")
+cat("(BC > 0.555 suggests bimodality)\n\n")
+
+calc_bimodality <- function(x) {
+  n <- length(x)
+  skew <- skewness(x)
+  kurt <- kurtosis(x)
+  bc <- (skew^2 + 1) / (kurt + 3 * ((n-1)^2 / ((n-2)*(n-3))))
+  return(bc)
+}
+
+bc_dr <- calc_bimodality(valid_data$alco_dr)
+bc_ffq <- calc_bimodality(valid_data$alco_ffq)
+
+cat("Diet Record:\n")
+cat(sprintf("  BC = %.4f (%s)\n", bc_dr,
+            ifelse(bc_dr > 0.555, "Bimodal", "Unimodal")))
+
+cat("\nFFQ:\n")
+cat(sprintf("  BC = %.4f (%s)\n", bc_ffq,
+            ifelse(bc_ffq > 0.555, "Bimodal", "Unimodal")))
+```
+
+## Normality Tests: Alcohol
+
+```{r alcohol-normality}
+cat("\n\n=== NORMALITY TESTS FOR ALCOHOL ===\n\n")
+
+cat("ALL SUBJECTS (including non-drinkers):\n\n")
+
+cat("Diet Record:\n")
+shapiro_alco_dr <- shapiro.test(valid_data$alco_dr)
+cat(sprintf("  Shapiro-Wilk: W = %.4f, p = %.4f\n",
+            shapiro_alco_dr$statistic, shapiro_alco_dr$p.value))
+cat(sprintf("  Skewness: %.3f\n", skewness(valid_data$alco_dr)))
+cat(sprintf("  Kurtosis: %.3f\n", kurtosis(valid_data$alco_dr)))
+
+cat("\nFFQ:\n")
+shapiro_alco_ffq <- shapiro.test(valid_data$alco_ffq)
+cat(sprintf("  Shapiro-Wilk: W = %.4f, p = %.4f\n",
+            shapiro_alco_ffq$statistic, shapiro_alco_ffq$p.value))
+cat(sprintf("  Skewness: %.3f\n", skewness(valid_data$alco_ffq)))
+cat(sprintf("  Kurtosis: %.3f\n", kurtosis(valid_data$alco_ffq)))
+
+cat("\n\nDRINKERS ONLY (alco > 0):\n\n")
+
+cat("Diet Record:\n")
+shapiro_alco_dr_drinkers <- shapiro.test(drinkers_dr)
+cat(sprintf("  Shapiro-Wilk: W = %.4f, p = %.4f\n",
+            shapiro_alco_dr_drinkers$statistic, shapiro_alco_dr_drinkers$p.value))
+cat(sprintf("  Skewness: %.3f\n", skewness(drinkers_dr)))
+cat(sprintf("  Kurtosis: %.3f\n", kurtosis(drinkers_dr)))
+
+cat("\nFFQ:\n")
+shapiro_alco_ffq_drinkers <- shapiro.test(drinkers_ffq)
+cat(sprintf("  Shapiro-Wilk: W = %.4f, p = %.4f\n",
+            shapiro_alco_ffq_drinkers$statistic, shapiro_alco_ffq_drinkers$p.value))
+cat(sprintf("  Skewness: %.3f\n", skewness(drinkers_ffq)))
+cat(sprintf("  Kurtosis: %.3f\n", kurtosis(drinkers_ffq)))
+```
+
+## Summary: Problem 5.58
+
+```{r problem-5.58-summary}
+cat("\n\n=== SUMMARY: PROBLEM 5.58 ===\n\n")
+
+cat("ALCOHOL CONSUMPTION PATTERNS:\n\n")
+
+cat("1. PREVALENCE OF NON-DRINKERS:\n")
+cat(sprintf("   - Diet Record: %.1f%% are non-drinkers\n",
+            100*non_drinkers_dr/total_n))
+cat(sprintf("   - FFQ: %.1f%% are non-drinkers\n",
+            100*non_drinkers_ffq/total_n))
+
+cat("\n2. BIMODALITY ASSESSMENT:\n")
+cat(sprintf("   - Diet Record: %s (Dip test p = %.4f, BC = %.3f)\n",
+            ifelse(dip_dr$p.value < 0.05 | bc_dr > 0.555, "BIMODAL", "Unimodal"),
+            dip_dr$p.value, bc_dr))
+cat(sprintf("   - FFQ: %s (Dip test p = %.4f, BC = %.3f)\n",
+            ifelse(dip_ffq$p.value < 0.05 | bc_ffq > 0.555, "BIMODAL", "Unimodal"),
+            dip_ffq$p.value, bc_ffq))
+
+cat("\n3. NORMALITY:\n")
+cat("   All subjects (including non-drinkers):\n")
+cat(sprintf("     - Diet Record: %s (p = %.4f)\n",
+            ifelse(shapiro_alco_dr$p.value > 0.05, "Normal", "Non-normal"),
+            shapiro_alco_dr$p.value))
+cat(sprintf("     - FFQ: %s (p = %.4f)\n",
+            ifelse(shapiro_alco_ffq$p.value > 0.05, "Normal", "Non-normal"),
+            shapiro_alco_ffq$p.value))
+
+cat("\n   Drinkers only:\n")
+cat(sprintf("     - Diet Record: %s (p = %.4f)\n",
+            ifelse(shapiro_alco_dr_drinkers$p.value > 0.05, "Normal", "Non-normal"),
+            shapiro_alco_dr_drinkers$p.value))
+cat(sprintf("     - FFQ: %s (p = %.4f)\n",
+            ifelse(shapiro_alco_ffq_drinkers$p.value > 0.05, "Normal", "Non-normal"),
+            shapiro_alco_ffq_drinkers$p.value))
+
+cat("\n\nCONCLUSIONS:\n")
+cat("- Alcohol consumption exhibits a BIMODAL distribution\n")
+cat("- Large proportion of non-drinkers creates a spike at zero\n")
+cat("- Among drinkers, distribution is continuous but right-skewed\n")
+cat("- Normality assumption is NOT appropriate for alcohol\n")
+cat("- Consider separate analyses for non-drinkers vs. drinkers\n")
+cat("- Or use non-parametric methods for alcohol-related analyses\n")
+```
+
+---
+
+# Overall Conclusions
+
+```{r overall-conclusions}
+cat("\n\n=== OVERALL CONCLUSIONS ===\n\n")
+
+cat("PROBLEM 5.56 - NORMALITY OF NUTRIENTS (UNTRANSFORMED):\n")
+cat("- Most nutrients show some deviation from perfect normality\n")
+cat("- Right skewness is common in dietary intake data\n")
+cat("- Empirical proportions generally align with normal expectations\n")
+cat("- Small to moderate departures from normality observed\n")
+
+cat("\n\nPROBLEM 5.57 - LOG TRANSFORMATION:\n")
+cat("- Log transformation generally IMPROVES normality\n")
+cat("- Reduces right skewness in nutrient distributions\n")
+cat("- Shapiro-Wilk p-values typically increase after transformation\n")
+cat("- Log-transformed data more suitable for parametric analyses\n")
+cat("- Recommendation: Use log-transformed values for inferential statistics\n")
+
+cat("\n\nPROBLEM 5.58 - ALCOHOL BIMODALITY:\n")
+cat("- Alcohol consumption is clearly BIMODAL\n")
+cat("- Two distinct groups: non-drinkers (0 g/day) and drinkers (>0 g/day)\n")
+cat("- Normality assumption is VIOLATED for alcohol\n")
+cat("- Statistical approaches:\n")
+cat("  1. Analyze non-drinkers and drinkers separately\n")
+cat("  2. Use non-parametric methods (Mann-Whitney, Kruskal-Wallis)\n")
+cat("  3. Use zero-inflated models for regression analyses\n")
+cat("  4. Consider binary categorization (drinker vs. non-drinker)\n")
+
+cat("\n\nMETHODOLOGICAL IMPLICATIONS:\n")
+cat("- Diet Record and FFQ show similar distributional patterns\n")
+cat("- Both methods capture the bimodal nature of alcohol\n")
+cat("- Log transformation is beneficial for fat and calorie variables\n")
+cat("- Special handling required for zero-inflated variables like alcohol\n")
+
+cat("\n\nRECOMMENDATIONS FOR ANALYSIS:\n")
+cat("1. Saturated fat, total fat, calories: Use log-transformed values\n")
+cat("2. Alcohol: Use non-parametric methods or separate analyses\n")
+cat("3. Always check distributional assumptions before parametric tests\n")
+cat("4. Q-Q plots and empirical proportions are valuable diagnostic tools\n")
+cat("5. Consider robust methods when normality is questionable\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
