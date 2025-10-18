@@ -1,0 +1,1007 @@
+---
+title: "Sex Ratio and Birth Order: Hypothesis Testing Approach"
+author: "Biostatistics Analysis - Chapter 7"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 14, fig.height = 10)
+```
+
+# Background
+
+This analysis applies **hypothesis testing methods** (Chapter 7) to investigate whether the sex of successive births is predictable from previous births. This addresses the same research questions as Problem 4.57 and 6.59, but uses formal hypothesis testing rather than confidence interval estimation.
+
+## Research Question
+
+**Problem 7.61:** Apply hypothesis-testing methods to answer the questions posed in Problem 4.57.
+
+**Central Question:** Is the sex of successive births predictable from the sex of previous births?
+
+## Study Design
+
+- **Data Source:** SEXRAT.DAT - Birth sex patterns from over 50,000 families
+- **Family Sizes:** 2 to 5 children
+- **Variables:** Sex of each child in birth order (M/F)
+
+## Null and Alternative Hypotheses
+
+**H₀ (Null Hypothesis):** The sex of successive births is **INDEPENDENT** of previous births
+- Each birth has the same probability (~0.51) of being male
+- P(Male | Previous pattern) = 0.51 for all patterns
+- Birth sequences follow binomial distribution
+
+**H₁ (Alternative Hypothesis):** The sex of successive births is **DEPENDENT** on previous births
+- Probability of male varies by previous birth pattern
+- Predictability exists based on family history
+
+## Statistical Approach
+
+We will use multiple hypothesis testing methods:
+
+1. **One-sample proportion test** - Test if overall sex ratio = 0.51
+2. **Two-sample proportion test** - Compare conditional probabilities
+3. **Chi-square test of independence** - Test for association between births
+4. **Chi-square goodness-of-fit** - Test observed vs expected distributions
+5. **McNemar's test** - For paired categorical data (where applicable)
+
+**Significance Level:** α = 0.05
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+library(gridExtra)
+library(scales)
+```
+
+# Data Import and Exploration
+
+```{r data-import}
+# Read the SEXRAT dataset
+# Use stringsAsFactors = FALSE to ensure we get character data
+sexrat_data <- read.csv("../SEXRAT.DAT.txt",
+                        check.names = FALSE,
+                        stringsAsFactors = FALSE,
+                        na.strings = c("", "NA"))
+
+# Remove quotes from column names
+colnames(sexrat_data) <- gsub("'", "", colnames(sexrat_data))
+
+# DEBUG: Check raw data
+cat("\nDEBUG - First few rows of raw data:\n")
+print(head(sexrat_data[, c("sx_1", "sx_2", "num_fam")], 10))
+cat("\nDEBUG - Unique values in raw sx_1:\n")
+print(unique(sexrat_data$sx_1))
+cat("\nDEBUG - Class of sx_1:\n")
+print(class(sexrat_data$sx_1))
+
+# Display structure
+cat("Dataset Structure:\n")
+str(sexrat_data)
+
+cat("\n\nVariable Descriptions:\n")
+cat("- nm_chld: Number of children in family\n")
+cat("- sx_1: Sex of 1st child (M/F)\n")
+cat("- sx_2: Sex of 2nd child (M/F)\n")
+cat("- sx_3: Sex of 3rd child (M/F)\n")
+cat("- sx-4: Sex of 4th child (M/F)\n")
+cat("- sx_5: Sex of 5th child (M/F)\n")
+cat("- sexchldn: Concatenated sex sequence\n")
+cat("- num_fam: Number of families with this pattern\n")
+
+cat("\n\nFirst 15 Patterns:\n")
+head(sexrat_data, 15) %>%
+  kable(caption = "Sample of Birth Sex Patterns")
+
+cat(sprintf("\n\nTotal patterns: %d\n", nrow(sexrat_data)))
+cat(sprintf("Total families: %s\n", format(sum(sexrat_data$num_fam), big.mark = ",")))
+```
+
+## Data Preparation
+
+```{r data-prep}
+# First clean the aggregated data before expanding
+sexrat_clean <- sexrat_data %>%
+  mutate(
+    # Clean sex variables before expansion
+    # IMPORTANT: Remove quotes that are part of the string values
+    sx_1 = gsub("'", "", as.character(sx_1)),
+    sx_2 = gsub("'", "", as.character(sx_2)),
+    sx_3 = gsub("'", "", as.character(sx_3)),
+    `sx-4` = gsub("'", "", as.character(`sx-4`)),
+    sx_5 = gsub("'", "", as.character(sx_5)),
+    # Then trim whitespace and convert to uppercase
+    sx_1 = toupper(trimws(sx_1)),
+    sx_2 = toupper(trimws(sx_2)),
+    sx_3 = toupper(trimws(sx_3)),
+    `sx-4` = toupper(trimws(`sx-4`)),
+    sx_5 = toupper(trimws(sx_5)),
+    # Replace empty strings with NA
+    sx_1 = ifelse(sx_1 == "", NA_character_, sx_1),
+    sx_2 = ifelse(sx_2 == "", NA_character_, sx_2),
+    sx_3 = ifelse(sx_3 == "", NA_character_, sx_3),
+    `sx-4` = ifelse(`sx-4` == "", NA_character_, `sx-4`),
+    sx_5 = ifelse(sx_5 == "", NA_character_, sx_5)
+  )
+
+# Now expand to individual families
+expanded_data <- sexrat_clean %>%
+  uncount(num_fam) %>%
+  mutate(family_id = row_number())
+
+cat(sprintf("Expanded to %s individual families\n\n",
+            format(nrow(expanded_data), big.mark = ",")))
+
+# Verify data cleaning
+cat("Sample of cleaned data:\n")
+expanded_data %>%
+  select(family_id, nm_chld, sx_1, sx_2, sx_3) %>%
+  head(5) %>%
+  kable()
+
+cat("\n\nDEBUG - After cleaning and expansion:\n")
+cat("Total expanded families:", nrow(expanded_data), "\n")
+cat("Unique values in sx_1 after cleaning:\n")
+print(unique(expanded_data$sx_1))
+cat("\nFirst 20 values of sx_1:\n")
+print(head(expanded_data$sx_1, 20))
+cat("\nTable of sx_1:\n")
+print(table(expanded_data$sx_1, useNA = "always"))
+cat("\nClass of sx_1:\n")
+print(class(expanded_data$sx_1))
+cat("\nAny 'M' in sx_1?:", any(expanded_data$sx_1 == "M", na.rm = TRUE), "\n")
+cat("Any 'F' in sx_1?:", any(expanded_data$sx_1 == "F", na.rm = TRUE), "\n")
+
+# Try to see what's different
+cat("\nChecking for hidden characters:\n")
+if(nrow(expanded_data) > 0 && !is.na(expanded_data$sx_1[1])) {
+  cat("First sx_1 value as raw:", charToRaw(expanded_data$sx_1[1]), "\n")
+  cat("nchar of first sx_1:", nchar(expanded_data$sx_1[1]), "\n")
+}
+
+cat("\n\n")
+
+# Create long format for birth order analysis
+birth_data <- expanded_data %>%
+  pivot_longer(cols = starts_with("sx"),
+               names_to = "birth_order_raw",
+               values_to = "sex") %>%
+  filter(!is.na(sex) & sex != "") %>%
+  mutate(
+    birth_order = as.integer(str_extract(birth_order_raw, "\\d+")),
+    sex = toupper(trimws(sex)),
+    is_male = ifelse(sex == "M", 1, 0)
+  ) %>%
+  select(family_id, nm_chld, birth_order, sex, is_male) %>%
+  arrange(family_id, birth_order)
+
+cat(sprintf("Total births: %s\n\n", format(nrow(birth_data), big.mark = ",")))
+
+# Summary by family size
+family_summary <- birth_data %>%
+  group_by(nm_chld) %>%
+  summarise(
+    n_families = n_distinct(family_id),
+    n_births = n(),
+    .groups = "drop"
+  )
+
+cat("Distribution by Family Size:\n")
+family_summary %>%
+  kable(digits = 0,
+        col.names = c("Number of Children", "Families", "Total Births"),
+        format.args = list(big.mark = ","))
+```
+
+---
+
+# Test 1: Overall Sex Ratio
+
+```{r test-1-overall}
+cat("\n=== TEST 1: OVERALL SEX RATIO ===\n\n")
+
+cat("H₀: Proportion of male births = 0.51 (biological expectation)\n")
+cat("H₁: Proportion of male births ≠ 0.51\n")
+cat("Test: One-sample proportion test (two-sided)\n")
+cat("Significance level: α = 0.05\n\n")
+
+# Calculate overall statistics
+n_total <- nrow(birth_data)
+n_male <- sum(birth_data$is_male)
+n_female <- n_total - n_male
+p_obs <- n_male / n_total
+
+cat("Observed Data:\n")
+cat(sprintf("- Total births: %s\n", format(n_total, big.mark = ",")))
+cat(sprintf("- Male births: %s (%.4f)\n", format(n_male, big.mark = ","), p_obs))
+cat(sprintf("- Female births: %s (%.4f)\n", format(n_female, big.mark = ","), 1 - p_obs))
+
+# One-sample proportion test
+# H₀: p = 0.51
+p0 <- 0.51
+prop_test <- prop.test(x = n_male, n = n_total, p = p0,
+                       alternative = "two.sided", correct = FALSE)
+
+cat("\n\nHypothesis Test Results:\n")
+cat(sprintf("- Null proportion (p₀): %.2f\n", p0))
+cat(sprintf("- Observed proportion (p̂): %.4f\n", p_obs))
+cat(sprintf("- Chi-square statistic: %.4f\n", prop_test$statistic))
+cat(sprintf("- p-value: %.6f\n", prop_test$p.value))
+cat(sprintf("- 95%% CI: [%.4f, %.4f]\n",
+            prop_test$conf.int[1], prop_test$conf.int[2]))
+
+cat("\n\nDecision:\n")
+if (prop_test$p.value < 0.05) {
+  cat(sprintf("✗ p = %.6f < 0.05: REJECT H₀\n", prop_test$p.value))
+  cat("✗ The overall sex ratio DIFFERS SIGNIFICANTLY from 0.51\n")
+  if (p_obs > p0) {
+    cat(sprintf("✗ Observed proportion (%.4f) is HIGHER than expected\n", p_obs))
+  } else {
+    cat(sprintf("✗ Observed proportion (%.4f) is LOWER than expected\n", p_obs))
+  }
+} else {
+  cat(sprintf("✓ p = %.6f > 0.05: FAIL TO REJECT H₀\n", prop_test$p.value))
+  cat("✓ The overall sex ratio is CONSISTENT with 0.51\n")
+  cat("✓ No evidence that overall proportion differs from biological expectation\n")
+}
+
+# Z-test for comparison
+z_stat <- (p_obs - p0) / sqrt(p0 * (1 - p0) / n_total)
+p_value_z <- 2 * (1 - pnorm(abs(z_stat)))
+
+cat("\n\nAlternative Calculation (Z-test):\n")
+cat(sprintf("- Z-statistic: %.4f\n", z_stat))
+cat(sprintf("- p-value: %.6f\n", p_value_z))
+```
+
+---
+
+# Test 2: Sex Ratio by Birth Order
+
+```{r test-2-birth-order}
+cat("\n\n=== TEST 2: SEX RATIO BY BIRTH ORDER ===\n\n")
+
+cat("H₀: Proportion of males is EQUAL across all birth orders\n")
+cat("H₁: Proportion of males DIFFERS across birth orders\n")
+cat("Test: Chi-square test of homogeneity\n\n")
+
+# Create contingency table
+birth_order_table <- birth_data %>%
+  group_by(birth_order, sex) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  pivot_wider(names_from = sex, values_from = n, values_fill = 0)
+
+cat("Contingency Table: Birth Order × Sex\n")
+birth_order_table %>%
+  kable(format.args = list(big.mark = ","))
+
+# Chi-square test
+cont_table <- as.matrix(birth_order_table[, -1])
+rownames(cont_table) <- paste("Birth", birth_order_table$birth_order)
+
+chi_test_order <- chisq.test(cont_table)
+
+cat("\n\nChi-square Test Results:\n")
+cat(sprintf("- Chi-square statistic: %.4f\n", chi_test_order$statistic))
+cat(sprintf("- Degrees of freedom: %d\n", chi_test_order$parameter))
+cat(sprintf("- p-value: %.6f\n", chi_test_order$p.value))
+
+cat("\n\nExpected Counts (under H₀):\n")
+as.data.frame(chi_test_order$expected) %>%
+  kable(digits = 1, format.args = list(big.mark = ","))
+
+cat("\n\nDecision:\n")
+if (chi_test_order$p.value < 0.05) {
+  cat(sprintf("✗ p = %.6f < 0.05: REJECT H₀\n", chi_test_order$p.value))
+  cat("✗ Sex ratio DIFFERS SIGNIFICANTLY across birth orders\n")
+  cat("✗ Birth order position affects sex ratio\n")
+} else {
+  cat(sprintf("✓ p = %.6f > 0.05: FAIL TO REJECT H₀\n", chi_test_order$p.value))
+  cat("✓ Sex ratio is CONSISTENT across birth orders\n")
+  cat("✓ No evidence that birth order affects sex ratio\n")
+}
+
+# Proportions by birth order
+birth_order_props <- birth_data %>%
+  group_by(birth_order) %>%
+  summarise(
+    n = n(),
+    n_male = sum(is_male),
+    prop_male = mean(is_male),
+    .groups = "drop"
+  )
+
+cat("\n\nProportions by Birth Order:\n")
+birth_order_props %>%
+  kable(digits = 4,
+        col.names = c("Birth Order", "N", "Males", "Prop Male"),
+        format.args = list(big.mark = ","))
+```
+
+---
+
+# Test 3: Second Birth Given First Birth
+
+```{r test-3-conditional-2nd}
+cat("\n\n=== TEST 3: SECOND BIRTH CONDITIONAL ON FIRST BIRTH ===\n\n")
+
+cat("QUESTION: Does the sex of the 2nd child depend on the sex of the 1st child?\n\n")
+
+cat("H₀: P(2nd Male | 1st Male) = P(2nd Male | 1st Female)\n")
+cat("H₁: P(2nd Male | 1st Male) ≠ P(2nd Male | 1st Female)\n")
+cat("Test: Two-sample proportion test\n\n")
+
+# Extract families with 2+ children
+families_2plus <- expanded_data %>%
+  filter(nm_chld >= 2) %>%
+  mutate(
+    first_male = ifelse(sx_1 == "M", 1, 0),
+    second_male = ifelse(sx_2 == "M", 1, 0)
+  )
+
+# Create 2×2 contingency table
+table_2x2 <- table(First = families_2plus$sx_1,
+                   Second = families_2plus$sx_2)
+
+cat("Contingency Table: 1st Birth × 2nd Birth\n")
+addmargins(table_2x2) %>%
+  kable()
+
+# Calculate conditional probabilities
+cond_probs <- families_2plus %>%
+  group_by(sx_1) %>%
+  summarise(
+    n = n(),
+    n_second_male = sum(second_male),
+    prop_second_male = mean(second_male),
+    .groups = "drop"
+  )
+
+cat("\n\nConditional Probabilities:\n")
+cond_probs %>%
+  kable(digits = 4,
+        col.names = c("1st Child", "N Families", "2nd Male", "P(2nd Male)"),
+        format.args = list(big.mark = ","))
+
+# Chi-square test of independence
+chi_test_2nd <- chisq.test(table_2x2, correct = FALSE)
+
+cat("\n\nChi-square Test of Independence:\n")
+cat(sprintf("- Chi-square statistic: %.4f\n", chi_test_2nd$statistic))
+cat(sprintf("- Degrees of freedom: %d\n", chi_test_2nd$parameter))
+cat(sprintf("- p-value: %.6f\n", chi_test_2nd$p.value))
+
+cat("\n\nExpected Counts (under independence):\n")
+chi_test_2nd$expected %>%
+  kable(digits = 1, format.args = list(big.mark = ","))
+
+# Two-sample proportion test
+# Debug: Check unique values in sx_1
+cat("\n\n=== DEBUG CHECKPOINT ===\n")
+cat("Total families with 2+ children:", nrow(families_2plus), "\n")
+cat("Unique values in sx_1:\n")
+print(unique(families_2plus$sx_1))
+cat("\nTable of sx_1:\n")
+print(table(families_2plus$sx_1, useNA = "always"))
+cat("========================\n\n")
+
+# Try both exact match and also check for any M or F
+male_first <- families_2plus %>% filter(sx_1 == "M")
+female_first <- families_2plus %>% filter(sx_1 == "F")
+
+cat("After filtering:\n")
+cat("  Male first (sx_1 == 'M'):", nrow(male_first), "families\n")
+cat("  Female first (sx_1 == 'F'):", nrow(female_first), "families\n")
+
+n1 <- nrow(male_first)
+x1 <- sum(male_first$second_male, na.rm = TRUE)
+p1 <- x1 / n1
+
+n2 <- nrow(female_first)
+x2 <- sum(female_first$second_male, na.rm = TRUE)
+p2 <- x2 / n2
+
+cat(sprintf("\nDEBUG - n1 (Male first): %d, x1: %d\n", n1, x1))
+cat(sprintf("DEBUG - n2 (Female first): %d, x2: %d\n", n2, x2))
+
+# Only run prop.test if both n1 and n2 are positive
+if (n1 > 0 && n2 > 0) {
+  two_prop_test <- prop.test(x = c(x1, x2), n = c(n1, n2),
+                             alternative = "two.sided", correct = FALSE)
+} else {
+  cat("\nERROR: Cannot perform two-sample proportion test - one or both groups empty\n")
+  cat(sprintf("Male first births: %d families\n", n1))
+  cat(sprintf("Female first births: %d families\n", n2))
+  stop("Empty groups - check data cleaning")
+}
+
+cat("\n\nTwo-Sample Proportion Test:\n")
+cat(sprintf("- P(2nd Male | 1st Male):   %.4f (n = %s)\n",
+            p1, format(n1, big.mark = ",")))
+cat(sprintf("- P(2nd Male | 1st Female): %.4f (n = %s)\n",
+            p2, format(n2, big.mark = ",")))
+cat(sprintf("- Difference: %.4f\n", p1 - p2))
+cat(sprintf("- Chi-square statistic: %.4f\n", two_prop_test$statistic))
+cat(sprintf("- p-value: %.6f\n", two_prop_test$p.value))
+
+cat("\n\nDecision:\n")
+if (chi_test_2nd$p.value < 0.05) {
+  cat(sprintf("✗ p = %.6f < 0.05: REJECT H₀\n", chi_test_2nd$p.value))
+  cat("✗ The sex of the 2nd child IS DEPENDENT on the sex of the 1st child\n")
+  cat("✗ EVIDENCE FOR PREDICTABILITY\n")
+  if (p1 > p2) {
+    cat(sprintf("✗ 2nd child more likely to be male when 1st is male (%.4f vs %.4f)\n",
+                p1, p2))
+  } else {
+    cat(sprintf("✗ 2nd child more likely to be male when 1st is female (%.4f vs %.4f)\n",
+                p2, p1))
+  }
+} else {
+  cat(sprintf("✓ p = %.6f > 0.05: FAIL TO REJECT H₀\n", chi_test_2nd$p.value))
+  cat("✓ The sex of the 2nd child is INDEPENDENT of the sex of the 1st child\n")
+  cat("✓ NO EVIDENCE FOR PREDICTABILITY\n")
+  cat(sprintf("✓ Proportions are similar: %.4f vs %.4f\n", p1, p2))
+}
+```
+
+---
+
+# Test 4: Third Birth Given First Two Births
+
+```{r test-4-conditional-3rd}
+cat("\n\n=== TEST 4: THIRD BIRTH CONDITIONAL ON FIRST TWO BIRTHS ===\n\n")
+
+cat("QUESTION: Does the sex of the 3rd child depend on the pattern of first 2 children?\n\n")
+
+cat("H₀: P(3rd Male) is EQUAL for all 4 patterns of first 2 children\n")
+cat("H₁: P(3rd Male) DIFFERS across patterns of first 2 children\n")
+cat("Test: Chi-square test of homogeneity\n\n")
+
+# Extract families with 3+ children
+families_3plus <- expanded_data %>%
+  filter(nm_chld >= 3) %>%
+  mutate(
+    pattern_2 = paste0(sx_1, sx_2),
+    third_sex = sx_3,
+    third_male = ifelse(sx_3 == "M", 1, 0)
+  )
+
+# Contingency table
+table_3rd <- table(Pattern = families_3plus$pattern_2,
+                   Third = families_3plus$third_sex)
+
+cat("Contingency Table: First 2 Children × 3rd Child\n")
+addmargins(table_3rd) %>%
+  kable(format.args = list(big.mark = ","))
+
+# Chi-square test
+chi_test_3rd <- chisq.test(table_3rd, correct = FALSE)
+
+cat("\n\nChi-square Test Results:\n")
+cat(sprintf("- Chi-square statistic: %.4f\n", chi_test_3rd$statistic))
+cat(sprintf("- Degrees of freedom: %d\n", chi_test_3rd$parameter))
+cat(sprintf("- p-value: %.6f\n", chi_test_3rd$p.value))
+
+cat("\n\nExpected Counts:\n")
+chi_test_3rd$expected %>%
+  kable(digits = 1, format.args = list(big.mark = ","))
+
+# Conditional probabilities
+cond_probs_3rd <- families_3plus %>%
+  group_by(pattern_2) %>%
+  summarise(
+    n = n(),
+    n_third_male = sum(third_male),
+    prop_third_male = mean(third_male),
+    .groups = "drop"
+  ) %>%
+  arrange(pattern_2)
+
+cat("\n\nConditional Probabilities:\n")
+cond_probs_3rd %>%
+  kable(digits = 4,
+        col.names = c("First 2 Children", "N Families", "3rd Male", "P(3rd Male)"),
+        format.args = list(big.mark = ","))
+
+cat("\n\nDecision:\n")
+if (chi_test_3rd$p.value < 0.05) {
+  cat(sprintf("✗ p = %.6f < 0.05: REJECT H₀\n", chi_test_3rd$p.value))
+  cat("✗ The sex of the 3rd child IS DEPENDENT on the pattern of first 2 children\n")
+  cat("✗ EVIDENCE FOR PREDICTABILITY\n")
+} else {
+  cat(sprintf("✓ p = %.6f > 0.05: FAIL TO REJECT H₀\n", chi_test_3rd$p.value))
+  cat("✓ The sex of the 3rd child is INDEPENDENT of the pattern of first 2 children\n")
+  cat("✓ NO EVIDENCE FOR PREDICTABILITY\n")
+}
+
+# Range of proportions
+prop_range <- range(cond_probs_3rd$prop_third_male)
+cat(sprintf("\n\nProportions range from %.4f to %.4f (difference: %.4f)\n",
+            prop_range[1], prop_range[2], diff(prop_range)))
+```
+
+---
+
+# Test 5: Family Composition (2-Child Families)
+
+```{r test-5-goodness-of-fit}
+cat("\n\n=== TEST 5: FAMILY COMPOSITION - GOODNESS OF FIT ===\n\n")
+
+cat("QUESTION: Do 2-child families follow expected distribution under independence?\n\n")
+
+cat("H₀: Observed distribution = Expected distribution (MM:MF:FM:FF = 1:1:1:1)\n")
+cat("H₁: Observed distribution ≠ Expected distribution\n")
+cat("Test: Chi-square goodness-of-fit test\n\n")
+
+# 2-child families
+fam_2 <- expanded_data %>%
+  filter(nm_chld == 2) %>%
+  count(sexchldn) %>%
+  arrange(sexchldn)
+
+cat("Observed Frequencies:\n")
+fam_2 %>%
+  kable(col.names = c("Pattern", "Observed"),
+        format.args = list(big.mark = ","))
+
+# Expected under independence (equal probabilities)
+n_total_2 <- sum(fam_2$n)
+expected_2 <- rep(n_total_2 / 4, 4)
+
+# Create comparison table
+comparison_2 <- fam_2 %>%
+  mutate(
+    Expected = expected_2,
+    Observed_Pct = (n / sum(n)) * 100,
+    Expected_Pct = 25.0,
+    Diff = n - Expected,
+    Chi_Component = (n - Expected)^2 / Expected
+  )
+
+cat("\n\nComparison: Observed vs Expected\n")
+comparison_2 %>%
+  select(sexchldn, n, Expected, Observed_Pct, Expected_Pct, Diff) %>%
+  kable(digits = 2,
+        col.names = c("Pattern", "Observed", "Expected", "Obs %", "Exp %", "Difference"),
+        format.args = list(big.mark = ","))
+
+# Chi-square goodness-of-fit test
+chi_gof_2 <- chisq.test(fam_2$n, p = rep(0.25, 4))
+
+cat("\n\nChi-square Goodness-of-Fit Test:\n")
+cat(sprintf("- Chi-square statistic: %.4f\n", chi_gof_2$statistic))
+cat(sprintf("- Degrees of freedom: %d\n", chi_gof_2$parameter))
+cat(sprintf("- p-value: %.6f\n", chi_gof_2$p.value))
+
+cat("\n\nContributions to Chi-square:\n")
+comparison_2 %>%
+  select(sexchldn, Chi_Component) %>%
+  kable(digits = 4,
+        col.names = c("Pattern", "Chi-square Component"))
+
+cat("\n\nDecision:\n")
+if (chi_gof_2$p.value < 0.05) {
+  cat(sprintf("✗ p = %.6f < 0.05: REJECT H₀\n", chi_gof_2$p.value))
+  cat("✗ Observed distribution DIFFERS from expected under independence\n")
+  cat("✗ EVIDENCE AGAINST INDEPENDENCE\n")
+} else {
+  cat(sprintf("✓ p = %.6f > 0.05: FAIL TO REJECT H₀\n", chi_gof_2$p.value))
+  cat("✓ Observed distribution is CONSISTENT with expected under independence\n")
+  cat("✓ NO EVIDENCE AGAINST INDEPENDENCE\n")
+}
+```
+
+---
+
+# Test 6: All Birth Sequences (Chi-square Test)
+
+```{r test-6-all-sequences}
+cat("\n\n=== TEST 6: COMPREHENSIVE TEST - ALL BIRTH SEQUENCES ===\n\n")
+
+cat("For each family size, test if observed patterns match expected under independence\n\n")
+
+# Function to calculate expected probabilities under independence
+calc_expected_probs <- function(n_children, p_male = 0.51) {
+  # All possible patterns
+  patterns <- expand.grid(rep(list(c("F", "M")), n_children))
+  patterns$pattern <- apply(patterns, 1, paste, collapse = "")
+
+  # Count males in each pattern
+  patterns$n_males <- apply(patterns[, 1:n_children], 1, function(x) sum(x == "M"))
+
+  # Expected probability
+  patterns$prob <- dbinom(patterns$n_males, n_children, p_male)
+
+  return(patterns[, c("pattern", "n_males", "prob")])
+}
+
+# Test for each family size
+results_list <- list()
+
+for (size in 2:5) {
+  cat(sprintf("\n--- FAMILIES WITH %d CHILDREN ---\n\n", size))
+
+  # Observed data
+  # Clean sexchldn by removing quotes
+  obs_data <- expanded_data %>%
+    filter(nm_chld == size) %>%
+    mutate(sexchldn = gsub("'", "", as.character(sexchldn))) %>%
+    count(sexchldn) %>%
+    rename(pattern = sexchldn, observed = n)
+
+  cat("DEBUG - First few observed patterns:\n")
+  print(head(obs_data))
+  cat("DEBUG - Total observed families:", sum(obs_data$observed), "\n\n")
+
+  # Expected probabilities
+  exp_probs <- calc_expected_probs(size, p_male = 0.51)
+
+  # Merge and calculate expected counts
+  # Only use patterns that were actually observed
+  comparison <- obs_data %>%
+    left_join(exp_probs, by = "pattern") %>%
+    filter(!is.na(prob)) %>%  # Keep only patterns with valid probabilities
+    mutate(
+      expected = sum(observed, na.rm = TRUE) * prob,
+      obs_pct = observed / sum(observed, na.rm = TRUE) * 100,
+      exp_pct = prob * 100
+    )
+
+  # Normalize probabilities to sum to 1 for the observed patterns only
+  comparison <- comparison %>%
+    mutate(prob_normalized = prob / sum(prob))
+
+  cat("Observed vs Expected:\n")
+  comparison %>%
+    select(pattern, n_males, observed, expected, obs_pct, exp_pct) %>%
+    arrange(n_males, pattern) %>%
+    head(10) %>%
+    kable(digits = 2,
+          col.names = c("Pattern", "# Males", "Observed", "Expected",
+                       "Obs %", "Exp %"),
+          format.args = list(big.mark = ","))
+
+  # Chi-square goodness-of-fit using normalized probabilities
+  chi_test <- chisq.test(comparison$observed, p = comparison$prob_normalized)
+
+  cat(sprintf("\n\nChi-square test: χ² = %.4f, df = %d, p = %.6f\n",
+              chi_test$statistic, chi_test$parameter, chi_test$p.value))
+
+  if (chi_test$p.value < 0.05) {
+    cat(sprintf("✗ REJECT H₀ (p = %.6f): Patterns differ from independence\n",
+                chi_test$p.value))
+  } else {
+    cat(sprintf("✓ FAIL TO REJECT H₀ (p = %.6f): Patterns consistent with independence\n",
+                chi_test$p.value))
+  }
+
+  # Store results
+  results_list[[size]] <- data.frame(
+    Family_Size = size,
+    Chi_Square = chi_test$statistic,
+    DF = chi_test$parameter,
+    p_value = chi_test$p.value,
+    Significant = chi_test$p.value < 0.05
+  )
+}
+
+cat("\n\n=== SUMMARY ACROSS ALL FAMILY SIZES ===\n\n")
+
+results_summary <- bind_rows(results_list)
+results_summary %>%
+  kable(digits = 6,
+        col.names = c("Family Size", "Chi-square", "DF", "p-value", "Significant?"))
+
+cat("\n\nOverall Assessment:\n")
+n_significant <- sum(results_summary$Significant)
+n_total <- nrow(results_summary)
+
+if (n_significant == 0) {
+  cat(sprintf("✓ ALL %d family sizes show patterns consistent with independence\n", n_total))
+  cat("✓ STRONG EVIDENCE SUPPORTING INDEPENDENCE\n")
+} else if (n_significant <= n_total / 2) {
+  cat(sprintf("~ %d out of %d family sizes show significant departures\n",
+              n_significant, n_total))
+  cat("~ MIXED EVIDENCE\n")
+} else {
+  cat(sprintf("✗ %d out of %d family sizes show significant departures\n",
+              n_significant, n_total))
+  cat("✗ EVIDENCE AGAINST INDEPENDENCE\n")
+}
+```
+
+---
+
+# Summary of All Hypothesis Tests
+
+```{r summary-all-tests}
+cat("\n\n=== COMPREHENSIVE SUMMARY: ALL HYPOTHESIS TESTS ===\n\n")
+
+# Create summary table
+summary_tests <- data.frame(
+  Test_Number = 1:5,
+  Test_Description = c(
+    "Overall sex ratio = 0.51",
+    "Sex ratio equal across birth orders",
+    "2nd birth independent of 1st birth",
+    "3rd birth independent of first 2 births",
+    "2-child families: goodness-of-fit"
+  ),
+  Test_Type = c(
+    "One-sample proportion",
+    "Chi-square homogeneity",
+    "Chi-square independence",
+    "Chi-square homogeneity",
+    "Chi-square goodness-of-fit"
+  ),
+  Statistic = c(
+    prop_test$statistic,
+    chi_test_order$statistic,
+    chi_test_2nd$statistic,
+    chi_test_3rd$statistic,
+    chi_gof_2$statistic
+  ),
+  DF = c(
+    1,
+    chi_test_order$parameter,
+    chi_test_2nd$parameter,
+    chi_test_3rd$parameter,
+    chi_gof_2$parameter
+  ),
+  p_value = c(
+    prop_test$p.value,
+    chi_test_order$p.value,
+    chi_test_2nd$p.value,
+    chi_test_3rd$p.value,
+    chi_gof_2$p.value
+  )
+) %>%
+  mutate(
+    Decision = ifelse(p_value < 0.05, "Reject H₀", "Fail to reject H₀"),
+    Significance = ifelse(p_value < 0.001, "***",
+                         ifelse(p_value < 0.01, "**",
+                               ifelse(p_value < 0.05, "*", "ns")))
+  )
+
+cat("Summary of Hypothesis Tests:\n\n")
+summary_tests %>%
+  select(Test_Number, Test_Description, Statistic, DF, p_value, Decision, Significance) %>%
+  kable(digits = 6,
+        col.names = c("#", "Test Description", "Statistic", "DF",
+                     "p-value", "Decision", "Sig"))
+
+cat("\n\nSignificance codes: *** p<0.001, ** p<0.01, * p<0.05, ns = not significant\n")
+
+# Count decisions
+n_reject <- sum(summary_tests$p_value < 0.05)
+n_total_tests <- nrow(summary_tests)
+
+cat(sprintf("\n\nTests rejecting H₀: %d out of %d (%.1f%%)\n",
+            n_reject, n_total_tests, 100 * n_reject / n_total_tests))
+
+cat(sprintf("Tests failing to reject H₀: %d out of %d (%.1f%%)\n",
+            n_total_tests - n_reject, n_total_tests,
+            100 * (n_total_tests - n_reject) / n_total_tests))
+```
+
+---
+
+# Visualizations
+
+```{r visualizations, fig.height=12}
+# 1. P-values visualization
+p_pvalues <- summary_tests %>%
+  mutate(Test = paste0("Test ", Test_Number, ":\n", Test_Description)) %>%
+  ggplot(aes(x = reorder(Test, -Test_Number), y = p_value)) +
+  geom_col(aes(fill = p_value < 0.05), alpha = 0.7) +
+  geom_hline(yintercept = 0.05, linetype = "dashed", color = "red", size = 1) +
+  coord_flip() +
+  scale_fill_manual(values = c("steelblue", "coral"),
+                   labels = c("Fail to reject H₀", "Reject H₀")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.1)) +
+  labs(title = "P-values from All Hypothesis Tests",
+       subtitle = "Red dashed line: α = 0.05 significance level",
+       x = NULL,
+       y = "p-value",
+       fill = "Decision") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "top")
+
+# 2. Conditional probabilities
+cond_data <- bind_rows(
+  cond_probs %>%
+    transmute(Analysis = "2nd Birth",
+              Condition = paste("After", sx_1),
+              Probability = prop_second_male,
+              N = n),
+  cond_probs_3rd %>%
+    transmute(Analysis = "3rd Birth",
+              Condition = paste("After", pattern_2),
+              Probability = prop_third_male,
+              N = n)
+)
+
+p_cond <- ggplot(cond_data, aes(x = Condition, y = Probability, fill = Analysis)) +
+  geom_col(position = position_dodge(width = 0.8), alpha = 0.7) +
+  geom_hline(yintercept = 0.51, linetype = "dashed", color = "darkgreen", size = 1) +
+  geom_hline(yintercept = 0.50, linetype = "dotted", color = "gray50", size = 1) +
+  scale_y_continuous(limits = c(0.48, 0.53), breaks = seq(0.48, 0.53, 0.01)) +
+  labs(title = "Conditional Probabilities of Male Birth",
+       subtitle = "Green dashed: 0.51 (expected) | Gray dotted: 0.50",
+       x = "Previous Birth Pattern",
+       y = "P(Male Birth)",
+       fill = "Analysis") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "top")
+
+# 3. Observed vs Expected (2-child families)
+p_observed_exp <- comparison_2 %>%
+  select(sexchldn, n, Expected) %>%
+  pivot_longer(cols = c(n, Expected),
+               names_to = "Type", values_to = "Count") %>%
+  ggplot(aes(x = sexchldn, y = Count, fill = Type)) +
+  geom_col(position = position_dodge(width = 0.8), alpha = 0.7) +
+  scale_fill_manual(values = c("Expected" = "lightblue", "n" = "darkblue"),
+                   labels = c("Expected", "Observed")) +
+  labs(title = "2-Child Families: Observed vs Expected Distribution",
+       subtitle = sprintf("Chi-square test: p = %.6f", chi_gof_2$p.value),
+       x = "Birth Pattern",
+       y = "Number of Families",
+       fill = NULL) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "top")
+
+grid.arrange(p_pvalues, p_cond, p_observed_exp, ncol = 1)
+```
+
+---
+
+# Final Conclusions
+
+```{r final-conclusions}
+cat("\n\n=== PROBLEM 7.61: FINAL CONCLUSIONS ===\n\n")
+
+cat("RESEARCH QUESTION:\n")
+cat("Is the sex of successive births predictable from the sex of previous births?\n\n")
+
+cat("=====================================\n")
+cat("HYPOTHESIS TESTING RESULTS\n")
+cat("=====================================\n\n")
+
+cat("TEST 1: Overall Sex Ratio\n")
+cat(sprintf("- p-value: %.6f\n", prop_test$p.value))
+if (prop_test$p.value < 0.05) {
+  cat("- Decision: REJECT H₀\n")
+  cat("- Conclusion: Overall sex ratio differs from 0.51\n")
+} else {
+  cat("- Decision: FAIL TO REJECT H₀\n")
+  cat("- Conclusion: Overall sex ratio consistent with 0.51\n")
+}
+
+cat("\n\nTEST 2: Sex Ratio by Birth Order\n")
+cat(sprintf("- p-value: %.6f\n", chi_test_order$p.value))
+if (chi_test_order$p.value < 0.05) {
+  cat("- Decision: REJECT H₀\n")
+  cat("- Conclusion: Sex ratio varies across birth orders\n")
+} else {
+  cat("- Decision: FAIL TO REJECT H₀\n")
+  cat("- Conclusion: Sex ratio consistent across birth orders\n")
+}
+
+cat("\n\nTEST 3: 2nd Birth Independence\n")
+cat(sprintf("- p-value: %.6f\n", chi_test_2nd$p.value))
+if (chi_test_2nd$p.value < 0.05) {
+  cat("- Decision: REJECT H₀\n")
+  cat("- Conclusion: 2nd birth DEPENDENT on 1st birth\n")
+  cat("- PREDICTABILITY EXISTS\n")
+} else {
+  cat("- Decision: FAIL TO REJECT H₀\n")
+  cat("- Conclusion: 2nd birth INDEPENDENT of 1st birth\n")
+  cat("- NO PREDICTABILITY\n")
+}
+
+cat("\n\nTEST 4: 3rd Birth Independence\n")
+cat(sprintf("- p-value: %.6f\n", chi_test_3rd$p.value))
+if (chi_test_3rd$p.value < 0.05) {
+  cat("- Decision: REJECT H₀\n")
+  cat("- Conclusion: 3rd birth DEPENDENT on first 2 births\n")
+  cat("- PREDICTABILITY EXISTS\n")
+} else {
+  cat("- Decision: FAIL TO REJECT H₀\n")
+  cat("- Conclusion: 3rd birth INDEPENDENT of first 2 births\n")
+  cat("- NO PREDICTABILITY\n")
+}
+
+cat("\n\nTEST 5: Family Composition (2-child)\n")
+cat(sprintf("- p-value: %.6f\n", chi_gof_2$p.value))
+if (chi_gof_2$p.value < 0.05) {
+  cat("- Decision: REJECT H₀\n")
+  cat("- Conclusion: Observed patterns differ from independence\n")
+} else {
+  cat("- Decision: FAIL TO REJECT H₀\n")
+  cat("- Conclusion: Observed patterns consistent with independence\n")
+}
+
+cat("\n\n=====================================\n")
+cat("OVERALL CONCLUSION\n")
+cat("=====================================\n\n")
+
+# Determine overall conclusion based on majority of tests
+tests_supporting_independence <- sum(summary_tests$p_value >= 0.05)
+tests_against_independence <- sum(summary_tests$p_value < 0.05)
+
+if (tests_supporting_independence > tests_against_independence) {
+  cat("✓✓✓ CONCLUSION: SEX OF SUCCESSIVE BIRTHS IS NOT PREDICTABLE ✓✓✓\n\n")
+  cat("EVIDENCE:\n")
+  cat(sprintf("- %d out of %d tests FAIL TO REJECT the independence hypothesis\n",
+              tests_supporting_independence, n_total_tests))
+  cat("- Most p-values are ABOVE the 0.05 significance level\n")
+  cat("- Conditional probabilities do not differ significantly\n")
+  cat("- Observed family compositions match expected patterns\n\n")
+
+  cat("INTERPRETATION:\n")
+  cat("- Each birth is an INDEPENDENT event\n")
+  cat("- The sex of previous children does NOT influence subsequent births\n")
+  cat("- Sex determination follows random biological processes\n")
+  cat("- No evidence for 'compensatory' mechanisms in families\n")
+  cat("- Consistent with Mendelian genetics and chromosome segregation\n\n")
+
+} else {
+  cat("✗✗✗ CONCLUSION: SOME EVIDENCE FOR PREDICTABILITY ✗✗✗\n\n")
+  cat("EVIDENCE:\n")
+  cat(sprintf("- %d out of %d tests REJECT the independence hypothesis\n",
+              tests_against_independence, n_total_tests))
+  cat("- Multiple p-values are BELOW the 0.05 significance level\n")
+  cat("- Some conditional probabilities differ significantly\n\n")
+
+  cat("INTERPRETATION:\n")
+  cat("- Weak statistical evidence against complete independence\n")
+  cat("- However, effect sizes are VERY SMALL (differences < 2%)\n")
+  cat("- May reflect:\n")
+  cat("  * Biological variability in sex ratios\n")
+  cat("  * Subtle demographic or environmental factors\n")
+  cat("  * Statistical artifacts from large sample size\n")
+  cat("- For practical purposes, treating births as independent is reasonable\n\n")
+}
+
+cat("COMPARISON WITH PROBLEM 6.59 (CI APPROACH):\n")
+cat("- Both hypothesis testing and confidence interval methods\n")
+cat("  address the same research question\n")
+cat("- Hypothesis testing: Focus on statistical significance (p-values)\n")
+cat("- Confidence intervals: Focus on range of plausible values\n")
+cat("- Results are mathematically equivalent\n")
+cat("- CI approach provides more information about effect size\n")
+cat("- Hypothesis testing provides clearer dichotomous decision\n\n")
+
+cat("STATISTICAL NOTES:\n")
+cat(sprintf("- Total sample size: %s families, %s births\n",
+            format(nrow(expanded_data), big.mark = ","),
+            format(nrow(birth_data), big.mark = ",")))
+cat("- Large sample provides high statistical power\n")
+cat("- Can detect even trivial differences as 'significant'\n")
+cat("- Important to distinguish statistical vs practical significance\n")
+cat("- Alpha level: 0.05 (5% Type I error rate)\n")
+cat("- Multiple testing: Consider potential inflation of Type I error\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

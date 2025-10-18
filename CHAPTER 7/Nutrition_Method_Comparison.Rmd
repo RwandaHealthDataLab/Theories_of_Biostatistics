@@ -1,0 +1,911 @@
+---
+title: "Nutrition Assessment Method Comparison: Diet Record vs Food-Frequency Questionnaire"
+author: "Biostatistics Analysis - Chapter 7"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 14, fig.height = 10)
+```
+
+# Background
+
+This analysis compares two methods of assessing dietary nutrient intake:
+
+1. **Diet Record (DR):** Participants record all food consumed over a specific period
+2. **Food-Frequency Questionnaire (FFQ):** Participants report typical consumption frequency
+
+## Research Questions
+
+**Problem 7.59:** Assess whether reported nutrient consumption is **comparable** between the diet record and food-frequency questionnaire for:
+- Saturated fat (g)
+- Total fat (g)
+- Alcohol consumption (g)
+- Total caloric intake (kcal)
+
+**Problem 7.60:** Assess comparability for the **percentage of calories from fat**:
+- Percentage from total fat
+- Percentage from saturated fat
+
+**Note:** 9 calories per gram of fat consumed.
+
+## Analysis Approach
+
+Since the same individuals are measured using both methods, this is a **paired design**. We will use:
+
+1. **Paired t-test** (hypothesis testing approach)
+   - H₀: μ_diff = 0 (no difference between methods)
+   - H₁: μ_diff ≠ 0 (methods differ)
+
+2. **95% Confidence Interval** for mean difference
+   - If CI includes 0 → methods are comparable
+   - If CI excludes 0 → methods differ significantly
+
+3. **Visual assessment** using:
+   - Scatter plots with line of equality
+   - Bland-Altman plots (difference vs mean)
+   - Box plots of differences
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+library(gridExtra)
+library(scales)
+library(corrplot)
+```
+
+# Data Import and Exploration
+
+```{r data-import}
+# Read the VALID dataset
+valid_data <- read.csv("../VALID.DAT.txt", check.names = FALSE)
+
+# Remove quotes from column names
+colnames(valid_data) <- gsub("'", "", colnames(valid_data))
+
+# Display structure
+cat("Dataset Structure:\n")
+str(valid_data)
+
+cat("\n\nVariable Descriptions:\n")
+cat("- Id: Subject identification\n")
+cat("- sfat_dr: Saturated fat from diet record (g)\n")
+cat("- sfat_ffq: Saturated fat from FFQ (g)\n")
+cat("- tfat_dr: Total fat from diet record (g)\n")
+cat("- tfat_ffq: Total fat from FFQ (g)\n")
+cat("- alco_dr: Alcohol from diet record (g)\n")
+cat("- alco_ffq: Alcohol from FFQ (g)\n")
+cat("- cal_dr: Total calories from diet record (kcal)\n")
+cat("- cal_ffq: Total calories from FFQ (kcal)\n")
+
+cat("\n\nFirst 15 Subjects:\n")
+head(valid_data, 15) %>%
+  kable(digits = 2, caption = "Sample of Nutrition Validation Data")
+
+cat(sprintf("\n\nTotal number of subjects: %d\n", nrow(valid_data)))
+```
+
+## Data Preparation
+
+```{r data-prep}
+# Calculate percentage of calories from fat
+# Formula: (grams of fat × 9 calories/gram) / total calories × 100
+
+valid_clean <- valid_data %>%
+  mutate(
+    # Percentage of calories from total fat
+    pct_tfat_dr = (tfat_dr * 9 / cal_dr) * 100,
+    pct_tfat_ffq = (tfat_ffq * 9 / cal_ffq) * 100,
+
+    # Percentage of calories from saturated fat
+    pct_sfat_dr = (sfat_dr * 9 / cal_dr) * 100,
+    pct_sfat_ffq = (sfat_ffq * 9 / cal_ffq) * 100,
+
+    # Differences (DR - FFQ) for Problem 7.59
+    diff_sfat = sfat_dr - sfat_ffq,
+    diff_tfat = tfat_dr - tfat_ffq,
+    diff_alco = alco_dr - alco_ffq,
+    diff_cal = cal_dr - cal_ffq,
+
+    # Differences for Problem 7.60
+    diff_pct_tfat = pct_tfat_dr - pct_tfat_ffq,
+    diff_pct_sfat = pct_sfat_dr - pct_sfat_ffq,
+
+    # Means for Bland-Altman plots
+    mean_sfat = (sfat_dr + sfat_ffq) / 2,
+    mean_tfat = (tfat_dr + tfat_ffq) / 2,
+    mean_alco = (alco_dr + alco_ffq) / 2,
+    mean_cal = (cal_dr + cal_ffq) / 2,
+    mean_pct_tfat = (pct_tfat_dr + pct_tfat_ffq) / 2,
+    mean_pct_sfat = (pct_sfat_dr + pct_sfat_ffq) / 2
+  )
+
+cat("Data Preparation Complete\n\n")
+
+# Summary statistics
+cat("Summary Statistics:\n\n")
+summary_stats <- valid_clean %>%
+  summarise(
+    across(c(sfat_dr, sfat_ffq, tfat_dr, tfat_ffq,
+             alco_dr, alco_ffq, cal_dr, cal_ffq,
+             pct_tfat_dr, pct_tfat_ffq, pct_sfat_dr, pct_sfat_ffq),
+           list(mean = ~mean(., na.rm = TRUE),
+                sd = ~sd(., na.rm = TRUE)),
+           .names = "{.col}_{.fn}")
+  ) %>%
+  pivot_longer(everything(),
+               names_to = c("variable", "statistic"),
+               names_pattern = "(.+)_(mean|sd)") %>%
+  pivot_wider(names_from = statistic, values_from = value)
+
+summary_stats %>%
+  kable(digits = 2,
+        col.names = c("Variable", "Mean", "SD"),
+        caption = "Summary Statistics for All Variables")
+
+cat(sprintf("\n\nComplete cases (no missing values): %d\n",
+            sum(complete.cases(valid_clean))))
+```
+
+---
+
+# Problem 7.59: Nutrient Consumption Comparability
+
+```{r problem-7-59-setup}
+cat("\n=== PROBLEM 7.59: COMPARABILITY OF NUTRIENT CONSUMPTION ===\n\n")
+cat("Assessing whether DR and FFQ provide comparable measurements for:\n")
+cat("1. Saturated fat (g)\n")
+cat("2. Total fat (g)\n")
+cat("3. Alcohol consumption (g)\n")
+cat("4. Total caloric intake (kcal)\n\n")
+cat("Approach: Paired t-test and 95% CI for mean difference\n")
+cat("- H₀: Mean difference = 0 (methods comparable)\n")
+cat("- H₁: Mean difference ≠ 0 (methods differ)\n\n")
+```
+
+## 7.59.1: Saturated Fat
+
+```{r sfat-comparison}
+cat("\n--- SATURATED FAT (g) ---\n\n")
+
+# Paired t-test
+sfat_test <- t.test(valid_clean$sfat_dr, valid_clean$sfat_ffq,
+                    paired = TRUE, conf.level = 0.95)
+
+# Descriptive statistics
+sfat_stats <- valid_clean %>%
+  summarise(
+    n = sum(!is.na(diff_sfat)),
+    mean_dr = mean(sfat_dr, na.rm = TRUE),
+    sd_dr = sd(sfat_dr, na.rm = TRUE),
+    mean_ffq = mean(sfat_ffq, na.rm = TRUE),
+    sd_ffq = sd(sfat_ffq, na.rm = TRUE),
+    mean_diff = mean(diff_sfat, na.rm = TRUE),
+    sd_diff = sd(diff_sfat, na.rm = TRUE),
+    se_diff = sd_diff / sqrt(n)
+  )
+
+cat("Descriptive Statistics:\n")
+cat(sprintf("- Diet Record:  Mean = %.2f g, SD = %.2f g (n = %d)\n",
+            sfat_stats$mean_dr, sfat_stats$sd_dr, sfat_stats$n))
+cat(sprintf("- FFQ:          Mean = %.2f g, SD = %.2f g (n = %d)\n",
+            sfat_stats$mean_ffq, sfat_stats$sd_ffq, sfat_stats$n))
+cat(sprintf("\nPaired Difference (DR - FFQ):\n"))
+cat(sprintf("- Mean difference: %.2f g\n", sfat_stats$mean_diff))
+cat(sprintf("- SD of difference: %.2f g\n", sfat_stats$sd_diff))
+cat(sprintf("- SE of difference: %.2f g\n", sfat_stats$se_diff))
+
+cat(sprintf("\nPaired t-test Results:\n"))
+cat(sprintf("- t-statistic: %.4f\n", sfat_test$statistic))
+cat(sprintf("- df: %d\n", sfat_test$parameter))
+cat(sprintf("- p-value: %.4f\n", sfat_test$p.value))
+cat(sprintf("- 95%% CI for difference: [%.2f, %.2f] g\n",
+            sfat_test$conf.int[1], sfat_test$conf.int[2]))
+
+cat("\nInterpretation:\n")
+if (sfat_test$p.value < 0.05) {
+  cat("✗ p < 0.05: Reject H₀\n")
+  cat("✗ The 95% CI EXCLUDES 0\n")
+  cat("✗ CONCLUSION: Diet Record and FFQ are NOT COMPARABLE for saturated fat\n")
+  cat(sprintf("  DR reports %.2f g %s than FFQ on average\n",
+              abs(sfat_stats$mean_diff),
+              ifelse(sfat_stats$mean_diff > 0, "MORE", "LESS")))
+} else {
+  cat("✓ p > 0.05: Fail to reject H₀\n")
+  cat("✓ The 95% CI includes 0\n")
+  cat("✓ CONCLUSION: Diet Record and FFQ are COMPARABLE for saturated fat\n")
+}
+
+# Correlation
+sfat_cor <- cor(valid_clean$sfat_dr, valid_clean$sfat_ffq,
+                use = "complete.obs")
+cat(sprintf("\nCorrelation between methods: r = %.3f\n", sfat_cor))
+```
+
+## 7.59.2: Total Fat
+
+```{r tfat-comparison}
+cat("\n--- TOTAL FAT (g) ---\n\n")
+
+# Paired t-test
+tfat_test <- t.test(valid_clean$tfat_dr, valid_clean$tfat_ffq,
+                    paired = TRUE, conf.level = 0.95)
+
+# Descriptive statistics
+tfat_stats <- valid_clean %>%
+  summarise(
+    n = sum(!is.na(diff_tfat)),
+    mean_dr = mean(tfat_dr, na.rm = TRUE),
+    sd_dr = sd(tfat_dr, na.rm = TRUE),
+    mean_ffq = mean(tfat_ffq, na.rm = TRUE),
+    sd_ffq = sd(tfat_ffq, na.rm = TRUE),
+    mean_diff = mean(diff_tfat, na.rm = TRUE),
+    sd_diff = sd(diff_tfat, na.rm = TRUE),
+    se_diff = sd_diff / sqrt(n)
+  )
+
+cat("Descriptive Statistics:\n")
+cat(sprintf("- Diet Record:  Mean = %.2f g, SD = %.2f g (n = %d)\n",
+            tfat_stats$mean_dr, tfat_stats$sd_dr, tfat_stats$n))
+cat(sprintf("- FFQ:          Mean = %.2f g, SD = %.2f g (n = %d)\n",
+            tfat_stats$mean_ffq, tfat_stats$sd_ffq, tfat_stats$n))
+cat(sprintf("\nPaired Difference (DR - FFQ):\n"))
+cat(sprintf("- Mean difference: %.2f g\n", tfat_stats$mean_diff))
+cat(sprintf("- SD of difference: %.2f g\n", tfat_stats$sd_diff))
+cat(sprintf("- SE of difference: %.2f g\n", tfat_stats$se_diff))
+
+cat(sprintf("\nPaired t-test Results:\n"))
+cat(sprintf("- t-statistic: %.4f\n", tfat_test$statistic))
+cat(sprintf("- df: %d\n", tfat_test$parameter))
+cat(sprintf("- p-value: %.4f\n", tfat_test$p.value))
+cat(sprintf("- 95%% CI for difference: [%.2f, %.2f] g\n",
+            tfat_test$conf.int[1], tfat_test$conf.int[2]))
+
+cat("\nInterpretation:\n")
+if (tfat_test$p.value < 0.05) {
+  cat("✗ p < 0.05: Reject H₀\n")
+  cat("✗ The 95% CI EXCLUDES 0\n")
+  cat("✗ CONCLUSION: Diet Record and FFQ are NOT COMPARABLE for total fat\n")
+  cat(sprintf("  DR reports %.2f g %s than FFQ on average\n",
+              abs(tfat_stats$mean_diff),
+              ifelse(tfat_stats$mean_diff > 0, "MORE", "LESS")))
+} else {
+  cat("✓ p > 0.05: Fail to reject H₀\n")
+  cat("✓ The 95% CI includes 0\n")
+  cat("✓ CONCLUSION: Diet Record and FFQ are COMPARABLE for total fat\n")
+}
+
+# Correlation
+tfat_cor <- cor(valid_clean$tfat_dr, valid_clean$tfat_ffq,
+                use = "complete.obs")
+cat(sprintf("\nCorrelation between methods: r = %.3f\n", tfat_cor))
+```
+
+## 7.59.3: Alcohol Consumption
+
+```{r alco-comparison}
+cat("\n--- ALCOHOL CONSUMPTION (g) ---\n\n")
+
+# Paired t-test
+alco_test <- t.test(valid_clean$alco_dr, valid_clean$alco_ffq,
+                    paired = TRUE, conf.level = 0.95)
+
+# Descriptive statistics
+alco_stats <- valid_clean %>%
+  summarise(
+    n = sum(!is.na(diff_alco)),
+    mean_dr = mean(alco_dr, na.rm = TRUE),
+    sd_dr = sd(alco_dr, na.rm = TRUE),
+    mean_ffq = mean(alco_ffq, na.rm = TRUE),
+    sd_ffq = sd(alco_ffq, na.rm = TRUE),
+    mean_diff = mean(diff_alco, na.rm = TRUE),
+    sd_diff = sd(diff_alco, na.rm = TRUE),
+    se_diff = sd_diff / sqrt(n)
+  )
+
+cat("Descriptive Statistics:\n")
+cat(sprintf("- Diet Record:  Mean = %.2f g, SD = %.2f g (n = %d)\n",
+            alco_stats$mean_dr, alco_stats$sd_dr, alco_stats$n))
+cat(sprintf("- FFQ:          Mean = %.2f g, SD = %.2f g (n = %d)\n",
+            alco_stats$mean_ffq, alco_stats$sd_ffq, alco_stats$n))
+cat(sprintf("\nPaired Difference (DR - FFQ):\n"))
+cat(sprintf("- Mean difference: %.2f g\n", alco_stats$mean_diff))
+cat(sprintf("- SD of difference: %.2f g\n", alco_stats$sd_diff))
+cat(sprintf("- SE of difference: %.2f g\n", alco_stats$se_diff))
+
+cat(sprintf("\nPaired t-test Results:\n"))
+cat(sprintf("- t-statistic: %.4f\n", alco_test$statistic))
+cat(sprintf("- df: %d\n", alco_test$parameter))
+cat(sprintf("- p-value: %.4f\n", alco_test$p.value))
+cat(sprintf("- 95%% CI for difference: [%.2f, %.2f] g\n",
+            alco_test$conf.int[1], alco_test$conf.int[2]))
+
+cat("\nInterpretation:\n")
+if (alco_test$p.value < 0.05) {
+  cat("✗ p < 0.05: Reject H₀\n")
+  cat("✗ The 95% CI EXCLUDES 0\n")
+  cat("✗ CONCLUSION: Diet Record and FFQ are NOT COMPARABLE for alcohol\n")
+  cat(sprintf("  DR reports %.2f g %s than FFQ on average\n",
+              abs(alco_stats$mean_diff),
+              ifelse(alco_stats$mean_diff > 0, "MORE", "LESS")))
+} else {
+  cat("✓ p > 0.05: Fail to reject H₀\n")
+  cat("✓ The 95% CI includes 0\n")
+  cat("✓ CONCLUSION: Diet Record and FFQ are COMPARABLE for alcohol\n")
+}
+
+# Correlation
+alco_cor <- cor(valid_clean$alco_dr, valid_clean$alco_ffq,
+                use = "complete.obs")
+cat(sprintf("\nCorrelation between methods: r = %.3f\n", alco_cor))
+```
+
+## 7.59.4: Total Caloric Intake
+
+```{r cal-comparison}
+cat("\n--- TOTAL CALORIC INTAKE (kcal) ---\n\n")
+
+# Paired t-test
+cal_test <- t.test(valid_clean$cal_dr, valid_clean$cal_ffq,
+                   paired = TRUE, conf.level = 0.95)
+
+# Descriptive statistics
+cal_stats <- valid_clean %>%
+  summarise(
+    n = sum(!is.na(diff_cal)),
+    mean_dr = mean(cal_dr, na.rm = TRUE),
+    sd_dr = sd(cal_dr, na.rm = TRUE),
+    mean_ffq = mean(cal_ffq, na.rm = TRUE),
+    sd_ffq = sd(cal_ffq, na.rm = TRUE),
+    mean_diff = mean(diff_cal, na.rm = TRUE),
+    sd_diff = sd(diff_cal, na.rm = TRUE),
+    se_diff = sd_diff / sqrt(n)
+  )
+
+cat("Descriptive Statistics:\n")
+cat(sprintf("- Diet Record:  Mean = %.2f kcal, SD = %.2f kcal (n = %d)\n",
+            cal_stats$mean_dr, cal_stats$sd_dr, cal_stats$n))
+cat(sprintf("- FFQ:          Mean = %.2f kcal, SD = %.2f kcal (n = %d)\n",
+            cal_stats$mean_ffq, cal_stats$sd_ffq, cal_stats$n))
+cat(sprintf("\nPaired Difference (DR - FFQ):\n"))
+cat(sprintf("- Mean difference: %.2f kcal\n", cal_stats$mean_diff))
+cat(sprintf("- SD of difference: %.2f kcal\n", cal_stats$sd_diff))
+cat(sprintf("- SE of difference: %.2f kcal\n", cal_stats$se_diff))
+
+cat(sprintf("\nPaired t-test Results:\n"))
+cat(sprintf("- t-statistic: %.4f\n", cal_test$statistic))
+cat(sprintf("- df: %d\n", cal_test$parameter))
+cat(sprintf("- p-value: %.4f\n", cal_test$p.value))
+cat(sprintf("- 95%% CI for difference: [%.2f, %.2f] kcal\n",
+            cal_test$conf.int[1], cal_test$conf.int[2]))
+
+cat("\nInterpretation:\n")
+if (cal_test$p.value < 0.05) {
+  cat("✗ p < 0.05: Reject H₀\n")
+  cat("✗ The 95% CI EXCLUDES 0\n")
+  cat("✗ CONCLUSION: Diet Record and FFQ are NOT COMPARABLE for caloric intake\n")
+  cat(sprintf("  DR reports %.2f kcal %s than FFQ on average\n",
+              abs(cal_stats$mean_diff),
+              ifelse(cal_stats$mean_diff > 0, "MORE", "LESS")))
+} else {
+  cat("✓ p > 0.05: Fail to reject H₀\n")
+  cat("✓ The 95% CI includes 0\n")
+  cat("✓ CONCLUSION: Diet Record and FFQ are COMPARABLE for caloric intake\n")
+}
+
+# Correlation
+cal_cor <- cor(valid_clean$cal_dr, valid_clean$cal_ffq,
+               use = "complete.obs")
+cat(sprintf("\nCorrelation between methods: r = %.3f\n", cal_cor))
+```
+
+## Problem 7.59: Summary Table
+
+```{r problem-7-59-summary}
+cat("\n\n=== PROBLEM 7.59: SUMMARY TABLE ===\n\n")
+
+summary_759 <- data.frame(
+  Nutrient = c("Saturated Fat (g)", "Total Fat (g)",
+               "Alcohol (g)", "Total Calories (kcal)"),
+  Mean_DR = c(sfat_stats$mean_dr, tfat_stats$mean_dr,
+              alco_stats$mean_dr, cal_stats$mean_dr),
+  Mean_FFQ = c(sfat_stats$mean_ffq, tfat_stats$mean_ffq,
+               alco_stats$mean_ffq, cal_stats$mean_ffq),
+  Mean_Diff = c(sfat_stats$mean_diff, tfat_stats$mean_diff,
+                alco_stats$mean_diff, cal_stats$mean_diff),
+  CI_Lower = c(sfat_test$conf.int[1], tfat_test$conf.int[1],
+               alco_test$conf.int[1], cal_test$conf.int[1]),
+  CI_Upper = c(sfat_test$conf.int[2], tfat_test$conf.int[2],
+               alco_test$conf.int[2], cal_test$conf.int[2]),
+  p_value = c(sfat_test$p.value, tfat_test$p.value,
+              alco_test$p.value, cal_test$p.value),
+  Correlation = c(sfat_cor, tfat_cor, alco_cor, cal_cor)
+) %>%
+  mutate(
+    Comparable = ifelse(p_value > 0.05, "Yes", "No"),
+    Significance = ifelse(p_value < 0.001, "***",
+                         ifelse(p_value < 0.01, "**",
+                               ifelse(p_value < 0.05, "*", "ns")))
+  )
+
+summary_759 %>%
+  kable(digits = 3,
+        col.names = c("Nutrient", "DR Mean", "FFQ Mean", "Mean Diff",
+                     "CI Lower", "CI Upper", "p-value", "Correlation",
+                     "Comparable?", "Sig"),
+        caption = "Problem 7.59: Comparability Assessment Summary")
+
+cat("\n\nSignificance codes: *** p<0.001, ** p<0.01, * p<0.05, ns = not significant\n")
+```
+
+## Problem 7.59: Visualizations
+
+```{r problem-7-59-plots, fig.height=12}
+# Scatter plots with line of equality
+p_sfat_scatter <- ggplot(valid_clean, aes(x = sfat_dr, y = sfat_ffq)) +
+  geom_point(alpha = 0.6, size = 2) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed", size = 1) +
+  geom_smooth(method = "lm", se = TRUE, color = "blue") +
+  labs(title = "Saturated Fat: DR vs FFQ",
+       subtitle = sprintf("r = %.3f, Mean diff = %.2f g", sfat_cor, sfat_stats$mean_diff),
+       x = "Diet Record (g)", y = "FFQ (g)") +
+  theme_minimal()
+
+p_tfat_scatter <- ggplot(valid_clean, aes(x = tfat_dr, y = tfat_ffq)) +
+  geom_point(alpha = 0.6, size = 2) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed", size = 1) +
+  geom_smooth(method = "lm", se = TRUE, color = "blue") +
+  labs(title = "Total Fat: DR vs FFQ",
+       subtitle = sprintf("r = %.3f, Mean diff = %.2f g", tfat_cor, tfat_stats$mean_diff),
+       x = "Diet Record (g)", y = "FFQ (g)") +
+  theme_minimal()
+
+p_alco_scatter <- ggplot(valid_clean, aes(x = alco_dr, y = alco_ffq)) +
+  geom_point(alpha = 0.6, size = 2) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed", size = 1) +
+  geom_smooth(method = "lm", se = TRUE, color = "blue") +
+  labs(title = "Alcohol: DR vs FFQ",
+       subtitle = sprintf("r = %.3f, Mean diff = %.2f g", alco_cor, alco_stats$mean_diff),
+       x = "Diet Record (g)", y = "FFQ (g)") +
+  theme_minimal()
+
+p_cal_scatter <- ggplot(valid_clean, aes(x = cal_dr, y = cal_ffq)) +
+  geom_point(alpha = 0.6, size = 2) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed", size = 1) +
+  geom_smooth(method = "lm", se = TRUE, color = "blue") +
+  labs(title = "Total Calories: DR vs FFQ",
+       subtitle = sprintf("r = %.3f, Mean diff = %.2f kcal", cal_cor, cal_stats$mean_diff),
+       x = "Diet Record (kcal)", y = "FFQ (kcal)") +
+  theme_minimal()
+
+grid.arrange(p_sfat_scatter, p_tfat_scatter,
+             p_alco_scatter, p_cal_scatter, ncol = 2)
+```
+
+## Bland-Altman Plots (Problem 7.59)
+
+```{r bland-altman-7-59, fig.height=12}
+# Bland-Altman plots show difference vs mean
+# Horizontal line at mean difference
+# Dashed lines at mean ± 1.96*SD (limits of agreement)
+
+p_sfat_ba <- ggplot(valid_clean, aes(x = mean_sfat, y = diff_sfat)) +
+  geom_point(alpha = 0.6, size = 2) +
+  geom_hline(yintercept = sfat_stats$mean_diff, color = "blue", size = 1) +
+  geom_hline(yintercept = sfat_stats$mean_diff + 1.96*sfat_stats$sd_diff,
+             color = "red", linetype = "dashed") +
+  geom_hline(yintercept = sfat_stats$mean_diff - 1.96*sfat_stats$sd_diff,
+             color = "red", linetype = "dashed") +
+  geom_hline(yintercept = 0, color = "gray50", linetype = "dotted") +
+  labs(title = "Bland-Altman: Saturated Fat",
+       subtitle = sprintf("Mean diff = %.2f g (95%% LoA: %.2f to %.2f)",
+                         sfat_stats$mean_diff,
+                         sfat_stats$mean_diff - 1.96*sfat_stats$sd_diff,
+                         sfat_stats$mean_diff + 1.96*sfat_stats$sd_diff),
+       x = "Mean of DR and FFQ (g)", y = "Difference (DR - FFQ) (g)") +
+  theme_minimal()
+
+p_tfat_ba <- ggplot(valid_clean, aes(x = mean_tfat, y = diff_tfat)) +
+  geom_point(alpha = 0.6, size = 2) +
+  geom_hline(yintercept = tfat_stats$mean_diff, color = "blue", size = 1) +
+  geom_hline(yintercept = tfat_stats$mean_diff + 1.96*tfat_stats$sd_diff,
+             color = "red", linetype = "dashed") +
+  geom_hline(yintercept = tfat_stats$mean_diff - 1.96*tfat_stats$sd_diff,
+             color = "red", linetype = "dashed") +
+  geom_hline(yintercept = 0, color = "gray50", linetype = "dotted") +
+  labs(title = "Bland-Altman: Total Fat",
+       subtitle = sprintf("Mean diff = %.2f g (95%% LoA: %.2f to %.2f)",
+                         tfat_stats$mean_diff,
+                         tfat_stats$mean_diff - 1.96*tfat_stats$sd_diff,
+                         tfat_stats$mean_diff + 1.96*tfat_stats$sd_diff),
+       x = "Mean of DR and FFQ (g)", y = "Difference (DR - FFQ) (g)") +
+  theme_minimal()
+
+p_alco_ba <- ggplot(valid_clean, aes(x = mean_alco, y = diff_alco)) +
+  geom_point(alpha = 0.6, size = 2) +
+  geom_hline(yintercept = alco_stats$mean_diff, color = "blue", size = 1) +
+  geom_hline(yintercept = alco_stats$mean_diff + 1.96*alco_stats$sd_diff,
+             color = "red", linetype = "dashed") +
+  geom_hline(yintercept = alco_stats$mean_diff - 1.96*alco_stats$sd_diff,
+             color = "red", linetype = "dashed") +
+  geom_hline(yintercept = 0, color = "gray50", linetype = "dotted") +
+  labs(title = "Bland-Altman: Alcohol",
+       subtitle = sprintf("Mean diff = %.2f g (95%% LoA: %.2f to %.2f)",
+                         alco_stats$mean_diff,
+                         alco_stats$mean_diff - 1.96*alco_stats$sd_diff,
+                         alco_stats$mean_diff + 1.96*alco_stats$sd_diff),
+       x = "Mean of DR and FFQ (g)", y = "Difference (DR - FFQ) (g)") +
+  theme_minimal()
+
+p_cal_ba <- ggplot(valid_clean, aes(x = mean_cal, y = diff_cal)) +
+  geom_point(alpha = 0.6, size = 2) +
+  geom_hline(yintercept = cal_stats$mean_diff, color = "blue", size = 1) +
+  geom_hline(yintercept = cal_stats$mean_diff + 1.96*cal_stats$sd_diff,
+             color = "red", linetype = "dashed") +
+  geom_hline(yintercept = cal_stats$mean_diff - 1.96*cal_stats$sd_diff,
+             color = "red", linetype = "dashed") +
+  geom_hline(yintercept = 0, color = "gray50", linetype = "dotted") +
+  labs(title = "Bland-Altman: Total Calories",
+       subtitle = sprintf("Mean diff = %.2f kcal (95%% LoA: %.2f to %.2f)",
+                         cal_stats$mean_diff,
+                         cal_stats$mean_diff - 1.96*cal_stats$sd_diff,
+                         cal_stats$mean_diff + 1.96*cal_stats$sd_diff),
+       x = "Mean of DR and FFQ (kcal)", y = "Difference (DR - FFQ) (kcal)") +
+  theme_minimal()
+
+grid.arrange(p_sfat_ba, p_tfat_ba,
+             p_alco_ba, p_cal_ba, ncol = 2)
+```
+
+---
+
+# Problem 7.60: Percentage of Calories from Fat
+
+```{r problem-7-60-setup}
+cat("\n\n=== PROBLEM 7.60: PERCENTAGE OF CALORIES FROM FAT ===\n\n")
+cat("Assessing comparability for:\n")
+cat("1. Percentage of calories from total fat\n")
+cat("2. Percentage of calories from saturated fat\n\n")
+cat("Formula: (grams of fat × 9 calories/gram) / total calories × 100\n\n")
+```
+
+## 7.60.1: Percentage from Total Fat
+
+```{r pct-tfat-comparison}
+cat("\n--- PERCENTAGE OF CALORIES FROM TOTAL FAT ---\n\n")
+
+# Paired t-test
+pct_tfat_test <- t.test(valid_clean$pct_tfat_dr, valid_clean$pct_tfat_ffq,
+                        paired = TRUE, conf.level = 0.95)
+
+# Descriptive statistics
+pct_tfat_stats <- valid_clean %>%
+  summarise(
+    n = sum(!is.na(diff_pct_tfat)),
+    mean_dr = mean(pct_tfat_dr, na.rm = TRUE),
+    sd_dr = sd(pct_tfat_dr, na.rm = TRUE),
+    mean_ffq = mean(pct_tfat_ffq, na.rm = TRUE),
+    sd_ffq = sd(pct_tfat_ffq, na.rm = TRUE),
+    mean_diff = mean(diff_pct_tfat, na.rm = TRUE),
+    sd_diff = sd(diff_pct_tfat, na.rm = TRUE),
+    se_diff = sd_diff / sqrt(n)
+  )
+
+cat("Descriptive Statistics:\n")
+cat(sprintf("- Diet Record:  Mean = %.2f%%, SD = %.2f%% (n = %d)\n",
+            pct_tfat_stats$mean_dr, pct_tfat_stats$sd_dr, pct_tfat_stats$n))
+cat(sprintf("- FFQ:          Mean = %.2f%%, SD = %.2f%% (n = %d)\n",
+            pct_tfat_stats$mean_ffq, pct_tfat_stats$sd_ffq, pct_tfat_stats$n))
+cat(sprintf("\nPaired Difference (DR - FFQ):\n"))
+cat(sprintf("- Mean difference: %.2f%%\n", pct_tfat_stats$mean_diff))
+cat(sprintf("- SD of difference: %.2f%%\n", pct_tfat_stats$sd_diff))
+cat(sprintf("- SE of difference: %.2f%%\n", pct_tfat_stats$se_diff))
+
+cat(sprintf("\nPaired t-test Results:\n"))
+cat(sprintf("- t-statistic: %.4f\n", pct_tfat_test$statistic))
+cat(sprintf("- df: %d\n", pct_tfat_test$parameter))
+cat(sprintf("- p-value: %.4f\n", pct_tfat_test$p.value))
+cat(sprintf("- 95%% CI for difference: [%.2f, %.2f]%%\n",
+            pct_tfat_test$conf.int[1], pct_tfat_test$conf.int[2]))
+
+cat("\nInterpretation:\n")
+if (pct_tfat_test$p.value < 0.05) {
+  cat("✗ p < 0.05: Reject H₀\n")
+  cat("✗ The 95% CI EXCLUDES 0\n")
+  cat("✗ CONCLUSION: Methods are NOT COMPARABLE for % calories from total fat\n")
+  cat(sprintf("  DR reports %.2f%% %s than FFQ on average\n",
+              abs(pct_tfat_stats$mean_diff),
+              ifelse(pct_tfat_stats$mean_diff > 0, "MORE", "LESS")))
+} else {
+  cat("✓ p > 0.05: Fail to reject H₀\n")
+  cat("✓ The 95% CI includes 0\n")
+  cat("✓ CONCLUSION: Methods are COMPARABLE for % calories from total fat\n")
+}
+
+# Correlation
+pct_tfat_cor <- cor(valid_clean$pct_tfat_dr, valid_clean$pct_tfat_ffq,
+                    use = "complete.obs")
+cat(sprintf("\nCorrelation between methods: r = %.3f\n", pct_tfat_cor))
+```
+
+## 7.60.2: Percentage from Saturated Fat
+
+```{r pct-sfat-comparison}
+cat("\n--- PERCENTAGE OF CALORIES FROM SATURATED FAT ---\n\n")
+
+# Paired t-test
+pct_sfat_test <- t.test(valid_clean$pct_sfat_dr, valid_clean$pct_sfat_ffq,
+                        paired = TRUE, conf.level = 0.95)
+
+# Descriptive statistics
+pct_sfat_stats <- valid_clean %>%
+  summarise(
+    n = sum(!is.na(diff_pct_sfat)),
+    mean_dr = mean(pct_sfat_dr, na.rm = TRUE),
+    sd_dr = sd(pct_sfat_dr, na.rm = TRUE),
+    mean_ffq = mean(pct_sfat_ffq, na.rm = TRUE),
+    sd_ffq = sd(pct_sfat_ffq, na.rm = TRUE),
+    mean_diff = mean(diff_pct_sfat, na.rm = TRUE),
+    sd_diff = sd(diff_pct_sfat, na.rm = TRUE),
+    se_diff = sd_diff / sqrt(n)
+  )
+
+cat("Descriptive Statistics:\n")
+cat(sprintf("- Diet Record:  Mean = %.2f%%, SD = %.2f%% (n = %d)\n",
+            pct_sfat_stats$mean_dr, pct_sfat_stats$sd_dr, pct_sfat_stats$n))
+cat(sprintf("- FFQ:          Mean = %.2f%%, SD = %.2f%% (n = %d)\n",
+            pct_sfat_stats$mean_ffq, pct_sfat_stats$sd_ffq, pct_sfat_stats$n))
+cat(sprintf("\nPaired Difference (DR - FFQ):\n"))
+cat(sprintf("- Mean difference: %.2f%%\n", pct_sfat_stats$mean_diff))
+cat(sprintf("- SD of difference: %.2f%%\n", pct_sfat_stats$sd_diff))
+cat(sprintf("- SE of difference: %.2f%%\n", pct_sfat_stats$se_diff))
+
+cat(sprintf("\nPaired t-test Results:\n"))
+cat(sprintf("- t-statistic: %.4f\n", pct_sfat_test$statistic))
+cat(sprintf("- df: %d\n", pct_sfat_test$parameter))
+cat(sprintf("- p-value: %.4f\n", pct_sfat_test$p.value))
+cat(sprintf("- 95%% CI for difference: [%.2f, %.2f]%%\n",
+            pct_sfat_test$conf.int[1], pct_sfat_test$conf.int[2]))
+
+cat("\nInterpretation:\n")
+if (pct_sfat_test$p.value < 0.05) {
+  cat("✗ p < 0.05: Reject H₀\n")
+  cat("✗ The 95% CI EXCLUDES 0\n")
+  cat("✗ CONCLUSION: Methods are NOT COMPARABLE for % calories from saturated fat\n")
+  cat(sprintf("  DR reports %.2f%% %s than FFQ on average\n",
+              abs(pct_sfat_stats$mean_diff),
+              ifelse(pct_sfat_stats$mean_diff > 0, "MORE", "LESS")))
+} else {
+  cat("✓ p > 0.05: Fail to reject H₀\n")
+  cat("✓ The 95% CI includes 0\n")
+  cat("✓ CONCLUSION: Methods are COMPARABLE for % calories from saturated fat\n")
+}
+
+# Correlation
+pct_sfat_cor <- cor(valid_clean$pct_sfat_dr, valid_clean$pct_sfat_ffq,
+                    use = "complete.obs")
+cat(sprintf("\nCorrelation between methods: r = %.3f\n", pct_sfat_cor))
+```
+
+## Problem 7.60: Summary Table
+
+```{r problem-7-60-summary}
+cat("\n\n=== PROBLEM 7.60: SUMMARY TABLE ===\n\n")
+
+summary_760 <- data.frame(
+  Measure = c("% Calories from Total Fat", "% Calories from Saturated Fat"),
+  Mean_DR = c(pct_tfat_stats$mean_dr, pct_sfat_stats$mean_dr),
+  Mean_FFQ = c(pct_tfat_stats$mean_ffq, pct_sfat_stats$mean_ffq),
+  Mean_Diff = c(pct_tfat_stats$mean_diff, pct_sfat_stats$mean_diff),
+  CI_Lower = c(pct_tfat_test$conf.int[1], pct_sfat_test$conf.int[1]),
+  CI_Upper = c(pct_tfat_test$conf.int[2], pct_sfat_test$conf.int[2]),
+  p_value = c(pct_tfat_test$p.value, pct_sfat_test$p.value),
+  Correlation = c(pct_tfat_cor, pct_sfat_cor)
+) %>%
+  mutate(
+    Comparable = ifelse(p_value > 0.05, "Yes", "No"),
+    Significance = ifelse(p_value < 0.001, "***",
+                         ifelse(p_value < 0.01, "**",
+                               ifelse(p_value < 0.05, "*", "ns")))
+  )
+
+summary_760 %>%
+  kable(digits = 3,
+        col.names = c("Measure", "DR Mean (%)", "FFQ Mean (%)", "Mean Diff (%)",
+                     "CI Lower", "CI Upper", "p-value", "Correlation",
+                     "Comparable?", "Sig"),
+        caption = "Problem 7.60: Percentage of Calories from Fat - Comparability Assessment")
+
+cat("\n\nSignificance codes: *** p<0.001, ** p<0.01, * p<0.05, ns = not significant\n")
+```
+
+## Problem 7.60: Visualizations
+
+```{r problem-7-60-plots, fig.height=8}
+# Scatter plots for percentage measures
+p_pct_tfat_scatter <- ggplot(valid_clean, aes(x = pct_tfat_dr, y = pct_tfat_ffq)) +
+  geom_point(alpha = 0.6, size = 2, color = "darkgreen") +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed", size = 1) +
+  geom_smooth(method = "lm", se = TRUE, color = "blue") +
+  labs(title = "% Calories from Total Fat: DR vs FFQ",
+       subtitle = sprintf("r = %.3f, Mean diff = %.2f%%",
+                         pct_tfat_cor, pct_tfat_stats$mean_diff),
+       x = "Diet Record (%)", y = "FFQ (%)") +
+  theme_minimal()
+
+p_pct_sfat_scatter <- ggplot(valid_clean, aes(x = pct_sfat_dr, y = pct_sfat_ffq)) +
+  geom_point(alpha = 0.6, size = 2, color = "darkorange") +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed", size = 1) +
+  geom_smooth(method = "lm", se = TRUE, color = "blue") +
+  labs(title = "% Calories from Saturated Fat: DR vs FFQ",
+       subtitle = sprintf("r = %.3f, Mean diff = %.2f%%",
+                         pct_sfat_cor, pct_sfat_stats$mean_diff),
+       x = "Diet Record (%)", y = "FFQ (%)") +
+  theme_minimal()
+
+# Bland-Altman plots for percentage measures
+p_pct_tfat_ba <- ggplot(valid_clean, aes(x = mean_pct_tfat, y = diff_pct_tfat)) +
+  geom_point(alpha = 0.6, size = 2, color = "darkgreen") +
+  geom_hline(yintercept = pct_tfat_stats$mean_diff, color = "blue", size = 1) +
+  geom_hline(yintercept = pct_tfat_stats$mean_diff + 1.96*pct_tfat_stats$sd_diff,
+             color = "red", linetype = "dashed") +
+  geom_hline(yintercept = pct_tfat_stats$mean_diff - 1.96*pct_tfat_stats$sd_diff,
+             color = "red", linetype = "dashed") +
+  geom_hline(yintercept = 0, color = "gray50", linetype = "dotted") +
+  labs(title = "Bland-Altman: % Calories from Total Fat",
+       subtitle = sprintf("Mean diff = %.2f%% (95%% LoA: %.2f to %.2f)",
+                         pct_tfat_stats$mean_diff,
+                         pct_tfat_stats$mean_diff - 1.96*pct_tfat_stats$sd_diff,
+                         pct_tfat_stats$mean_diff + 1.96*pct_tfat_stats$sd_diff),
+       x = "Mean of DR and FFQ (%)", y = "Difference (DR - FFQ) (%)") +
+  theme_minimal()
+
+p_pct_sfat_ba <- ggplot(valid_clean, aes(x = mean_pct_sfat, y = diff_pct_sfat)) +
+  geom_point(alpha = 0.6, size = 2, color = "darkorange") +
+  geom_hline(yintercept = pct_sfat_stats$mean_diff, color = "blue", size = 1) +
+  geom_hline(yintercept = pct_sfat_stats$mean_diff + 1.96*pct_sfat_stats$sd_diff,
+             color = "red", linetype = "dashed") +
+  geom_hline(yintercept = pct_sfat_stats$mean_diff - 1.96*pct_sfat_stats$sd_diff,
+             color = "red", linetype = "dashed") +
+  geom_hline(yintercept = 0, color = "gray50", linetype = "dotted") +
+  labs(title = "Bland-Altman: % Calories from Saturated Fat",
+       subtitle = sprintf("Mean diff = %.2f%% (95%% LoA: %.2f to %.2f)",
+                         pct_sfat_stats$mean_diff,
+                         pct_sfat_stats$mean_diff - 1.96*pct_sfat_stats$sd_diff,
+                         pct_sfat_stats$mean_diff + 1.96*pct_sfat_stats$sd_diff),
+       x = "Mean of DR and FFQ (%)", y = "Difference (DR - FFQ) (%)") +
+  theme_minimal()
+
+grid.arrange(p_pct_tfat_scatter, p_pct_sfat_scatter,
+             p_pct_tfat_ba, p_pct_sfat_ba, ncol = 2)
+```
+
+---
+
+# Overall Conclusions
+
+```{r overall-conclusions}
+cat("\n\n=== OVERALL CONCLUSIONS: PROBLEMS 7.59-7.60 ===\n\n")
+
+cat("PROBLEM 7.59: NUTRIENT CONSUMPTION COMPARABILITY\n\n")
+
+all_results_759 <- summary_759 %>%
+  select(Nutrient, Mean_Diff, p_value, Comparable, Correlation)
+
+all_results_759 %>%
+  kable(digits = 3,
+        col.names = c("Nutrient", "Mean Difference", "p-value",
+                     "Comparable?", "Correlation"),
+        caption = "Summary: Problem 7.59")
+
+cat("\n\nKEY FINDINGS (Problem 7.59):\n")
+comparable_count_759 <- sum(summary_759$Comparable == "Yes")
+cat(sprintf("- %d out of 4 nutrients show comparable measurements (p > 0.05)\n",
+            comparable_count_759))
+cat(sprintf("- %d out of 4 nutrients show significant differences (p < 0.05)\n",
+            4 - comparable_count_759))
+
+if (comparable_count_759 >= 2) {
+  cat("\n✓ At least half of the nutrients show acceptable agreement\n")
+} else {
+  cat("\n✗ Majority of nutrients show poor agreement between methods\n")
+}
+
+cat("\n\nPROBLEM 7.60: PERCENTAGE OF CALORIES FROM FAT\n\n")
+
+all_results_760 <- summary_760 %>%
+  select(Measure, Mean_Diff, p_value, Comparable, Correlation)
+
+all_results_760 %>%
+  kable(digits = 3,
+        col.names = c("Measure", "Mean Difference (%)", "p-value",
+                     "Comparable?", "Correlation"),
+        caption = "Summary: Problem 7.60")
+
+cat("\n\nKEY FINDINGS (Problem 7.60):\n")
+comparable_count_760 <- sum(summary_760$Comparable == "Yes")
+cat(sprintf("- %d out of 2 percentage measures show comparable measurements\n",
+            comparable_count_760))
+
+if (comparable_count_760 == 2) {
+  cat("✓ Both percentage measures show acceptable agreement\n")
+} else if (comparable_count_760 == 1) {
+  cat("~ Mixed results: one comparable, one not\n")
+} else {
+  cat("✗ Neither percentage measure shows acceptable agreement\n")
+}
+
+cat("\n\n=== OVERALL ASSESSMENT ===\n\n")
+
+cat("METHODOLOGICAL VALIDITY:\n")
+cat("The food-frequency questionnaire (FFQ) is being validated against\n")
+cat("the diet record (DR), which is considered the reference method.\n\n")
+
+total_comparable <- comparable_count_759 + comparable_count_760
+total_measures <- 6
+
+cat(sprintf("OVERALL: %d out of %d measures (%.1f%%) show comparability\n",
+            total_comparable, total_measures,
+            100 * total_comparable / total_measures))
+
+if (total_comparable >= 4) {
+  cat("\n✓ CONCLUSION: FFQ shows GOOD overall validity\n")
+  cat("  Most measures are comparable to the reference method\n")
+} else if (total_comparable >= 2) {
+  cat("\n~ CONCLUSION: FFQ shows MODERATE validity\n")
+  cat("  Some measures are comparable, others show systematic bias\n")
+} else {
+  cat("\n✗ CONCLUSION: FFQ shows POOR validity\n")
+  cat("  Most measures differ significantly from the reference method\n")
+}
+
+cat("\n\nCORRELATION ANALYSIS:\n")
+cat("Even when methods differ in mean values, correlation can indicate\n")
+cat("whether they rank individuals similarly:\n\n")
+
+all_correlations <- c(summary_759$Correlation, summary_760$Correlation)
+mean_correlation <- mean(all_correlations)
+cat(sprintf("- Mean correlation across all measures: r = %.3f\n", mean_correlation))
+
+if (mean_correlation > 0.7) {
+  cat("✓ Strong correlations suggest good ranking agreement\n")
+} else if (mean_correlation > 0.5) {
+  cat("~ Moderate correlations suggest fair ranking agreement\n")
+} else {
+  cat("✗ Weak correlations suggest poor ranking agreement\n")
+}
+
+cat("\n\nIMPLICATIONS FOR RESEARCH:\n")
+cat("1. Systematic bias (non-zero mean difference) can be corrected\n")
+cat("   with calibration equations\n")
+cat("2. Strong correlations indicate FFQ can rank individuals even if\n")
+cat("   absolute values differ\n")
+cat("3. Researchers should consider both mean agreement AND correlation\n")
+cat("4. FFQ remains useful for large epidemiological studies despite\n")
+cat("   potential bias, due to lower cost and participant burden\n")
+
+cat("\n\nSTATISTICAL METHODOLOGY:\n")
+cat("- Paired t-test for hypothesis testing (H₀: mean difference = 0)\n")
+cat("- 95% confidence intervals for mean differences\n")
+cat("- Bland-Altman plots for visualizing agreement\n")
+cat("- Pearson correlation for ranking agreement\n")
+cat("- Significance level: α = 0.05\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

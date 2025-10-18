@@ -1,0 +1,611 @@
+---
+title: "Bone Density in Twins: Hypothesis Testing for Smoking Effects"
+author: "Biostatistics Analysis - Chapter 7"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 14, fig.height = 10)
+```
+
+# Background
+
+This analysis examines **bone mineral density (BMD)** differences between **heavier-smoking and lighter-smoking twins**. Twin studies control for genetic factors, allowing isolation of environmental effects (smoking).
+
+## Research Questions
+
+**Problem 7.73:** Perform a hypothesis test to assess whether there are significant differences in mean BMD for the **femoral neck** between the heavier- and lighter-smoking twins.
+
+**Problem 7.74:** Answer Problem 7.73 for mean BMD at the **femoral shaft**.
+
+## Study Design
+
+- **Participants:** Twin pairs (monozygotic and dizygotic)
+- **Measurements:** Two visits with BMD measurements
+- **Key Variables:**
+  - Smoking: `cur1`, `cur2` (cigarettes/day)
+  - Femoral Neck BMD: `fn1`, `fn2` (g/cm²)
+  - Femoral Shaft BMD: `fs1`, `fs2` (g/cm²)
+
+## Analysis Strategy
+
+Since these are **twin pairs** (matched/paired data), we use:
+
+**Paired t-test** comparing BMD between heavier vs lighter smoking twin in each pair
+
+**H₀:** Mean BMD difference = 0 (no difference between heavier/lighter smoker)
+**H₁:** Mean BMD difference ≠ 0 (difference exists)
+
+**Significance level:** α = 0.05
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+library(gridExtra)
+library(scales)
+```
+
+# Data Import and Exploration
+
+```{r data-import}
+# Read the BONEDEN dataset
+boneden_data <- read.csv("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/BONEDEN.DAT.txt",
+                         check.names = FALSE,
+                         stringsAsFactors = FALSE,
+                         na.strings = c("", "NA"))
+
+# Remove quotes from column names
+colnames(boneden_data) <- gsub("'", "", colnames(boneden_data))
+
+cat("Dataset Structure:\n")
+str(boneden_data)
+
+cat("\n\nKey Variable Descriptions:\n")
+cat("- ID: Twin pair identification\n")
+cat("- age: Age (years)\n")
+cat("- zyg: Zygosity (1 = MZ monozygotic, 2 = DZ dizygotic)\n")
+cat("- cur1: Current smoking Twin 1 (cigarettes/day)\n")
+cat("- cur2: Current smoking Twin 2 (cigarettes/day)\n")
+cat("- fn1: Femoral neck BMD Twin 1 (g/cm²)\n")
+cat("- fn2: Femoral neck BMD Twin 2 (g/cm²)\n")
+cat("- fs1: Femoral shaft BMD Twin 1 (g/cm²)\n")
+cat("- fs2: Femoral shaft BMD Twin 2 (g/cm²)\n")
+
+cat("\n\nFirst 15 Twin Pairs:\n")
+head(boneden_data, 15) %>%
+  select(ID, age, zyg, cur1, cur2, fn1, fn2, fs1, fs2) %>%
+  kable(digits = 2, caption = "Sample of Twin Bone Density Data")
+
+cat(sprintf("\n\nTotal twin pairs: %d\n", nrow(boneden_data)))
+```
+
+## Data Preparation
+
+```{r data-prep}
+# Identify heavier and lighter smoker in each pair
+boneden_twins <- boneden_data %>%
+  filter(!is.na(cur1) & !is.na(cur2) & !is.na(fn1) & !is.na(fn2) &
+         !is.na(fs1) & !is.na(fs2)) %>%
+  mutate(
+    # Determine who smokes more
+    heavier_smoker = ifelse(cur1 > cur2, 1,
+                           ifelse(cur2 > cur1, 2, 0)),  # 0 = equal smoking
+    smoking_diff = abs(cur1 - cur2),
+
+    # BMD for heavier and lighter smoker
+    heavier_fn = case_when(
+      heavier_smoker == 1 ~ fn1,
+      heavier_smoker == 2 ~ fn2,
+      TRUE ~ NA_real_
+    ),
+    lighter_fn = case_when(
+      heavier_smoker == 1 ~ fn2,
+      heavier_smoker == 2 ~ fn1,
+      TRUE ~ NA_real_
+    ),
+    heavier_fs = case_when(
+      heavier_smoker == 1 ~ fs1,
+      heavier_smoker == 2 ~ fs2,
+      TRUE ~ NA_real_
+    ),
+    lighter_fs = case_when(
+      heavier_smoker == 1 ~ fs2,
+      heavier_smoker == 2 ~ fs1,
+      TRUE ~ NA_real_
+    ),
+
+    # Smoking amounts for heavier and lighter
+    heavier_cig = case_when(
+      heavier_smoker == 1 ~ cur1,
+      heavier_smoker == 2 ~ cur2,
+      TRUE ~ NA_real_
+    ),
+    lighter_cig = case_when(
+      heavier_smoker == 1 ~ cur2,
+      heavier_smoker == 2 ~ cur1,
+      TRUE ~ NA_real_
+    ),
+
+    # Differences (Heavier - Lighter)
+    diff_fn = heavier_fn - lighter_fn,
+    diff_fs = heavier_fs - lighter_fs,
+
+    # Zygosity labels
+    zygosity = factor(zyg, levels = c(1, 2),
+                     labels = c("MZ (Identical)", "DZ (Fraternal)"))
+  )
+
+# Filter to pairs with discordant smoking (exclude equal smokers)
+boneden_discordant <- boneden_twins %>%
+  filter(heavier_smoker != 0)
+
+cat("Data Preparation Summary:\n\n")
+cat(sprintf("Total twin pairs with complete data: %d\n", nrow(boneden_twins)))
+cat(sprintf("Pairs with discordant smoking: %d\n", nrow(boneden_discordant)))
+cat(sprintf("Pairs with equal smoking (excluded): %d\n",
+            sum(boneden_twins$heavier_smoker == 0)))
+
+cat("\n\nSmoking Discordance Summary:\n")
+boneden_discordant %>%
+  summarise(
+    N = n(),
+    Mean_Heavier = mean(heavier_cig, na.rm = TRUE),
+    Mean_Lighter = mean(lighter_cig, na.rm = TRUE),
+    Mean_Diff = mean(smoking_diff, na.rm = TRUE),
+    Min_Diff = min(smoking_diff, na.rm = TRUE),
+    Max_Diff = max(smoking_diff, na.rm = TRUE)
+  ) %>%
+  kable(digits = 2,
+        col.names = c("N Pairs", "Heavier (cig/day)", "Lighter (cig/day)",
+                     "Mean Diff", "Min Diff", "Max Diff"),
+        caption = "Smoking Characteristics of Discordant Twin Pairs")
+
+cat("\n\nDistribution by Zygosity:\n")
+table(boneden_discordant$zygosity) %>%
+  kable(col.names = c("Zygosity", "N Pairs"))
+```
+
+---
+
+# Problem 7.73: Femoral Neck BMD
+
+```{r problem-7-73}
+cat("\n=== PROBLEM 7.73: FEMORAL NECK BMD ===\n\n")
+
+cat("RESEARCH QUESTION:\n")
+cat("Are there significant differences in mean femoral neck BMD between\n")
+cat("heavier-smoking and lighter-smoking twins?\n\n")
+
+cat("HYPOTHESES:\n")
+cat("H₀: μ_difference = 0 (no BMD difference between heavier/lighter smoker)\n")
+cat("H₁: μ_difference ≠ 0 (BMD differs between heavier/lighter smoker)\n")
+cat("Test: Paired t-test (two-sided)\n")
+cat("Significance level: α = 0.05\n\n")
+
+# Descriptive statistics
+fn_desc <- boneden_discordant %>%
+  summarise(
+    N = n(),
+    Mean_Heavier = mean(heavier_fn, na.rm = TRUE),
+    SD_Heavier = sd(heavier_fn, na.rm = TRUE),
+    Mean_Lighter = mean(lighter_fn, na.rm = TRUE),
+    SD_Lighter = sd(lighter_fn, na.rm = TRUE),
+    Mean_Diff = mean(diff_fn, na.rm = TRUE),
+    SD_Diff = sd(diff_fn, na.rm = TRUE),
+    SE_Diff = SD_Diff / sqrt(N)
+  )
+
+cat("DESCRIPTIVE STATISTICS:\n\n")
+cat("Femoral Neck BMD (g/cm²):\n")
+cat(sprintf("  Heavier Smoker:  Mean = %.4f, SD = %.4f\n",
+            fn_desc$Mean_Heavier, fn_desc$SD_Heavier))
+cat(sprintf("  Lighter Smoker:  Mean = %.4f, SD = %.4f\n",
+            fn_desc$Mean_Lighter, fn_desc$SD_Lighter))
+cat(sprintf("\nPaired Difference (Heavier - Lighter):\n"))
+cat(sprintf("  Mean = %.4f g/cm²\n", fn_desc$Mean_Diff))
+cat(sprintf("  SD = %.4f g/cm²\n", fn_desc$SD_Diff))
+cat(sprintf("  SE = %.4f g/cm²\n", fn_desc$SE_Diff))
+cat(sprintf("  N = %d pairs\n", fn_desc$N))
+
+# Paired t-test
+fn_test <- t.test(boneden_discordant$heavier_fn,
+                  boneden_discordant$lighter_fn,
+                  paired = TRUE,
+                  alternative = "two.sided")
+
+cat("\n\nHYPOTHESIS TEST RESULTS:\n\n")
+cat(sprintf("t-statistic: %.4f\n", fn_test$statistic))
+cat(sprintf("Degrees of freedom: %d\n", fn_test$parameter))
+cat(sprintf("p-value: %.6f\n", fn_test$p.value))
+cat(sprintf("95%% CI for difference: [%.4f, %.4f] g/cm²\n",
+            fn_test$conf.int[1], fn_test$conf.int[2]))
+
+cat("\n\nDECISION:\n")
+if (fn_test$p.value < 0.05) {
+  cat(sprintf("✗ p = %.6f < 0.05: REJECT H₀\n", fn_test$p.value))
+  cat("✗ There IS a significant difference in femoral neck BMD\n")
+  cat("   between heavier and lighter smoking twins\n\n")
+
+  if (fn_desc$Mean_Diff < 0) {
+    cat(sprintf("DIRECTION: Heavier smokers have LOWER BMD by %.4f g/cm²\n",
+                abs(fn_desc$Mean_Diff)))
+    cat("           (95% CI: [%.4f, %.4f])\n",
+        fn_test$conf.int[1], fn_test$conf.int[2])
+  } else {
+    cat(sprintf("DIRECTION: Heavier smokers have HIGHER BMD by %.4f g/cm²\n",
+                fn_desc$Mean_Diff))
+    cat("           (95% CI: [%.4f, %.4f])\n",
+        fn_test$conf.int[1], fn_test$conf.int[2])
+  }
+} else {
+  cat(sprintf("✓ p = %.6f > 0.05: FAIL TO REJECT H₀\n", fn_test$p.value))
+  cat("✓ NO significant difference in femoral neck BMD\n")
+  cat("   between heavier and lighter smoking twins\n")
+}
+
+# Effect size (Cohen's d for paired data)
+cohens_d_fn <- fn_desc$Mean_Diff / fn_desc$SD_Diff
+
+cat(sprintf("\n\nEFFECT SIZE:\n"))
+cat(sprintf("Cohen's d: %.4f\n", cohens_d_fn))
+cat("Interpretation: ")
+if (abs(cohens_d_fn) < 0.2) {
+  cat("Negligible effect\n")
+} else if (abs(cohens_d_fn) < 0.5) {
+  cat("Small effect\n")
+} else if (abs(cohens_d_fn) < 0.8) {
+  cat("Medium effect\n")
+} else {
+  cat("Large effect\n")
+}
+
+# Percent difference
+pct_diff_fn <- (fn_desc$Mean_Diff / fn_desc$Mean_Lighter) * 100
+cat(sprintf("\nPercent difference: %.2f%%\n", pct_diff_fn))
+```
+
+## Femoral Neck Visualization
+
+```{r fn-visualization, fig.height=8}
+# Scatter plot with line of equality
+p_fn_scatter <- boneden_discordant %>%
+  ggplot(aes(x = lighter_fn, y = heavier_fn)) +
+  geom_point(aes(color = zygosity), size = 3, alpha = 0.7) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed",
+              color = "red", size = 1) +
+  geom_smooth(method = "lm", se = TRUE, color = "blue") +
+  labs(title = "Femoral Neck BMD: Heavier vs Lighter Smoking Twin",
+       subtitle = sprintf("Mean difference = %.4f g/cm², p = %.4f",
+                         fn_desc$Mean_Diff, fn_test$p.value),
+       x = "Lighter Smoker BMD (g/cm²)",
+       y = "Heavier Smoker BMD (g/cm²)",
+       color = "Zygosity") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "top")
+
+# Paired difference plot
+p_fn_diff <- boneden_discordant %>%
+  mutate(pair_id = row_number()) %>%
+  ggplot(aes(x = pair_id, y = diff_fn)) +
+  geom_point(aes(color = zygosity), size = 2) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "red", size = 1) +
+  geom_hline(yintercept = fn_desc$Mean_Diff, linetype = "dashed",
+             color = "blue", size = 1) +
+  labs(title = "Paired Differences in Femoral Neck BMD",
+       subtitle = "Blue dashed line = mean difference",
+       x = "Twin Pair",
+       y = "Difference (Heavier - Lighter) g/cm²",
+       color = "Zygosity") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "top")
+
+# Box plot comparison
+fn_box_data <- boneden_discordant %>%
+  select(heavier_fn, lighter_fn, zygosity) %>%
+  mutate(pair_id = row_number()) %>%
+  pivot_longer(cols = c(heavier_fn, lighter_fn),
+               names_to = "Smoker_Type",
+               values_to = "BMD") %>%
+  mutate(Smoker_Type = ifelse(Smoker_Type == "heavier_fn",
+                              "Heavier Smoker", "Lighter Smoker"))
+
+p_fn_box <- fn_box_data %>%
+  ggplot(aes(x = Smoker_Type, y = BMD, fill = Smoker_Type)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_line(aes(group = pair_id), alpha = 0.2) +
+  scale_fill_manual(values = c("coral", "lightblue")) +
+  labs(title = "Femoral Neck BMD Distribution",
+       x = NULL,
+       y = "BMD (g/cm²)") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "none")
+
+grid.arrange(p_fn_scatter, p_fn_diff, p_fn_box, ncol = 1)
+```
+
+---
+
+# Problem 7.74: Femoral Shaft BMD
+
+```{r problem-7-74}
+cat("\n\n=== PROBLEM 7.74: FEMORAL SHAFT BMD ===\n\n")
+
+cat("RESEARCH QUESTION:\n")
+cat("Are there significant differences in mean femoral shaft BMD between\n")
+cat("heavier-smoking and lighter-smoking twins?\n\n")
+
+cat("HYPOTHESES:\n")
+cat("H₀: μ_difference = 0 (no BMD difference between heavier/lighter smoker)\n")
+cat("H₁: μ_difference ≠ 0 (BMD differs between heavier/lighter smoker)\n")
+cat("Test: Paired t-test (two-sided)\n")
+cat("Significance level: α = 0.05\n\n")
+
+# Descriptive statistics
+fs_desc <- boneden_discordant %>%
+  summarise(
+    N = n(),
+    Mean_Heavier = mean(heavier_fs, na.rm = TRUE),
+    SD_Heavier = sd(heavier_fs, na.rm = TRUE),
+    Mean_Lighter = mean(lighter_fs, na.rm = TRUE),
+    SD_Lighter = sd(lighter_fs, na.rm = TRUE),
+    Mean_Diff = mean(diff_fs, na.rm = TRUE),
+    SD_Diff = sd(diff_fs, na.rm = TRUE),
+    SE_Diff = SD_Diff / sqrt(N)
+  )
+
+cat("DESCRIPTIVE STATISTICS:\n\n")
+cat("Femoral Shaft BMD (g/cm²):\n")
+cat(sprintf("  Heavier Smoker:  Mean = %.4f, SD = %.4f\n",
+            fs_desc$Mean_Heavier, fs_desc$SD_Heavier))
+cat(sprintf("  Lighter Smoker:  Mean = %.4f, SD = %.4f\n",
+            fs_desc$Mean_Lighter, fs_desc$SD_Lighter))
+cat(sprintf("\nPaired Difference (Heavier - Lighter):\n"))
+cat(sprintf("  Mean = %.4f g/cm²\n", fs_desc$Mean_Diff))
+cat(sprintf("  SD = %.4f g/cm²\n", fs_desc$SD_Diff))
+cat(sprintf("  SE = %.4f g/cm²\n", fs_desc$SE_Diff))
+cat(sprintf("  N = %d pairs\n", fs_desc$N))
+
+# Paired t-test
+fs_test <- t.test(boneden_discordant$heavier_fs,
+                  boneden_discordant$lighter_fs,
+                  paired = TRUE,
+                  alternative = "two.sided")
+
+cat("\n\nHYPOTHESIS TEST RESULTS:\n\n")
+cat(sprintf("t-statistic: %.4f\n", fs_test$statistic))
+cat(sprintf("Degrees of freedom: %d\n", fs_test$parameter))
+cat(sprintf("p-value: %.6f\n", fs_test$p.value))
+cat(sprintf("95%% CI for difference: [%.4f, %.4f] g/cm²\n",
+            fs_test$conf.int[1], fs_test$conf.int[2]))
+
+cat("\n\nDECISION:\n")
+if (fs_test$p.value < 0.05) {
+  cat(sprintf("✗ p = %.6f < 0.05: REJECT H₀\n", fs_test$p.value))
+  cat("✗ There IS a significant difference in femoral shaft BMD\n")
+  cat("   between heavier and lighter smoking twins\n\n")
+
+  if (fs_desc$Mean_Diff < 0) {
+    cat(sprintf("DIRECTION: Heavier smokers have LOWER BMD by %.4f g/cm²\n",
+                abs(fs_desc$Mean_Diff)))
+    cat(sprintf("           (95%% CI: [%.4f, %.4f])\n",
+                fs_test$conf.int[1], fs_test$conf.int[2]))
+  } else {
+    cat(sprintf("DIRECTION: Heavier smokers have HIGHER BMD by %.4f g/cm²\n",
+                fs_desc$Mean_Diff))
+    cat(sprintf("           (95%% CI: [%.4f, %.4f])\n",
+                fs_test$conf.int[1], fs_test$conf.int[2]))
+  }
+} else {
+  cat(sprintf("✓ p = %.6f > 0.05: FAIL TO REJECT H₀\n", fs_test$p.value))
+  cat("✓ NO significant difference in femoral shaft BMD\n")
+  cat("   between heavier and lighter smoking twins\n")
+}
+
+# Effect size (Cohen's d for paired data)
+cohens_d_fs <- fs_desc$Mean_Diff / fs_desc$SD_Diff
+
+cat(sprintf("\n\nEFFECT SIZE:\n"))
+cat(sprintf("Cohen's d: %.4f\n", cohens_d_fs))
+cat("Interpretation: ")
+if (abs(cohens_d_fs) < 0.2) {
+  cat("Negligible effect\n")
+} else if (abs(cohens_d_fs) < 0.5) {
+  cat("Small effect\n")
+} else if (abs(cohens_d_fs) < 0.8) {
+  cat("Medium effect\n")
+} else {
+  cat("Large effect\n")
+}
+
+# Percent difference
+pct_diff_fs <- (fs_desc$Mean_Diff / fs_desc$Mean_Lighter) * 100
+cat(sprintf("\nPercent difference: %.2f%%\n", pct_diff_fs))
+```
+
+## Femoral Shaft Visualization
+
+```{r fs-visualization, fig.height=8}
+# Scatter plot with line of equality
+p_fs_scatter <- boneden_discordant %>%
+  ggplot(aes(x = lighter_fs, y = heavier_fs)) +
+  geom_point(aes(color = zygosity), size = 3, alpha = 0.7) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed",
+              color = "red", size = 1) +
+  geom_smooth(method = "lm", se = TRUE, color = "blue") +
+  labs(title = "Femoral Shaft BMD: Heavier vs Lighter Smoking Twin",
+       subtitle = sprintf("Mean difference = %.4f g/cm², p = %.4f",
+                         fs_desc$Mean_Diff, fs_test$p.value),
+       x = "Lighter Smoker BMD (g/cm²)",
+       y = "Heavier Smoker BMD (g/cm²)",
+       color = "Zygosity") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "top")
+
+# Paired difference plot
+p_fs_diff <- boneden_discordant %>%
+  mutate(pair_id = row_number()) %>%
+  ggplot(aes(x = pair_id, y = diff_fs)) +
+  geom_point(aes(color = zygosity), size = 2) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "red", size = 1) +
+  geom_hline(yintercept = fs_desc$Mean_Diff, linetype = "dashed",
+             color = "blue", size = 1) +
+  labs(title = "Paired Differences in Femoral Shaft BMD",
+       subtitle = "Blue dashed line = mean difference",
+       x = "Twin Pair",
+       y = "Difference (Heavier - Lighter) g/cm²",
+       color = "Zygosity") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "top")
+
+# Box plot comparison
+fs_box_data <- boneden_discordant %>%
+  select(heavier_fs, lighter_fs, zygosity) %>%
+  mutate(pair_id = row_number()) %>%
+  pivot_longer(cols = c(heavier_fs, lighter_fs),
+               names_to = "Smoker_Type",
+               values_to = "BMD") %>%
+  mutate(Smoker_Type = ifelse(Smoker_Type == "heavier_fs",
+                              "Heavier Smoker", "Lighter Smoker"))
+
+p_fs_box <- fs_box_data %>%
+  ggplot(aes(x = Smoker_Type, y = BMD, fill = Smoker_Type)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_line(aes(group = pair_id), alpha = 0.2) +
+  scale_fill_manual(values = c("coral", "lightblue")) +
+  labs(title = "Femoral Shaft BMD Distribution",
+       x = NULL,
+       y = "BMD (g/cm²)") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "none")
+
+grid.arrange(p_fs_scatter, p_fs_diff, p_fs_box, ncol = 1)
+```
+
+---
+
+# Comprehensive Summary
+
+```{r comprehensive-summary}
+cat("\n\n=== COMPREHENSIVE SUMMARY: PROBLEMS 7.73-7.74 ===\n\n")
+
+# Create summary table
+summary_table <- data.frame(
+  Anatomical_Site = c("Femoral Neck", "Femoral Shaft"),
+  N_Pairs = c(fn_desc$N, fs_desc$N),
+  Mean_Heavier = c(fn_desc$Mean_Heavier, fs_desc$Mean_Heavier),
+  Mean_Lighter = c(fn_desc$Mean_Lighter, fs_desc$Mean_Lighter),
+  Mean_Difference = c(fn_desc$Mean_Diff, fs_desc$Mean_Diff),
+  CI_Lower = c(fn_test$conf.int[1], fs_test$conf.int[1]),
+  CI_Upper = c(fn_test$conf.int[2], fs_test$conf.int[2]),
+  t_statistic = c(fn_test$statistic, fs_test$statistic),
+  p_value = c(fn_test$p.value, fs_test$p.value),
+  Cohens_d = c(cohens_d_fn, cohens_d_fs),
+  Pct_Diff = c(pct_diff_fn, pct_diff_fs)
+) %>%
+  mutate(
+    Significant = ifelse(p_value < 0.05, "Yes", "No"),
+    Sig_Code = ifelse(p_value < 0.001, "***",
+                     ifelse(p_value < 0.01, "**",
+                           ifelse(p_value < 0.05, "*", "ns")))
+  )
+
+cat("SUMMARY TABLE:\n\n")
+summary_table %>%
+  select(Anatomical_Site, N_Pairs, Mean_Difference, CI_Lower, CI_Upper,
+         t_statistic, p_value, Cohens_d, Significant, Sig_Code) %>%
+  kable(digits = 4,
+        col.names = c("Site", "N", "Mean Diff", "CI Lower", "CI Upper",
+                     "t-stat", "p-value", "Cohen's d", "Sig?", "Code"),
+        caption = "Hypothesis Test Results: BMD Differences in Discordant Twin Pairs")
+
+cat("\n\nSignificance codes: *** p<0.001, ** p<0.01, * p<0.05, ns = not significant\n")
+```
+
+## Final Conclusions
+
+```{r final-conclusions}
+cat("\n\n=== FINAL CONCLUSIONS ===\n\n")
+
+cat("PROBLEM 7.73: FEMORAL NECK BMD\n")
+cat(sprintf("- p-value: %.6f\n", fn_test$p.value))
+if (fn_test$p.value < 0.05) {
+  cat("- Decision: REJECT H₀\n")
+  cat(sprintf("- Mean difference: %.4f g/cm² (95%% CI: [%.4f, %.4f])\n",
+              fn_desc$Mean_Diff, fn_test$conf.int[1], fn_test$conf.int[2]))
+  cat("- CONCLUSION: Heavier smoking IS associated with BMD differences\n")
+} else {
+  cat("- Decision: FAIL TO REJECT H₀\n")
+  cat("- CONCLUSION: No significant BMD difference detected\n")
+}
+
+cat("\n\nPROBLEM 7.74: FEMORAL SHAFT BMD\n")
+cat(sprintf("- p-value: %.6f\n", fs_test$p.value))
+if (fs_test$p.value < 0.05) {
+  cat("- Decision: REJECT H₀\n")
+  cat(sprintf("- Mean difference: %.4f g/cm² (95%% CI: [%.4f, %.4f])\n",
+              fs_desc$Mean_Diff, fs_test$conf.int[1], fs_test$conf.int[2]))
+  cat("- CONCLUSION: Heavier smoking IS associated with BMD differences\n")
+} else {
+  cat("- Decision: FAIL TO REJECT H₀\n")
+  cat("- CONCLUSION: No significant BMD difference detected\n")
+}
+
+cat("\n\n=====================================\n")
+cat("OVERALL INTERPRETATION\n")
+cat("=====================================\n\n")
+
+n_sig <- sum(summary_table$Significant == "Yes")
+
+if (n_sig == 2) {
+  cat("✗ Both anatomical sites show SIGNIFICANT differences\n")
+  cat("✗ STRONG EVIDENCE that heavier smoking affects bone density\n\n")
+} else if (n_sig == 1) {
+  cat("~ ONE anatomical site shows significant differences\n")
+  cat("~ MODERATE EVIDENCE for smoking effects on bone density\n\n")
+} else {
+  cat("✓ Neither anatomical site shows significant differences\n")
+  cat("✓ NO STRONG EVIDENCE for smoking effects in this twin study\n\n")
+}
+
+cat("KEY ADVANTAGES OF TWIN STUDY DESIGN:\n")
+cat("- Controls for genetic factors (twins share genes)\n")
+cat("- Controls for family environment and early life factors\n")
+cat("- Paired design increases statistical power\n")
+cat("- Isolates environmental effect of smoking\n\n")
+
+cat("INTERPRETATION NOTES:\n")
+cat("- Negative differences suggest heavier smokers have LOWER BMD\n")
+cat("- This would be consistent with known harmful effects of smoking\n")
+cat("- Twin studies provide strong causal evidence\n")
+cat("- Effect sizes indicate clinical significance beyond statistical significance\n\n")
+
+cat("CLINICAL IMPLICATIONS:\n")
+cat("- Smoking is a modifiable risk factor for osteoporosis\n")
+cat("- Even within twin pairs, smoking differences correlate with BMD\n")
+cat("- Smoking cessation may help preserve bone health\n")
+cat("- Twins with discordant smoking provide natural experiment\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

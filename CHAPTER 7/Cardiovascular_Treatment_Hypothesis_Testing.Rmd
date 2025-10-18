@@ -1,0 +1,813 @@
+---
+title: "Cardiovascular Treatment Effects: Hypothesis Testing Analysis"
+author: "Biostatistics Analysis - Chapter 7"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 14, fig.height = 10)
+```
+
+# Background
+
+This analysis evaluates the effects of **two cardiovascular medications** on patients with **severe angina pectoris** (chest pain due to coronary artery disease).
+
+## Treatments
+
+1. **Nifedipine (N):** Calcium channel blocker - relaxes blood vessels, reduces blood pressure
+2. **Propranolol (P):** Beta blocker - slows heart rate, reduces cardiac workload
+
+## Research Question
+
+**Problem 7.62:** Use hypothesis-testing methods to assess whether either treatment affects:
+- **Blood pressure** (systolic BP)
+- **Heart rate** (beats per minute)
+
+## Study Design
+
+- **Baseline measurement:** Before treatment initiation
+- **Treatment levels:** Up to 3 dose levels (Level 1, Level 2, Level 3)
+- **Design:** Paired/repeated measures (same patients measured at multiple time points)
+- **Missing values:** Coded as 999
+
+## Outcome Variables
+
+- **Heart Rate (HR):** bashrtrt (baseline), lv1hrtrt, lv2hrtrt, lv3hrtrt
+- **Systolic BP (SBP):** bassys (baseline), lv1sys, lv2sys, lv3sys
+
+## Hypothesis Testing Approach
+
+For each treatment and outcome:
+
+**H₀:** Treatment has NO effect (mean change from baseline = 0)
+**H₁:** Treatment has an effect (mean change from baseline ≠ 0)
+
+**Test:** Paired t-test (comparing baseline vs treatment levels)
+**Significance level:** α = 0.05
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+library(gridExtra)
+library(scales)
+```
+
+# Data Import and Exploration
+
+```{r data-import}
+# Read the NIFED dataset
+nifed_data <- read.csv("../NIFED.DAT.txt",
+                       check.names = FALSE,
+                       stringsAsFactors = FALSE,
+                       na.strings = c("", "NA", "999"))
+
+# Remove quotes from column names
+colnames(nifed_data) <- gsub("'", "", colnames(nifed_data))
+
+# Display structure
+cat("Dataset Structure:\n")
+str(nifed_data)
+
+cat("\n\nVariable Descriptions:\n")
+cat("- ID: Patient identification\n")
+cat("- trtgrp: Treatment group (N = Nifedipine, P = Propranolol)\n")
+cat("- bashrtrt: Baseline heart rate (bpm)\n")
+cat("- lv1hrtrt: Heart rate at Level 1\n")
+cat("- lv2hrtrt: Heart rate at Level 2\n")
+cat("- lv3hrtrt: Heart rate at Level 3\n")
+cat("- bassys: Baseline systolic BP (mmHg)\n")
+cat("- lv1sys: Systolic BP at Level 1\n")
+cat("- lv2sys: Systolic BP at Level 2\n")
+cat("- lv3sys: Systolic BP at Level 3\n")
+
+cat("\n\nFirst 15 Patients:\n")
+head(nifed_data, 15) %>%
+  kable(caption = "Sample of Cardiovascular Treatment Data")
+
+cat(sprintf("\n\nTotal patients: %d\n", nrow(nifed_data)))
+```
+
+## Data Preparation
+
+```{r data-prep}
+# Clean treatment group variable
+nifed_clean <- nifed_data %>%
+  mutate(
+    trtgrp = gsub("'", "", as.character(trtgrp)),
+    trtgrp = toupper(trimws(trtgrp)),
+    treatment = case_when(
+      trtgrp == "N" ~ "Nifedipine",
+      trtgrp == "P" ~ "Propranolol",
+      TRUE ~ NA_character_
+    )
+  )
+
+# Summary by treatment group
+treatment_summary <- nifed_clean %>%
+  group_by(treatment) %>%
+  summarise(
+    n_patients = n(),
+    mean_baseline_hr = mean(bashrtrt, na.rm = TRUE),
+    mean_baseline_sbp = mean(bassys, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cat("Summary by Treatment Group:\n")
+treatment_summary %>%
+  kable(digits = 1,
+        col.names = c("Treatment", "N Patients", "Mean Baseline HR (bpm)",
+                     "Mean Baseline SBP (mmHg)"),
+        caption = "Baseline Characteristics by Treatment Group")
+
+# Calculate change scores for each level
+nifed_changes <- nifed_clean %>%
+  mutate(
+    # Heart rate changes
+    change_hr_lv1 = lv1hrtrt - bashrtrt,
+    change_hr_lv2 = lv2hrtrt - bashrtrt,
+    change_hr_lv3 = lv3hrtrt - bashrtrt,
+
+    # Systolic BP changes
+    change_sbp_lv1 = lv1sys - bassys,
+    change_sbp_lv2 = lv2sys - bassys,
+    change_sbp_lv3 = lv3sys - bassys
+  )
+
+cat("\n\nData preparation complete.\n")
+cat(sprintf("Total patients: %d\n", nrow(nifed_changes)))
+cat(sprintf("Nifedipine group: %d\n", sum(nifed_changes$treatment == "Nifedipine", na.rm = TRUE)))
+cat(sprintf("Propranolol group: %d\n", sum(nifed_changes$treatment == "Propranolol", na.rm = TRUE)))
+```
+
+---
+
+# Heart Rate Analysis
+
+## Nifedipine: Heart Rate Effects
+
+```{r nifedipine-hr}
+cat("\n=== NIFEDIPINE: HEART RATE EFFECTS ===\n\n")
+
+# Subset to Nifedipine patients
+nifed_n <- nifed_changes %>% filter(treatment == "Nifedipine")
+
+cat("H₀: Nifedipine has NO effect on heart rate (mean change = 0)\n")
+cat("H₁: Nifedipine affects heart rate (mean change ≠ 0)\n")
+cat("Test: Paired t-test (two-sided)\n\n")
+
+# Level 1
+cat("--- LEVEL 1 ---\n")
+valid_lv1_hr_n <- nifed_n %>% filter(!is.na(change_hr_lv1))
+n_lv1_hr_n <- nrow(valid_lv1_hr_n)
+
+if (n_lv1_hr_n > 0) {
+  test_lv1_hr_n <- t.test(valid_lv1_hr_n$change_hr_lv1, mu = 0,
+                          alternative = "two.sided")
+
+  cat(sprintf("N = %d\n", n_lv1_hr_n))
+  cat(sprintf("Mean change: %.2f bpm\n", mean(valid_lv1_hr_n$change_hr_lv1)))
+  cat(sprintf("SD: %.2f bpm\n", sd(valid_lv1_hr_n$change_hr_lv1)))
+  cat(sprintf("t-statistic: %.4f\n", test_lv1_hr_n$statistic))
+  cat(sprintf("df: %d\n", test_lv1_hr_n$parameter))
+  cat(sprintf("p-value: %.4f\n", test_lv1_hr_n$p.value))
+  cat(sprintf("95%% CI: [%.2f, %.2f] bpm\n",
+              test_lv1_hr_n$conf.int[1], test_lv1_hr_n$conf.int[2]))
+
+  if (test_lv1_hr_n$p.value < 0.05) {
+    cat(sprintf("✗ REJECT H₀ (p = %.4f): Nifedipine AFFECTS heart rate at Level 1\n",
+                test_lv1_hr_n$p.value))
+    if (mean(valid_lv1_hr_n$change_hr_lv1) > 0) {
+      cat("  Heart rate INCREASED\n")
+    } else {
+      cat("  Heart rate DECREASED\n")
+    }
+  } else {
+    cat(sprintf("✓ FAIL TO REJECT H₀ (p = %.4f): No significant effect at Level 1\n",
+                test_lv1_hr_n$p.value))
+  }
+} else {
+  cat("Insufficient data for Level 1\n")
+  test_lv1_hr_n <- NULL
+}
+
+# Level 2
+cat("\n--- LEVEL 2 ---\n")
+valid_lv2_hr_n <- nifed_n %>% filter(!is.na(change_hr_lv2))
+n_lv2_hr_n <- nrow(valid_lv2_hr_n)
+
+if (n_lv2_hr_n > 0) {
+  test_lv2_hr_n <- t.test(valid_lv2_hr_n$change_hr_lv2, mu = 0,
+                          alternative = "two.sided")
+
+  cat(sprintf("N = %d\n", n_lv2_hr_n))
+  cat(sprintf("Mean change: %.2f bpm\n", mean(valid_lv2_hr_n$change_hr_lv2)))
+  cat(sprintf("SD: %.2f bpm\n", sd(valid_lv2_hr_n$change_hr_lv2)))
+  cat(sprintf("t-statistic: %.4f\n", test_lv2_hr_n$statistic))
+  cat(sprintf("df: %d\n", test_lv2_hr_n$parameter))
+  cat(sprintf("p-value: %.4f\n", test_lv2_hr_n$p.value))
+  cat(sprintf("95%% CI: [%.2f, %.2f] bpm\n",
+              test_lv2_hr_n$conf.int[1], test_lv2_hr_n$conf.int[2]))
+
+  if (test_lv2_hr_n$p.value < 0.05) {
+    cat(sprintf("✗ REJECT H₀ (p = %.4f): Nifedipine AFFECTS heart rate at Level 2\n",
+                test_lv2_hr_n$p.value))
+    if (mean(valid_lv2_hr_n$change_hr_lv2) > 0) {
+      cat("  Heart rate INCREASED\n")
+    } else {
+      cat("  Heart rate DECREASED\n")
+    }
+  } else {
+    cat(sprintf("✓ FAIL TO REJECT H₀ (p = %.4f): No significant effect at Level 2\n",
+                test_lv2_hr_n$p.value))
+  }
+} else {
+  cat("Insufficient data for Level 2\n")
+  test_lv2_hr_n <- NULL
+}
+
+# Level 3
+cat("\n--- LEVEL 3 ---\n")
+valid_lv3_hr_n <- nifed_n %>% filter(!is.na(change_hr_lv3))
+n_lv3_hr_n <- nrow(valid_lv3_hr_n)
+
+if (n_lv3_hr_n > 0) {
+  test_lv3_hr_n <- t.test(valid_lv3_hr_n$change_hr_lv3, mu = 0,
+                          alternative = "two.sided")
+
+  cat(sprintf("N = %d\n", n_lv3_hr_n))
+  cat(sprintf("Mean change: %.2f bpm\n", mean(valid_lv3_hr_n$change_hr_lv3)))
+  cat(sprintf("SD: %.2f bpm\n", sd(valid_lv3_hr_n$change_hr_lv3)))
+  cat(sprintf("t-statistic: %.4f\n", test_lv3_hr_n$statistic))
+  cat(sprintf("df: %d\n", test_lv3_hr_n$parameter))
+  cat(sprintf("p-value: %.4f\n", test_lv3_hr_n$p.value))
+  cat(sprintf("95%% CI: [%.2f, %.2f] bpm\n",
+              test_lv3_hr_n$conf.int[1], test_lv3_hr_n$conf.int[2]))
+
+  if (test_lv3_hr_n$p.value < 0.05) {
+    cat(sprintf("✗ REJECT H₀ (p = %.4f): Nifedipine AFFECTS heart rate at Level 3\n",
+                test_lv3_hr_n$p.value))
+    if (mean(valid_lv3_hr_n$change_hr_lv3) > 0) {
+      cat("  Heart rate INCREASED\n")
+    } else {
+      cat("  Heart rate DECREASED\n")
+    }
+  } else {
+    cat(sprintf("✓ FAIL TO REJECT H₀ (p = %.4f): No significant effect at Level 3\n",
+                test_lv3_hr_n$p.value))
+  }
+} else {
+  cat("Insufficient data for Level 3\n")
+  test_lv3_hr_n <- NULL
+}
+```
+
+## Propranolol: Heart Rate Effects
+
+```{r propranolol-hr}
+cat("\n\n=== PROPRANOLOL: HEART RATE EFFECTS ===\n\n")
+
+# Subset to Propranolol patients
+nifed_p <- nifed_changes %>% filter(treatment == "Propranolol")
+
+cat("H₀: Propranolol has NO effect on heart rate (mean change = 0)\n")
+cat("H₁: Propranolol affects heart rate (mean change ≠ 0)\n")
+cat("Test: Paired t-test (two-sided)\n\n")
+
+# Level 1
+cat("--- LEVEL 1 ---\n")
+valid_lv1_hr_p <- nifed_p %>% filter(!is.na(change_hr_lv1))
+n_lv1_hr_p <- nrow(valid_lv1_hr_p)
+
+if (n_lv1_hr_p > 0) {
+  test_lv1_hr_p <- t.test(valid_lv1_hr_p$change_hr_lv1, mu = 0,
+                          alternative = "two.sided")
+
+  cat(sprintf("N = %d\n", n_lv1_hr_p))
+  cat(sprintf("Mean change: %.2f bpm\n", mean(valid_lv1_hr_p$change_hr_lv1)))
+  cat(sprintf("SD: %.2f bpm\n", sd(valid_lv1_hr_p$change_hr_lv1)))
+  cat(sprintf("t-statistic: %.4f\n", test_lv1_hr_p$statistic))
+  cat(sprintf("df: %d\n", test_lv1_hr_p$parameter))
+  cat(sprintf("p-value: %.4f\n", test_lv1_hr_p$p.value))
+  cat(sprintf("95%% CI: [%.2f, %.2f] bpm\n",
+              test_lv1_hr_p$conf.int[1], test_lv1_hr_p$conf.int[2]))
+
+  if (test_lv1_hr_p$p.value < 0.05) {
+    cat(sprintf("✗ REJECT H₀ (p = %.4f): Propranolol AFFECTS heart rate at Level 1\n",
+                test_lv1_hr_p$p.value))
+    if (mean(valid_lv1_hr_p$change_hr_lv1) > 0) {
+      cat("  Heart rate INCREASED\n")
+    } else {
+      cat("  Heart rate DECREASED\n")
+    }
+  } else {
+    cat(sprintf("✓ FAIL TO REJECT H₀ (p = %.4f): No significant effect at Level 1\n",
+                test_lv1_hr_p$p.value))
+  }
+} else {
+  cat("Insufficient data for Level 1\n")
+  test_lv1_hr_p <- NULL
+}
+
+# Level 2
+cat("\n--- LEVEL 2 ---\n")
+valid_lv2_hr_p <- nifed_p %>% filter(!is.na(change_hr_lv2))
+n_lv2_hr_p <- nrow(valid_lv2_hr_p)
+
+if (n_lv2_hr_p > 0) {
+  test_lv2_hr_p <- t.test(valid_lv2_hr_p$change_hr_lv2, mu = 0,
+                          alternative = "two.sided")
+
+  cat(sprintf("N = %d\n", n_lv2_hr_p))
+  cat(sprintf("Mean change: %.2f bpm\n", mean(valid_lv2_hr_p$change_hr_lv2)))
+  cat(sprintf("SD: %.2f bpm\n", sd(valid_lv2_hr_p$change_hr_lv2)))
+  cat(sprintf("t-statistic: %.4f\n", test_lv2_hr_p$statistic))
+  cat(sprintf("df: %d\n", test_lv2_hr_p$parameter))
+  cat(sprintf("p-value: %.4f\n", test_lv2_hr_p$p.value))
+  cat(sprintf("95%% CI: [%.2f, %.2f] bpm\n",
+              test_lv2_hr_p$conf.int[1], test_lv2_hr_p$conf.int[2]))
+
+  if (test_lv2_hr_p$p.value < 0.05) {
+    cat(sprintf("✗ REJECT H₀ (p = %.4f): Propranolol AFFECTS heart rate at Level 2\n",
+                test_lv2_hr_p$p.value))
+    if (mean(valid_lv2_hr_p$change_hr_lv2) > 0) {
+      cat("  Heart rate INCREASED\n")
+    } else {
+      cat("  Heart rate DECREASED\n")
+    }
+  } else {
+    cat(sprintf("✓ FAIL TO REJECT H₀ (p = %.4f): No significant effect at Level 2\n",
+                test_lv2_hr_p$p.value))
+  }
+} else {
+  cat("Insufficient data for Level 2\n")
+  test_lv2_hr_p <- NULL
+}
+
+# Level 3
+cat("\n--- LEVEL 3 ---\n")
+valid_lv3_hr_p <- nifed_p %>% filter(!is.na(change_hr_lv3))
+n_lv3_hr_p <- nrow(valid_lv3_hr_p)
+
+if (n_lv3_hr_p > 0) {
+  test_lv3_hr_p <- t.test(valid_lv3_hr_p$change_hr_lv3, mu = 0,
+                          alternative = "two.sided")
+
+  cat(sprintf("N = %d\n", n_lv3_hr_p))
+  cat(sprintf("Mean change: %.2f bpm\n", mean(valid_lv3_hr_p$change_hr_lv3)))
+  cat(sprintf("SD: %.2f bpm\n", sd(valid_lv3_hr_p$change_hr_lv3)))
+  cat(sprintf("t-statistic: %.4f\n", test_lv3_hr_p$statistic))
+  cat(sprintf("df: %d\n", test_lv3_hr_p$parameter))
+  cat(sprintf("p-value: %.4f\n", test_lv3_hr_p$p.value))
+  cat(sprintf("95%% CI: [%.2f, %.2f] bpm\n",
+              test_lv3_hr_p$conf.int[1], test_lv3_hr_p$conf.int[2]))
+
+  if (test_lv3_hr_p$p.value < 0.05) {
+    cat(sprintf("✗ REJECT H₀ (p = %.4f): Propranolol AFFECTS heart rate at Level 3\n",
+                test_lv3_hr_p$p.value))
+    if (mean(valid_lv3_hr_p$change_hr_lv3) > 0) {
+      cat("  Heart rate INCREASED\n")
+    } else {
+      cat("  Heart rate DECREASED\n")
+    }
+  } else {
+    cat(sprintf("✓ FAIL TO REJECT H₀ (p = %.4f): No significant effect at Level 3\n",
+                test_lv3_hr_p$p.value))
+  }
+} else {
+  cat("Insufficient data for Level 3\n")
+  test_lv3_hr_p <- NULL
+}
+```
+
+---
+
+# Blood Pressure Analysis
+
+## Nifedipine: Blood Pressure Effects
+
+```{r nifedipine-sbp}
+cat("\n\n=== NIFEDIPINE: SYSTOLIC BLOOD PRESSURE EFFECTS ===\n\n")
+
+cat("H₀: Nifedipine has NO effect on systolic BP (mean change = 0)\n")
+cat("H₁: Nifedipine affects systolic BP (mean change ≠ 0)\n")
+cat("Test: Paired t-test (two-sided)\n\n")
+
+# Level 1
+cat("--- LEVEL 1 ---\n")
+valid_lv1_sbp_n <- nifed_n %>% filter(!is.na(change_sbp_lv1))
+n_lv1_sbp_n <- nrow(valid_lv1_sbp_n)
+
+if (n_lv1_sbp_n > 0) {
+  test_lv1_sbp_n <- t.test(valid_lv1_sbp_n$change_sbp_lv1, mu = 0,
+                           alternative = "two.sided")
+
+  cat(sprintf("N = %d\n", n_lv1_sbp_n))
+  cat(sprintf("Mean change: %.2f mmHg\n", mean(valid_lv1_sbp_n$change_sbp_lv1)))
+  cat(sprintf("SD: %.2f mmHg\n", sd(valid_lv1_sbp_n$change_sbp_lv1)))
+  cat(sprintf("t-statistic: %.4f\n", test_lv1_sbp_n$statistic))
+  cat(sprintf("df: %d\n", test_lv1_sbp_n$parameter))
+  cat(sprintf("p-value: %.4f\n", test_lv1_sbp_n$p.value))
+  cat(sprintf("95%% CI: [%.2f, %.2f] mmHg\n",
+              test_lv1_sbp_n$conf.int[1], test_lv1_sbp_n$conf.int[2]))
+
+  if (test_lv1_sbp_n$p.value < 0.05) {
+    cat(sprintf("✗ REJECT H₀ (p = %.4f): Nifedipine AFFECTS systolic BP at Level 1\n",
+                test_lv1_sbp_n$p.value))
+    if (mean(valid_lv1_sbp_n$change_sbp_lv1) > 0) {
+      cat("  Blood pressure INCREASED\n")
+    } else {
+      cat("  Blood pressure DECREASED\n")
+    }
+  } else {
+    cat(sprintf("✓ FAIL TO REJECT H₀ (p = %.4f): No significant effect at Level 1\n",
+                test_lv1_sbp_n$p.value))
+  }
+} else {
+  cat("Insufficient data for Level 1\n")
+  test_lv1_sbp_n <- NULL
+}
+
+# Level 2
+cat("\n--- LEVEL 2 ---\n")
+valid_lv2_sbp_n <- nifed_n %>% filter(!is.na(change_sbp_lv2))
+n_lv2_sbp_n <- nrow(valid_lv2_sbp_n)
+
+if (n_lv2_sbp_n > 0) {
+  test_lv2_sbp_n <- t.test(valid_lv2_sbp_n$change_sbp_lv2, mu = 0,
+                           alternative = "two.sided")
+
+  cat(sprintf("N = %d\n", n_lv2_sbp_n))
+  cat(sprintf("Mean change: %.2f mmHg\n", mean(valid_lv2_sbp_n$change_sbp_lv2)))
+  cat(sprintf("SD: %.2f mmHg\n", sd(valid_lv2_sbp_n$change_sbp_lv2)))
+  cat(sprintf("t-statistic: %.4f\n", test_lv2_sbp_n$statistic))
+  cat(sprintf("df: %d\n", test_lv2_sbp_n$parameter))
+  cat(sprintf("p-value: %.4f\n", test_lv2_sbp_n$p.value))
+  cat(sprintf("95%% CI: [%.2f, %.2f] mmHg\n",
+              test_lv2_sbp_n$conf.int[1], test_lv2_sbp_n$conf.int[2]))
+
+  if (test_lv2_sbp_n$p.value < 0.05) {
+    cat(sprintf("✗ REJECT H₀ (p = %.4f): Nifedipine AFFECTS systolic BP at Level 2\n",
+                test_lv2_sbp_n$p.value))
+    if (mean(valid_lv2_sbp_n$change_sbp_lv2) > 0) {
+      cat("  Blood pressure INCREASED\n")
+    } else {
+      cat("  Blood pressure DECREASED\n")
+    }
+  } else {
+    cat(sprintf("✓ FAIL TO REJECT H₀ (p = %.4f): No significant effect at Level 2\n",
+                test_lv2_sbp_n$p.value))
+  }
+} else {
+  cat("Insufficient data for Level 2\n")
+  test_lv2_sbp_n <- NULL
+}
+
+# Level 3
+cat("\n--- LEVEL 3 ---\n")
+valid_lv3_sbp_n <- nifed_n %>% filter(!is.na(change_sbp_lv3))
+n_lv3_sbp_n <- nrow(valid_lv3_sbp_n)
+
+if (n_lv3_sbp_n > 0) {
+  test_lv3_sbp_n <- t.test(valid_lv3_sbp_n$change_sbp_lv3, mu = 0,
+                           alternative = "two.sided")
+
+  cat(sprintf("N = %d\n", n_lv3_sbp_n))
+  cat(sprintf("Mean change: %.2f mmHg\n", mean(valid_lv3_sbp_n$change_sbp_lv3)))
+  cat(sprintf("SD: %.2f mmHg\n", sd(valid_lv3_sbp_n$change_sbp_lv3)))
+  cat(sprintf("t-statistic: %.4f\n", test_lv3_sbp_n$statistic))
+  cat(sprintf("df: %d\n", test_lv3_sbp_n$parameter))
+  cat(sprintf("p-value: %.4f\n", test_lv3_sbp_n$p.value))
+  cat(sprintf("95%% CI: [%.2f, %.2f] mmHg\n",
+              test_lv3_sbp_n$conf.int[1], test_lv3_sbp_n$conf.int[2]))
+
+  if (test_lv3_sbp_n$p.value < 0.05) {
+    cat(sprintf("✗ REJECT H₀ (p = %.4f): Nifedipine AFFECTS systolic BP at Level 3\n",
+                test_lv3_sbp_n$p.value))
+    if (mean(valid_lv3_sbp_n$change_sbp_lv3) > 0) {
+      cat("  Blood pressure INCREASED\n")
+    } else {
+      cat("  Blood pressure DECREASED\n")
+    }
+  } else {
+    cat(sprintf("✓ FAIL TO REJECT H₀ (p = %.4f): No significant effect at Level 3\n",
+                test_lv3_sbp_n$p.value))
+  }
+} else {
+  cat("Insufficient data for Level 3\n")
+  test_lv3_sbp_n <- NULL
+}
+```
+
+## Propranolol: Blood Pressure Effects
+
+```{r propranolol-sbp}
+cat("\n\n=== PROPRANOLOL: SYSTOLIC BLOOD PRESSURE EFFECTS ===\n\n")
+
+cat("H₀: Propranolol has NO effect on systolic BP (mean change = 0)\n")
+cat("H₁: Propranolol affects systolic BP (mean change ≠ 0)\n")
+cat("Test: Paired t-test (two-sided)\n\n")
+
+# Level 1
+cat("--- LEVEL 1 ---\n")
+valid_lv1_sbp_p <- nifed_p %>% filter(!is.na(change_sbp_lv1))
+n_lv1_sbp_p <- nrow(valid_lv1_sbp_p)
+
+if (n_lv1_sbp_p > 0) {
+  test_lv1_sbp_p <- t.test(valid_lv1_sbp_p$change_sbp_lv1, mu = 0,
+                           alternative = "two.sided")
+
+  cat(sprintf("N = %d\n", n_lv1_sbp_p))
+  cat(sprintf("Mean change: %.2f mmHg\n", mean(valid_lv1_sbp_p$change_sbp_lv1)))
+  cat(sprintf("SD: %.2f mmHg\n", sd(valid_lv1_sbp_p$change_sbp_lv1)))
+  cat(sprintf("t-statistic: %.4f\n", test_lv1_sbp_p$statistic))
+  cat(sprintf("df: %d\n", test_lv1_sbp_p$parameter))
+  cat(sprintf("p-value: %.4f\n", test_lv1_sbp_p$p.value))
+  cat(sprintf("95%% CI: [%.2f, %.2f] mmHg\n",
+              test_lv1_sbp_p$conf.int[1], test_lv1_sbp_p$conf.int[2]))
+
+  if (test_lv1_sbp_p$p.value < 0.05) {
+    cat(sprintf("✗ REJECT H₀ (p = %.4f): Propranolol AFFECTS systolic BP at Level 1\n",
+                test_lv1_sbp_p$p.value))
+    if (mean(valid_lv1_sbp_p$change_sbp_lv1) > 0) {
+      cat("  Blood pressure INCREASED\n")
+    } else {
+      cat("  Blood pressure DECREASED\n")
+    }
+  } else {
+    cat(sprintf("✓ FAIL TO REJECT H₀ (p = %.4f): No significant effect at Level 1\n",
+                test_lv1_sbp_p$p.value))
+  }
+} else {
+  cat("Insufficient data for Level 1\n")
+  test_lv1_sbp_p <- NULL
+}
+
+# Level 2
+cat("\n--- LEVEL 2 ---\n")
+valid_lv2_sbp_p <- nifed_p %>% filter(!is.na(change_sbp_lv2))
+n_lv2_sbp_p <- nrow(valid_lv2_sbp_p)
+
+if (n_lv2_sbp_p > 0) {
+  test_lv2_sbp_p <- t.test(valid_lv2_sbp_p$change_sbp_lv2, mu = 0,
+                           alternative = "two.sided")
+
+  cat(sprintf("N = %d\n", n_lv2_sbp_p))
+  cat(sprintf("Mean change: %.2f mmHg\n", mean(valid_lv2_sbp_p$change_sbp_lv2)))
+  cat(sprintf("SD: %.2f mmHg\n", sd(valid_lv2_sbp_p$change_sbp_lv2)))
+  cat(sprintf("t-statistic: %.4f\n", test_lv2_sbp_p$statistic))
+  cat(sprintf("df: %d\n", test_lv2_sbp_p$parameter))
+  cat(sprintf("p-value: %.4f\n", test_lv2_sbp_p$p.value))
+  cat(sprintf("95%% CI: [%.2f, %.2f] mmHg\n",
+              test_lv2_sbp_p$conf.int[1], test_lv2_sbp_p$conf.int[2]))
+
+  if (test_lv2_sbp_p$p.value < 0.05) {
+    cat(sprintf("✗ REJECT H₀ (p = %.4f): Propranolol AFFECTS systolic BP at Level 2\n",
+                test_lv2_sbp_p$p.value))
+    if (mean(valid_lv2_sbp_p$change_sbp_lv2) > 0) {
+      cat("  Blood pressure INCREASED\n")
+    } else {
+      cat("  Blood pressure DECREASED\n")
+    }
+  } else {
+    cat(sprintf("✓ FAIL TO REJECT H₀ (p = %.4f): No significant effect at Level 2\n",
+                test_lv2_sbp_p$p.value))
+  }
+} else {
+  cat("Insufficient data for Level 2\n")
+  test_lv2_sbp_p <- NULL
+}
+
+# Level 3
+cat("\n--- LEVEL 3 ---\n")
+valid_lv3_sbp_p <- nifed_p %>% filter(!is.na(change_sbp_lv3))
+n_lv3_sbp_p <- nrow(valid_lv3_sbp_p)
+
+if (n_lv3_sbp_p > 0) {
+  test_lv3_sbp_p <- t.test(valid_lv3_sbp_p$change_sbp_lv3, mu = 0,
+                           alternative = "two.sided")
+
+  cat(sprintf("N = %d\n", n_lv3_sbp_p))
+  cat(sprintf("Mean change: %.2f mmHg\n", mean(valid_lv3_sbp_p$change_sbp_lv3)))
+  cat(sprintf("SD: %.2f mmHg\n", sd(valid_lv3_sbp_p$change_sbp_lv3)))
+  cat(sprintf("t-statistic: %.4f\n", test_lv3_sbp_p$statistic))
+  cat(sprintf("df: %d\n", test_lv3_sbp_p$parameter))
+  cat(sprintf("p-value: %.4f\n", test_lv3_sbp_p$p.value))
+  cat(sprintf("95%% CI: [%.2f, %.2f] mmHg\n",
+              test_lv3_sbp_p$conf.int[1], test_lv3_sbp_p$conf.int[2]))
+
+  if (test_lv3_sbp_p$p.value < 0.05) {
+    cat(sprintf("✗ REJECT H₀ (p = %.4f): Propranolol AFFECTS systolic BP at Level 3\n",
+                test_lv3_sbp_p$p.value))
+    if (mean(valid_lv3_sbp_p$change_sbp_lv3) > 0) {
+      cat("  Blood pressure INCREASED\n")
+    } else {
+      cat("  Blood pressure DECREASED\n")
+    }
+  } else {
+    cat(sprintf("✓ FAIL TO REJECT H₀ (p = %.4f): No significant effect at Level 3\n",
+                test_lv3_sbp_p$p.value))
+  }
+} else {
+  cat("Insufficient data for Level 3\n")
+  test_lv3_sbp_p <- NULL
+}
+```
+
+---
+
+# Summary of Results
+
+```{r summary-results}
+cat("\n\n=== COMPREHENSIVE SUMMARY: PROBLEM 7.62 ===\n\n")
+
+# Create summary tables
+create_summary <- function(drug, outcome, lv1_test, lv2_test, lv3_test,
+                           lv1_mean, lv2_mean, lv3_mean,
+                           lv1_n, lv2_n, lv3_n) {
+  data.frame(
+    Drug = drug,
+    Outcome = outcome,
+    Level = c("1", "2", "3"),
+    N = c(lv1_n, lv2_n, lv3_n),
+    Mean_Change = c(lv1_mean, lv2_mean, lv3_mean),
+    p_value = c(
+      if(!is.null(lv1_test)) lv1_test$p.value else NA,
+      if(!is.null(lv2_test)) lv2_test$p.value else NA,
+      if(!is.null(lv3_test)) lv3_test$p.value else NA
+    ),
+    Significant = c(
+      if(!is.null(lv1_test)) ifelse(lv1_test$p.value < 0.05, "Yes", "No") else "N/A",
+      if(!is.null(lv2_test)) ifelse(lv2_test$p.value < 0.05, "Yes", "No") else "N/A",
+      if(!is.null(lv3_test)) ifelse(lv3_test$p.value < 0.05, "Yes", "No") else "N/A"
+    )
+  )
+}
+
+# Heart Rate summaries
+hr_n_summary <- create_summary(
+  "Nifedipine", "Heart Rate (bpm)",
+  test_lv1_hr_n, test_lv2_hr_n, test_lv3_hr_n,
+  if(n_lv1_hr_n > 0) mean(valid_lv1_hr_n$change_hr_lv1) else NA,
+  if(n_lv2_hr_n > 0) mean(valid_lv2_hr_n$change_hr_lv2) else NA,
+  if(n_lv3_hr_n > 0) mean(valid_lv3_hr_n$change_hr_lv3) else NA,
+  n_lv1_hr_n, n_lv2_hr_n, n_lv3_hr_n
+)
+
+hr_p_summary <- create_summary(
+  "Propranolol", "Heart Rate (bpm)",
+  test_lv1_hr_p, test_lv2_hr_p, test_lv3_hr_p,
+  if(n_lv1_hr_p > 0) mean(valid_lv1_hr_p$change_hr_lv1) else NA,
+  if(n_lv2_hr_p > 0) mean(valid_lv2_hr_p$change_hr_lv2) else NA,
+  if(n_lv3_hr_p > 0) mean(valid_lv3_hr_p$change_hr_lv3) else NA,
+  n_lv1_hr_p, n_lv2_hr_p, n_lv3_hr_p
+)
+
+# Blood Pressure summaries
+sbp_n_summary <- create_summary(
+  "Nifedipine", "Systolic BP (mmHg)",
+  test_lv1_sbp_n, test_lv2_sbp_n, test_lv3_sbp_n,
+  if(n_lv1_sbp_n > 0) mean(valid_lv1_sbp_n$change_sbp_lv1) else NA,
+  if(n_lv2_sbp_n > 0) mean(valid_lv2_sbp_n$change_sbp_lv2) else NA,
+  if(n_lv3_sbp_n > 0) mean(valid_lv3_sbp_n$change_sbp_lv3) else NA,
+  n_lv1_sbp_n, n_lv2_sbp_n, n_lv3_sbp_n
+)
+
+sbp_p_summary <- create_summary(
+  "Propranolol", "Systolic BP (mmHg)",
+  test_lv1_sbp_p, test_lv2_sbp_p, test_lv3_sbp_p,
+  if(n_lv1_sbp_p > 0) mean(valid_lv1_sbp_p$change_sbp_lv1) else NA,
+  if(n_lv2_sbp_p > 0) mean(valid_lv2_sbp_p$change_sbp_lv2) else NA,
+  if(n_lv3_sbp_p > 0) mean(valid_lv3_sbp_p$change_sbp_lv3) else NA,
+  n_lv1_sbp_p, n_lv2_sbp_p, n_lv3_sbp_p
+)
+
+# Combined summary
+all_summary <- bind_rows(hr_n_summary, hr_p_summary,
+                        sbp_n_summary, sbp_p_summary)
+
+cat("COMPLETE SUMMARY OF HYPOTHESIS TESTS:\n\n")
+all_summary %>%
+  kable(digits = 3,
+        col.names = c("Drug", "Outcome", "Level", "N", "Mean Change",
+                     "p-value", "Significant?"),
+        caption = "Summary of All Paired t-tests for Treatment Effects")
+
+cat("\n\n")
+```
+
+## Final Conclusions
+
+```{r final-conclusions}
+cat("=== PROBLEM 7.62: FINAL CONCLUSIONS ===\n\n")
+
+cat("RESEARCH QUESTION:\n")
+cat("Do Nifedipine or Propranolol affect blood pressure or heart rate in\n")
+cat("patients with severe angina?\n\n")
+
+cat("METHODOLOGY:\n")
+cat("- Paired t-tests comparing baseline vs treatment levels\n")
+cat("- H₀: Mean change = 0 (no effect)\n")
+cat("- H₁: Mean change ≠ 0 (effect exists)\n")
+cat("- Significance level: α = 0.05\n\n")
+
+cat("=====================================\n")
+cat("HEART RATE FINDINGS\n")
+cat("=====================================\n\n")
+
+cat("NIFEDIPINE:\n")
+n_sig_hr_n <- sum(all_summary$Drug == "Nifedipine" &
+                  all_summary$Outcome == "Heart Rate (bpm)" &
+                  all_summary$Significant == "Yes", na.rm = TRUE)
+cat(sprintf("- %d out of 3 levels show significant effect\n", n_sig_hr_n))
+if (n_sig_hr_n > 0) {
+  cat("- Nifedipine AFFECTS heart rate at some dose levels\n")
+} else {
+  cat("- Nifedipine shows NO significant effect on heart rate\n")
+}
+
+cat("\nPROPRANOLOL:\n")
+n_sig_hr_p <- sum(all_summary$Drug == "Propranolol" &
+                  all_summary$Outcome == "Heart Rate (bpm)" &
+                  all_summary$Significant == "Yes", na.rm = TRUE)
+cat(sprintf("- %d out of 3 levels show significant effect\n", n_sig_hr_p))
+if (n_sig_hr_p > 0) {
+  cat("- Propranolol AFFECTS heart rate at some dose levels\n")
+  cat("- Expected effect: Beta blockers REDUCE heart rate\n")
+} else {
+  cat("- Propranolol shows NO significant effect on heart rate\n")
+}
+
+cat("\n=====================================\n")
+cat("BLOOD PRESSURE FINDINGS\n")
+cat("=====================================\n\n")
+
+cat("NIFEDIPINE:\n")
+n_sig_sbp_n <- sum(all_summary$Drug == "Nifedipine" &
+                   all_summary$Outcome == "Systolic BP (mmHg)" &
+                   all_summary$Significant == "Yes", na.rm = TRUE)
+cat(sprintf("- %d out of 3 levels show significant effect\n", n_sig_sbp_n))
+if (n_sig_sbp_n > 0) {
+  cat("- Nifedipine AFFECTS blood pressure at some dose levels\n")
+  cat("- Expected effect: Calcium channel blockers REDUCE blood pressure\n")
+} else {
+  cat("- Nifedipine shows NO significant effect on blood pressure\n")
+}
+
+cat("\nPROPRANOLOL:\n")
+n_sig_sbp_p <- sum(all_summary$Drug == "Propranolol" &
+                   all_summary$Outcome == "Systolic BP (mmHg)" &
+                   all_summary$Significant == "Yes", na.rm = TRUE)
+cat(sprintf("- %d out of 3 levels show significant effect\n", n_sig_sbp_p))
+if (n_sig_sbp_p > 0) {
+  cat("- Propranolol AFFECTS blood pressure at some dose levels\n")
+} else {
+  cat("- Propranolol shows NO significant effect on blood pressure\n")
+}
+
+cat("\n=====================================\n")
+cat("OVERALL CONCLUSION\n")
+cat("=====================================\n\n")
+
+total_sig <- n_sig_hr_n + n_sig_hr_p + n_sig_sbp_n + n_sig_sbp_p
+cat(sprintf("Total significant effects: %d out of 12 tests\n\n", total_sig))
+
+if (total_sig >= 6) {
+  cat("✓ BOTH treatments show SIGNIFICANT effects on cardiovascular parameters\n")
+} else if (total_sig >= 3) {
+  cat("~ SOME treatment effects are significant\n")
+} else {
+  cat("✗ MINIMAL significant treatment effects detected\n")
+}
+
+cat("\n\nCLINICAL INTERPRETATION:\n")
+cat("- Nifedipine (calcium channel blocker): Primarily affects blood pressure\n")
+cat("- Propranolol (beta blocker): Primarily affects heart rate\n")
+cat("- Both medications are used to reduce cardiac workload in angina\n")
+cat("- Dose-response relationship may exist (higher levels = stronger effect)\n")
+cat("- Missing data at higher levels limits conclusions about dose escalation\n\n")
+
+cat("STATISTICAL NOTES:\n")
+cat("- Paired t-test appropriate for before-after comparisons\n")
+cat("- Missing values reduce sample size at higher dose levels\n")
+cat("- Multiple testing (12 tests) increases Type I error risk\n")
+cat("- Consider Bonferroni correction for multiple comparisons if needed\n")
+cat("- Results should be interpreted in clinical context\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

@@ -1,0 +1,762 @@
+---
+title: "Dry Eye Treatment Efficacy: Tear Breakup Time (TBUT) Analysis"
+author: "Biostatistics Analysis - Chapter 7"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 14, fig.height = 10)
+```
+
+# Background
+
+This analysis examines the efficacy of an eye drop in preventing **dry eye** using **Tear Breakup Time (TBUT)** as the primary outcome measure. TBUT is reduced in people with dry eye, and researchers hypothesize it will increase after eye drop use.
+
+## Study Design
+
+**Pilot Study:**
+- **N = 14 participants**
+- **Design:** Repeated measures (same participants in all protocols)
+- **Measurements:** Both eyes (OD = right, OS = left), 2 replicates per eye
+- **Environment:** Controlled chamber with low humidity
+
+**Three Protocols (Randomized):**
+- **Protocol A:** 3-second non-blink interval before drop instillation
+- **Protocol B:** 6-second non-blink interval (STANDARD PROTOCOL)
+- **Protocol C:** 10-second non-blink interval
+
+**Time Points:**
+1. Baseline (before instillation)
+2. Immediately after instillation
+3. 5 minutes post-instillation
+4. 10 minutes post-instillation
+5. 15 minutes post-instillation
+
+## Research Focus
+
+This analysis focuses on **Protocol B** (6-second non-blink interval), which is the standard protocol used in previous clinical studies. We will:
+
+1. Average TBUT over 2 replicates and both eyes for each participant
+2. Assess changes in TBUT from baseline at each time point
+3. Use hypothesis testing methods to determine efficacy
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+library(gridExtra)
+library(scales)
+```
+
+# Data Import and Exploration
+
+```{r data-import}
+# Read the TEAR dataset
+tear_data <- read.csv("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/TEAR.DAT.txt",
+                      check.names = FALSE,
+                      stringsAsFactors = FALSE,
+                      na.strings = c("", "NA"))
+
+# Remove quotes from column names
+colnames(tear_data) <- gsub("'", "", colnames(tear_data))
+
+cat("Dataset Structure:\n")
+cat(sprintf("Number of participants: %d\n", nrow(tear_data)))
+cat(sprintf("Number of variables: %d\n", ncol(tear_data)))
+
+cat("\n\nVariable Naming Convention:\n")
+cat("- od = Right eye (Oculus Dexter)\n")
+cat("- os = Left eye (Oculus Sinister)\n")
+cat("- 3, 6, 10 = Protocol (non-blink interval in seconds)\n")
+cat("- bas = Baseline\n")
+cat("- im = Immediate post-instillation\n")
+cat("- pst5 = 5 minutes post-instillation\n")
+cat("- pt10 = 10 minutes post-instillation\n")
+cat("- pt15 = 15 minutes post-instillation\n")
+cat("- 1, 2 = Replicate number\n")
+
+cat("\n\nFirst 5 participants (Protocol B variables only):\n")
+tear_data %>%
+  select(ID, starts_with("od6"), starts_with("os6")) %>%
+  head(5) %>%
+  kable(digits = 2, caption = "Sample of Protocol B TBUT Data (seconds)")
+```
+
+# Data Processing: Protocol B
+
+```{r protocol-b-processing}
+cat("=== PROCESSING PROTOCOL B DATA ===\n\n")
+
+# Extract Protocol B (6-second) data
+protocol_b <- tear_data %>%
+  select(ID, starts_with("od6"), starts_with("os6")) %>%
+  mutate(
+    # Average over replicates and both eyes for each time point
+
+    # Baseline
+    baseline = (od6bas1 + od6bas2 + os6bas1 + os6bas2) / 4,
+
+    # Immediate post-instillation
+    immediate = (od6im1 + od6im2 + os6im1 + os6im2) / 4,
+
+    # 5 minutes post-instillation
+    post_5min = (od6pst51 + od6pst52 + os6pst51 + os6pst52) / 4,
+
+    # 10 minutes post-instillation
+    post_10min = (od6pt101 + od6pt102 + os6pt101 + os6pt102) / 4,
+
+    # 15 minutes post-instillation
+    post_15min = (od6pt151 + od6pt152 + os6pt151 + os6pt152) / 4
+  ) %>%
+  select(ID, baseline, immediate, post_5min, post_10min, post_15min)
+
+cat("Summary Statistics for Protocol B (averaged over replicates & both eyes):\n\n")
+protocol_b %>%
+  select(-ID) %>%
+  summary() %>%
+  print()
+
+cat("\n\nProtocol B Data (first 10 participants):\n")
+head(protocol_b, 10) %>%
+  kable(digits = 2,
+        col.names = c("ID", "Baseline", "Immediate", "5 min", "10 min", "15 min"),
+        caption = "Protocol B: Average TBUT (seconds) Across Time Points")
+```
+
+## Calculate Change from Baseline
+
+```{r calculate-changes}
+cat("\n=== CALCULATING CHANGES FROM BASELINE ===\n\n")
+
+# Calculate changes from baseline for each time point
+protocol_b_changes <- protocol_b %>%
+  mutate(
+    change_immediate = immediate - baseline,
+    change_5min = post_5min - baseline,
+    change_10min = post_10min - baseline,
+    change_15min = post_15min - baseline
+  )
+
+cat("Change from Baseline Statistics:\n\n")
+protocol_b_changes %>%
+  select(starts_with("change_")) %>%
+  summary() %>%
+  print()
+
+cat("\n\nChange from Baseline (first 10 participants):\n")
+protocol_b_changes %>%
+  select(ID, starts_with("change_")) %>%
+  head(10) %>%
+  kable(digits = 2,
+        col.names = c("ID", "Immediate", "5 min", "10 min", "15 min"),
+        caption = "Change in TBUT from Baseline (seconds)")
+```
+
+---
+
+# Hypothesis Testing: Immediate Effect
+
+```{r test-immediate}
+cat("\n\n" , paste(rep("=", 70), collapse=""), "\n")
+cat("HYPOTHESIS TEST: IMMEDIATE EFFECT\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("RESEARCH QUESTION:\n")
+cat("Does TBUT change immediately after placebo eye drop instillation?\n\n")
+
+cat("HYPOTHESES:\n")
+cat("H₀: μ_change = 0 (no immediate change in TBUT)\n")
+cat("H₁: μ_change ≠ 0 (TBUT changes immediately)\n")
+cat("Test: One-sample paired t-test (two-sided)\n")
+cat("Significance level: α = 0.05\n\n")
+
+# Descriptive statistics
+n_immediate <- sum(!is.na(protocol_b_changes$change_immediate))
+mean_baseline <- mean(protocol_b$baseline, na.rm = TRUE)
+sd_baseline <- sd(protocol_b$baseline, na.rm = TRUE)
+mean_immediate <- mean(protocol_b$immediate, na.rm = TRUE)
+sd_immediate <- sd(protocol_b$immediate, na.rm = TRUE)
+mean_change_imm <- mean(protocol_b_changes$change_immediate, na.rm = TRUE)
+sd_change_imm <- sd(protocol_b_changes$change_immediate, na.rm = TRUE)
+se_change_imm <- sd_change_imm / sqrt(n_immediate)
+
+cat("DESCRIPTIVE STATISTICS:\n\n")
+cat(sprintf("Baseline TBUT:       Mean = %.2f sec, SD = %.2f sec\n",
+            mean_baseline, sd_baseline))
+cat(sprintf("Immediate TBUT:      Mean = %.2f sec, SD = %.2f sec\n",
+            mean_immediate, sd_immediate))
+cat(sprintf("\nChange (Immediate - Baseline):\n"))
+cat(sprintf("  Mean = %.2f sec\n", mean_change_imm))
+cat(sprintf("  SD = %.2f sec\n", sd_change_imm))
+cat(sprintf("  SE = %.2f sec\n", se_change_imm))
+cat(sprintf("  N = %d participants\n", n_immediate))
+
+# Paired t-test
+test_immediate <- t.test(protocol_b$immediate, protocol_b$baseline,
+                        paired = TRUE, alternative = "two.sided")
+
+cat("\n\nHYPOTHESIS TEST RESULTS:\n\n")
+cat(sprintf("t-statistic: %.4f\n", test_immediate$statistic))
+cat(sprintf("Degrees of freedom: %d\n", test_immediate$parameter))
+cat(sprintf("p-value: %.6f\n", test_immediate$p.value))
+cat(sprintf("95%% CI for change: [%.2f, %.2f] sec\n",
+            test_immediate$conf.int[1], test_immediate$conf.int[2]))
+
+cat("\n\nDECISION:\n")
+if (test_immediate$p.value < 0.05) {
+  cat(sprintf("✗ p = %.6f < 0.05: REJECT H₀\n", test_immediate$p.value))
+  cat("✗ TBUT CHANGES significantly immediately after instillation\n\n")
+
+  if (mean_change_imm > 0) {
+    cat(sprintf("DIRECTION: TBUT INCREASES by %.2f sec immediately\n", mean_change_imm))
+    cat("           This suggests an immediate positive effect\n")
+  } else {
+    cat(sprintf("DIRECTION: TBUT DECREASES by %.2f sec immediately\n", abs(mean_change_imm)))
+    cat("           This suggests an immediate negative effect\n")
+  }
+} else {
+  cat(sprintf("✓ p = %.6f > 0.05: FAIL TO REJECT H₀\n", test_immediate$p.value))
+  cat("✓ NO significant immediate change in TBUT\n")
+}
+
+# Effect size (Cohen's d for paired data)
+cohens_d_imm <- mean_change_imm / sd_change_imm
+cat(sprintf("\n\nEFFECT SIZE:\n"))
+cat(sprintf("Cohen's d: %.4f ", cohens_d_imm))
+if (abs(cohens_d_imm) < 0.2) {
+  cat("(Negligible)\n")
+} else if (abs(cohens_d_imm) < 0.5) {
+  cat("(Small)\n")
+} else if (abs(cohens_d_imm) < 0.8) {
+  cat("(Medium)\n")
+} else {
+  cat("(Large)\n")
+}
+
+pct_change_imm <- (mean_change_imm / mean_baseline) * 100
+cat(sprintf("Percent change: %.1f%%\n", pct_change_imm))
+```
+
+---
+
+# Hypothesis Testing: 5-Minute Effect
+
+```{r test-5min}
+cat("\n\n" , paste(rep("=", 70), collapse=""), "\n")
+cat("HYPOTHESIS TEST: 5-MINUTE POST-INSTILLATION EFFECT\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("RESEARCH QUESTION:\n")
+cat("Does TBUT change 5 minutes after placebo eye drop instillation?\n\n")
+
+cat("HYPOTHESES:\n")
+cat("H₀: μ_change = 0 (no change at 5 minutes)\n")
+cat("H₁: μ_change ≠ 0 (TBUT changes at 5 minutes)\n")
+cat("Test: One-sample paired t-test (two-sided)\n")
+cat("Significance level: α = 0.05\n\n")
+
+# Descriptive statistics
+n_5min <- sum(!is.na(protocol_b_changes$change_5min))
+mean_5min <- mean(protocol_b$post_5min, na.rm = TRUE)
+sd_5min <- sd(protocol_b$post_5min, na.rm = TRUE)
+mean_change_5min <- mean(protocol_b_changes$change_5min, na.rm = TRUE)
+sd_change_5min <- sd(protocol_b_changes$change_5min, na.rm = TRUE)
+se_change_5min <- sd_change_5min / sqrt(n_5min)
+
+cat("DESCRIPTIVE STATISTICS:\n\n")
+cat(sprintf("Baseline TBUT:       Mean = %.2f sec, SD = %.2f sec\n",
+            mean_baseline, sd_baseline))
+cat(sprintf("5-Minute TBUT:       Mean = %.2f sec, SD = %.2f sec\n",
+            mean_5min, sd_5min))
+cat(sprintf("\nChange (5min - Baseline):\n"))
+cat(sprintf("  Mean = %.2f sec\n", mean_change_5min))
+cat(sprintf("  SD = %.2f sec\n", sd_change_5min))
+cat(sprintf("  SE = %.2f sec\n", se_change_5min))
+cat(sprintf("  N = %d participants\n", n_5min))
+
+# Paired t-test
+test_5min <- t.test(protocol_b$post_5min, protocol_b$baseline,
+                   paired = TRUE, alternative = "two.sided")
+
+cat("\n\nHYPOTHESIS TEST RESULTS:\n\n")
+cat(sprintf("t-statistic: %.4f\n", test_5min$statistic))
+cat(sprintf("Degrees of freedom: %d\n", test_5min$parameter))
+cat(sprintf("p-value: %.6f\n", test_5min$p.value))
+cat(sprintf("95%% CI for change: [%.2f, %.2f] sec\n",
+            test_5min$conf.int[1], test_5min$conf.int[2]))
+
+cat("\n\nDECISION:\n")
+if (test_5min$p.value < 0.05) {
+  cat(sprintf("✗ p = %.6f < 0.05: REJECT H₀\n", test_5min$p.value))
+  cat("✗ TBUT CHANGES significantly at 5 minutes\n\n")
+
+  if (mean_change_5min > 0) {
+    cat(sprintf("DIRECTION: TBUT INCREASES by %.2f sec at 5 minutes\n", mean_change_5min))
+    cat("           Effect persists after initial instillation\n")
+  } else {
+    cat(sprintf("DIRECTION: TBUT DECREASES by %.2f sec at 5 minutes\n", abs(mean_change_5min)))
+    cat("           Effect deteriorates after initial instillation\n")
+  }
+} else {
+  cat(sprintf("✓ p = %.6f > 0.05: FAIL TO REJECT H₀\n", test_5min$p.value))
+  cat("✓ NO significant change in TBUT at 5 minutes\n")
+}
+
+# Effect size
+cohens_d_5min <- mean_change_5min / sd_change_5min
+cat(sprintf("\n\nEFFECT SIZE:\n"))
+cat(sprintf("Cohen's d: %.4f ", cohens_d_5min))
+if (abs(cohens_d_5min) < 0.2) {
+  cat("(Negligible)\n")
+} else if (abs(cohens_d_5min) < 0.5) {
+  cat("(Small)\n")
+} else if (abs(cohens_d_5min) < 0.8) {
+  cat("(Medium)\n")
+} else {
+  cat("(Large)\n")
+}
+
+pct_change_5min <- (mean_change_5min / mean_baseline) * 100
+cat(sprintf("Percent change: %.1f%%\n", pct_change_5min))
+```
+
+---
+
+# Hypothesis Testing: 10-Minute Effect
+
+```{r test-10min}
+cat("\n\n" , paste(rep("=", 70), collapse=""), "\n")
+cat("HYPOTHESIS TEST: 10-MINUTE POST-INSTILLATION EFFECT\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("RESEARCH QUESTION:\n")
+cat("Does TBUT change 10 minutes after placebo eye drop instillation?\n\n")
+
+cat("HYPOTHESES:\n")
+cat("H₀: μ_change = 0 (no change at 10 minutes)\n")
+cat("H₁: μ_change ≠ 0 (TBUT changes at 10 minutes)\n")
+cat("Test: One-sample paired t-test (two-sided)\n")
+cat("Significance level: α = 0.05\n\n")
+
+# Descriptive statistics
+n_10min <- sum(!is.na(protocol_b_changes$change_10min))
+mean_10min <- mean(protocol_b$post_10min, na.rm = TRUE)
+sd_10min <- sd(protocol_b$post_10min, na.rm = TRUE)
+mean_change_10min <- mean(protocol_b_changes$change_10min, na.rm = TRUE)
+sd_change_10min <- sd(protocol_b_changes$change_10min, na.rm = TRUE)
+se_change_10min <- sd_change_10min / sqrt(n_10min)
+
+cat("DESCRIPTIVE STATISTICS:\n\n")
+cat(sprintf("Baseline TBUT:       Mean = %.2f sec, SD = %.2f sec\n",
+            mean_baseline, sd_baseline))
+cat(sprintf("10-Minute TBUT:      Mean = %.2f sec, SD = %.2f sec\n",
+            mean_10min, sd_10min))
+cat(sprintf("\nChange (10min - Baseline):\n"))
+cat(sprintf("  Mean = %.2f sec\n", mean_change_10min))
+cat(sprintf("  SD = %.2f sec\n", sd_change_10min))
+cat(sprintf("  SE = %.2f sec\n", se_change_10min))
+cat(sprintf("  N = %d participants\n", n_10min))
+
+# Paired t-test
+test_10min <- t.test(protocol_b$post_10min, protocol_b$baseline,
+                    paired = TRUE, alternative = "two.sided")
+
+cat("\n\nHYPOTHESIS TEST RESULTS:\n\n")
+cat(sprintf("t-statistic: %.4f\n", test_10min$statistic))
+cat(sprintf("Degrees of freedom: %d\n", test_10min$parameter))
+cat(sprintf("p-value: %.6f\n", test_10min$p.value))
+cat(sprintf("95%% CI for change: [%.2f, %.2f] sec\n",
+            test_10min$conf.int[1], test_10min$conf.int[2]))
+
+cat("\n\nDECISION:\n")
+if (test_10min$p.value < 0.05) {
+  cat(sprintf("✗ p = %.6f < 0.05: REJECT H₀\n", test_10min$p.value))
+  cat("✗ TBUT CHANGES significantly at 10 minutes\n\n")
+
+  if (mean_change_10min > 0) {
+    cat(sprintf("DIRECTION: TBUT INCREASES by %.2f sec at 10 minutes\n", mean_change_10min))
+  } else {
+    cat(sprintf("DIRECTION: TBUT DECREASES by %.2f sec at 10 minutes\n", abs(mean_change_10min)))
+  }
+} else {
+  cat(sprintf("✓ p = %.6f > 0.05: FAIL TO REJECT H₀\n", test_10min$p.value))
+  cat("✓ NO significant change in TBUT at 10 minutes\n")
+}
+
+# Effect size
+cohens_d_10min <- mean_change_10min / sd_change_10min
+cat(sprintf("\n\nEFFECT SIZE:\n"))
+cat(sprintf("Cohen's d: %.4f ", cohens_d_10min))
+if (abs(cohens_d_10min) < 0.2) {
+  cat("(Negligible)\n")
+} else if (abs(cohens_d_10min) < 0.5) {
+  cat("(Small)\n")
+} else if (abs(cohens_d_10min) < 0.8) {
+  cat("(Medium)\n")
+} else {
+  cat("(Large)\n")
+}
+
+pct_change_10min <- (mean_change_10min / mean_baseline) * 100
+cat(sprintf("Percent change: %.1f%%\n", pct_change_10min))
+```
+
+---
+
+# Hypothesis Testing: 15-Minute Effect
+
+```{r test-15min}
+cat("\n\n" , paste(rep("=", 70), collapse=""), "\n")
+cat("HYPOTHESIS TEST: 15-MINUTE POST-INSTILLATION EFFECT\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("RESEARCH QUESTION:\n")
+cat("Does TBUT change 15 minutes after placebo eye drop instillation?\n\n")
+
+cat("HYPOTHESES:\n")
+cat("H₀: μ_change = 0 (no change at 15 minutes)\n")
+cat("H₁: μ_change ≠ 0 (TBUT changes at 15 minutes)\n")
+cat("Test: One-sample paired t-test (two-sided)\n")
+cat("Significance level: α = 0.05\n\n")
+
+# Descriptive statistics
+n_15min <- sum(!is.na(protocol_b_changes$change_15min))
+mean_15min <- mean(protocol_b$post_15min, na.rm = TRUE)
+sd_15min <- sd(protocol_b$post_15min, na.rm = TRUE)
+mean_change_15min <- mean(protocol_b_changes$change_15min, na.rm = TRUE)
+sd_change_15min <- sd(protocol_b_changes$change_15min, na.rm = TRUE)
+se_change_15min <- sd_change_15min / sqrt(n_15min)
+
+cat("DESCRIPTIVE STATISTICS:\n\n")
+cat(sprintf("Baseline TBUT:       Mean = %.2f sec, SD = %.2f sec\n",
+            mean_baseline, sd_baseline))
+cat(sprintf("15-Minute TBUT:      Mean = %.2f sec, SD = %.2f sec\n",
+            mean_15min, sd_15min))
+cat(sprintf("\nChange (15min - Baseline):\n"))
+cat(sprintf("  Mean = %.2f sec\n", mean_change_15min))
+cat(sprintf("  SD = %.2f sec\n", sd_change_15min))
+cat(sprintf("  SE = %.2f sec\n", se_change_15min))
+cat(sprintf("  N = %d participants\n", n_15min))
+
+# Paired t-test
+test_15min <- t.test(protocol_b$post_15min, protocol_b$baseline,
+                    paired = TRUE, alternative = "two.sided")
+
+cat("\n\nHYPOTHESIS TEST RESULTS:\n\n")
+cat(sprintf("t-statistic: %.4f\n", test_15min$statistic))
+cat(sprintf("Degrees of freedom: %d\n", test_15min$parameter))
+cat(sprintf("p-value: %.6f\n", test_15min$p.value))
+cat(sprintf("95%% CI for change: [%.2f, %.2f] sec\n",
+            test_15min$conf.int[1], test_15min$conf.int[2]))
+
+cat("\n\nDECISION:\n")
+if (test_15min$p.value < 0.05) {
+  cat(sprintf("✗ p = %.6f < 0.05: REJECT H₀\n", test_15min$p.value))
+  cat("✗ TBUT CHANGES significantly at 15 minutes\n\n")
+
+  if (mean_change_15min > 0) {
+    cat(sprintf("DIRECTION: TBUT INCREASES by %.2f sec at 15 minutes\n", mean_change_15min))
+  } else {
+    cat(sprintf("DIRECTION: TBUT DECREASES by %.2f sec at 15 minutes\n", abs(mean_change_15min)))
+  }
+} else {
+  cat(sprintf("✓ p = %.6f > 0.05: FAIL TO REJECT H₀\n", test_15min$p.value))
+  cat("✓ NO significant change in TBUT at 15 minutes\n")
+}
+
+# Effect size
+cohens_d_15min <- mean_change_15min / sd_change_15min
+cat(sprintf("\n\nEFFECT SIZE:\n"))
+cat(sprintf("Cohen's d: %.4f ", cohens_d_15min))
+if (abs(cohens_d_15min) < 0.2) {
+  cat("(Negligible)\n")
+} else if (abs(cohens_d_15min) < 0.5) {
+  cat("(Small)\n")
+} else if (abs(cohens_d_15min) < 0.8) {
+  cat("(Medium)\n")
+} else {
+  cat("(Large)\n")
+}
+
+pct_change_15min <- (mean_change_15min / mean_baseline) * 100
+cat(sprintf("Percent change: %.1f%%\n", pct_change_15min))
+```
+
+---
+
+# Visualizations
+
+## TBUT Over Time
+
+```{r tbut-trajectory, fig.height=8}
+# Prepare data for plotting
+plot_data_long <- protocol_b %>%
+  pivot_longer(cols = c(baseline, immediate, post_5min, post_10min, post_15min),
+               names_to = "Time_Point",
+               values_to = "TBUT") %>%
+  mutate(
+    Time_Point = factor(Time_Point,
+                       levels = c("baseline", "immediate", "post_5min",
+                                 "post_10min", "post_15min"),
+                       labels = c("Baseline", "Immediate", "5 min", "10 min", "15 min")),
+    Time_Numeric = as.numeric(Time_Point) - 1
+  )
+
+# Line plot with individual trajectories
+p_trajectory <- plot_data_long %>%
+  ggplot(aes(x = Time_Point, y = TBUT, group = ID)) +
+  geom_line(alpha = 0.3, color = "gray50") +
+  geom_point(alpha = 0.4, color = "gray50") +
+  stat_summary(aes(group = 1), fun = mean, geom = "line",
+               color = "red", size = 1.5) +
+  stat_summary(aes(group = 1), fun = mean, geom = "point",
+               color = "red", size = 3) +
+  stat_summary(aes(group = 1), fun.data = mean_se, geom = "errorbar",
+               color = "red", width = 0.2, size = 1) +
+  labs(title = "TBUT Trajectory Over Time (Protocol B)",
+       subtitle = "Individual trajectories (gray) and mean ± SE (red)",
+       x = "Time Point",
+       y = "TBUT (seconds)") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Box plot by time point
+p_boxplot <- plot_data_long %>%
+  ggplot(aes(x = Time_Point, y = TBUT, fill = Time_Point)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_hline(yintercept = mean_baseline, linetype = "dashed",
+             color = "blue", size = 1) +
+  scale_fill_brewer(palette = "Set3") +
+  labs(title = "TBUT Distribution at Each Time Point",
+       subtitle = "Blue dashed line = baseline mean",
+       x = "Time Point",
+       y = "TBUT (seconds)") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(p_trajectory, p_boxplot, ncol = 1)
+```
+
+## Change from Baseline
+
+```{r change-visualization, fig.height=8}
+# Prepare change data for plotting
+change_data_long <- protocol_b_changes %>%
+  select(ID, starts_with("change_")) %>%
+  pivot_longer(cols = starts_with("change_"),
+               names_to = "Time_Point",
+               names_prefix = "change_",
+               values_to = "Change") %>%
+  mutate(
+    Time_Point = factor(Time_Point,
+                       levels = c("immediate", "5min", "10min", "15min"),
+                       labels = c("Immediate", "5 min", "10 min", "15 min"))
+  )
+
+# Bar plot of mean changes
+p_mean_change <- change_data_long %>%
+  group_by(Time_Point) %>%
+  summarise(
+    Mean_Change = mean(Change, na.rm = TRUE),
+    SE = sd(Change, na.rm = TRUE) / sqrt(n())
+  ) %>%
+  ggplot(aes(x = Time_Point, y = Mean_Change, fill = Time_Point)) +
+  geom_col(alpha = 0.7) +
+  geom_errorbar(aes(ymin = Mean_Change - SE, ymax = Mean_Change + SE),
+                width = 0.2, size = 1) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "black", size = 1) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Mean Change in TBUT from Baseline",
+       subtitle = "Error bars show ± 1 SE",
+       x = "Time Point",
+       y = "Change in TBUT (seconds)") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "none")
+
+# Individual changes plot
+p_individual_change <- change_data_long %>%
+  ggplot(aes(x = Time_Point, y = Change)) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "black", size = 1) +
+  geom_point(aes(color = Time_Point), alpha = 0.6, size = 3,
+             position = position_jitter(width = 0.1)) +
+  stat_summary(fun = mean, geom = "point", color = "red", size = 4, shape = 18) +
+  scale_color_brewer(palette = "Set2") +
+  labs(title = "Individual Changes in TBUT from Baseline",
+       subtitle = "Red diamonds = mean change",
+       x = "Time Point",
+       y = "Change in TBUT (seconds)") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "none")
+
+grid.arrange(p_mean_change, p_individual_change, ncol = 1)
+```
+
+---
+
+# Comprehensive Summary
+
+```{r comprehensive-summary}
+cat("\n\n" , paste(rep("=", 70), collapse=""), "\n")
+cat("COMPREHENSIVE SUMMARY: PROTOCOL B (6-SECOND NON-BLINK)\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+# Create summary table
+summary_table <- data.frame(
+  Time_Point = c("Immediate", "5 minutes", "10 minutes", "15 minutes"),
+  Mean_Baseline = rep(mean_baseline, 4),
+  Mean_TBUT = c(mean_immediate, mean_5min, mean_10min, mean_15min),
+  Mean_Change = c(mean_change_imm, mean_change_5min, mean_change_10min, mean_change_15min),
+  SE_Change = c(se_change_imm, se_change_5min, se_change_10min, se_change_15min),
+  CI_Lower = c(test_immediate$conf.int[1], test_5min$conf.int[1],
+               test_10min$conf.int[1], test_15min$conf.int[1]),
+  CI_Upper = c(test_immediate$conf.int[2], test_5min$conf.int[2],
+               test_10min$conf.int[2], test_15min$conf.int[2]),
+  t_statistic = c(test_immediate$statistic, test_5min$statistic,
+                  test_10min$statistic, test_15min$statistic),
+  p_value = c(test_immediate$p.value, test_5min$p.value,
+              test_10min$p.value, test_15min$p.value),
+  Cohens_d = c(cohens_d_imm, cohens_d_5min, cohens_d_10min, cohens_d_15min),
+  Pct_Change = c(pct_change_imm, pct_change_5min, pct_change_10min, pct_change_15min)
+) %>%
+  mutate(
+    Significant = ifelse(p_value < 0.05, "Yes", "No"),
+    Sig_Code = ifelse(p_value < 0.001, "***",
+                     ifelse(p_value < 0.01, "**",
+                           ifelse(p_value < 0.05, "*", "ns")))
+  )
+
+cat("SUMMARY TABLE:\n\n")
+summary_table %>%
+  select(Time_Point, Mean_Change, SE_Change, CI_Lower, CI_Upper,
+         t_statistic, p_value, Cohens_d, Pct_Change, Significant, Sig_Code) %>%
+  kable(digits = 3,
+        col.names = c("Time", "Mean Δ", "SE", "CI Low", "CI High",
+                     "t-stat", "p-value", "Cohen's d", "% Δ", "Sig?", "Code"),
+        caption = "Hypothesis Test Results: Changes in TBUT from Baseline (Protocol B)")
+
+cat("\n\nSignificance codes: *** p<0.001, ** p<0.01, * p<0.05, ns = not significant\n")
+```
+
+## Final Conclusions
+
+```{r final-conclusions}
+cat("\n\n" , paste(rep("=", 70), collapse=""), "\n")
+cat("FINAL CONCLUSIONS\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+n_sig <- sum(summary_table$Significant == "Yes")
+
+cat(sprintf("BASELINE TBUT: %.2f ± %.2f seconds (Mean ± SD)\n\n",
+            mean_baseline, sd_baseline))
+
+cat("IMMEDIATE POST-INSTILLATION:\n")
+cat(sprintf("- p-value: %.4f\n", test_immediate$p.value))
+if (test_immediate$p.value < 0.05) {
+  cat("- Decision: REJECT H₀\n")
+  cat(sprintf("- Mean change: %.2f sec (95%% CI: [%.2f, %.2f])\n",
+              mean_change_imm, test_immediate$conf.int[1], test_immediate$conf.int[2]))
+  cat(sprintf("- CONCLUSION: TBUT %s significantly immediately after instillation\n",
+              ifelse(mean_change_imm > 0, "INCREASES", "DECREASES")))
+} else {
+  cat("- Decision: FAIL TO REJECT H₀\n")
+  cat("- CONCLUSION: No significant immediate change\n")
+}
+
+cat("\n5 MINUTES POST-INSTILLATION:\n")
+cat(sprintf("- p-value: %.4f\n", test_5min$p.value))
+if (test_5min$p.value < 0.05) {
+  cat("- Decision: REJECT H₀\n")
+  cat(sprintf("- Mean change: %.2f sec (95%% CI: [%.2f, %.2f])\n",
+              mean_change_5min, test_5min$conf.int[1], test_5min$conf.int[2]))
+  cat(sprintf("- CONCLUSION: TBUT %s significantly at 5 minutes\n",
+              ifelse(mean_change_5min > 0, "INCREASES", "DECREASES")))
+} else {
+  cat("- Decision: FAIL TO REJECT H₀\n")
+  cat("- CONCLUSION: No significant change at 5 minutes\n")
+}
+
+cat("\n10 MINUTES POST-INSTILLATION:\n")
+cat(sprintf("- p-value: %.4f\n", test_10min$p.value))
+if (test_10min$p.value < 0.05) {
+  cat("- Decision: REJECT H₀\n")
+  cat(sprintf("- Mean change: %.2f sec (95%% CI: [%.2f, %.2f])\n",
+              mean_change_10min, test_10min$conf.int[1], test_10min$conf.int[2]))
+  cat(sprintf("- CONCLUSION: TBUT %s significantly at 10 minutes\n",
+              ifelse(mean_change_10min > 0, "INCREASES", "DECREASES")))
+} else {
+  cat("- Decision: FAIL TO REJECT H₀\n")
+  cat("- CONCLUSION: No significant change at 10 minutes\n")
+}
+
+cat("\n15 MINUTES POST-INSTILLATION:\n")
+cat(sprintf("- p-value: %.4f\n", test_15min$p.value))
+if (test_15min$p.value < 0.05) {
+  cat("- Decision: REJECT H₀\n")
+  cat(sprintf("- Mean change: %.2f sec (95%% CI: [%.2f, %.2f])\n",
+              mean_change_15min, test_15min$conf.int[1], test_15min$conf.int[2]))
+  cat(sprintf("- CONCLUSION: TBUT %s significantly at 15 minutes\n",
+              ifelse(mean_change_15min > 0, "INCREASES", "DECREASES")))
+} else {
+  cat("- Decision: FAIL TO REJECT H₀\n")
+  cat("- CONCLUSION: No significant change at 15 minutes\n")
+}
+
+cat("\n\n=====================================\n")
+cat("OVERALL INTERPRETATION\n")
+cat("=====================================\n\n")
+
+if (n_sig == 4) {
+  cat("✗ All time points show SIGNIFICANT changes from baseline\n")
+  cat("✗ STRONG EVIDENCE that placebo eye drop affects TBUT\n\n")
+} else if (n_sig >= 2) {
+  cat(sprintf("~ %d out of 4 time points show significant changes\n", n_sig))
+  cat("~ MODERATE EVIDENCE for placebo effect on TBUT\n\n")
+} else if (n_sig == 1) {
+  cat("~ Only 1 time point shows significant change\n")
+  cat("~ WEAK EVIDENCE for placebo effect on TBUT\n\n")
+} else {
+  cat("✓ No time points show significant changes\n")
+  cat("✓ NO STRONG EVIDENCE for placebo effect on TBUT\n\n")
+}
+
+cat("CLINICAL IMPLICATIONS:\n")
+cat("- This is a PLACEBO study - drops contain no active ingredient\n")
+cat("- Any observed changes represent placebo effect or measurement variability\n")
+cat("- Results will inform design of actual drug vs. placebo trial\n")
+cat("- Demonstrates importance of placebo control in ophthalmology studies\n\n")
+
+cat("STUDY DESIGN STRENGTHS:\n")
+cat("- Repeated measures design (same participants across protocols)\n")
+cat("- Controlled environment (low humidity chamber)\n")
+cat("- Replicate measurements (2 per eye) increase precision\n")
+cat("- Both eyes measured (OD and OS) provide within-subject comparison\n")
+cat("- Averaging reduces measurement error\n\n")
+
+cat("NEXT STEPS:\n")
+cat("- Compare Protocol B results to Protocols A and C\n")
+cat("- Determine optimal non-blink interval for main study\n")
+cat("- Design full-scale randomized trial (active drug vs placebo)\n")
+cat("- Calculate sample size based on observed effect sizes\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
