@@ -1,0 +1,801 @@
+---
+title: "Chapter 8: Diabetes and Growth - Problems 8.152-8.154"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Background: Type I Diabetes and Growth in Adolescent Boys
+
+## Study Overview
+
+### Clinical Context
+
+**Type I Diabetes** is a common disease among children that requires regular insulin administration to maintain glycemic control. Poor control can lead to:
+- Neurologic problems
+- Vision problems
+- Kidney disease
+- Premature heart disease or death
+
+### Research Question
+
+**Does maintaining diabetes control affect growth and development in childhood?**
+
+### Study Design
+
+**Participants:** 94 adolescent boys, ages 9-15 years
+
+**Follow-up:** Periodic examinations (approximately every 3 months, with wide variation)
+- Total visits: 910 across all boys
+- Visit frequency varies by individual
+
+**Measurements at Each Visit:**
+- **HgbA1c (Glycosylated Hemoglobin):** Index of diabetes control
+  - Higher HgbA1c = poorer control
+  - Normal: HgbA1c < 7.0
+- **Age** (years)
+- **Height** (cm or inches)
+- **Weight** (kg or pounds)
+
+### Analytical Approach
+
+**Categorization Strategy:**
+1. Calculate average HgbA1c over all visits for each boy
+2. Categorize boys by median split:
+   - **Good control:** Mean HgbA1c < median
+   - **Poor control:** Mean HgbA1c ≥ median
+
+**Growth Measures:**
+- **Weight growth rate:** (Weight_last - Weight_first) / (Age_last - Age_first) [kg/year or lb/year]
+- **Height growth rate:** (Height_last - Height_first) / (Age_last - Age_first) [cm/year or in/year]
+- **BMI growth rate:** (BMI_last - BMI_first) / (Age_last - Age_first) [BMI units/year]
+  - BMI = weight(kg) / height(m)²
+
+### Research Questions
+
+**Problem 8.152:** Do boys with better glycemic control have different growth patterns in **weight** than boys with poorer glycemic control?
+
+**Problem 8.153:** Do boys with better glycemic control have different growth patterns in **height** than boys with poorer glycemic control?
+
+**Problem 8.154:** Do boys with better glycemic control have different growth patterns in **BMI** than boys with poorer glycemic control?
+
+---
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+library(gridExtra)
+library(ggplot2)
+library(lubridate)
+```
+
+---
+
+# Data Import and Processing
+
+```{r data-import}
+# Read DIABETES dataset
+diabetes_data <- read.csv("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/DIABETES.DAT.txt",
+                          check.names = FALSE,
+                          stringsAsFactors = FALSE,
+                          na.strings = c("", "NA", ".", "999.9"))
+
+# Remove quotes from column names
+colnames(diabetes_data) <- gsub("'", "", colnames(diabetes_data))
+
+cat("Dataset Structure:\n")
+cat(sprintf("Total observations (visits): %d\n", nrow(diabetes_data)))
+cat(sprintf("Number of variables: %d\n\n", ncol(diabetes_data)))
+
+cat("Variable names:\n")
+print(colnames(diabetes_data))
+
+cat("\n\nVariable Descriptions:\n")
+cat("- ID: Participant identifier\n")
+cat("- mon_a1c, day_a1c, yr_a1c: Month, day, year of visit\n")
+cat("- age_yrs: Age in years\n")
+cat("- gly_a1c: Glycosylated hemoglobin (HgbA1c)\n")
+cat("- ht_cm: Height in centimeters\n")
+cat("- wt_kg: Weight in kilograms\n")
+cat("- Missing value code: 999.9\n")
+
+# Display first few rows
+cat("\n\nFirst 10 rows:\n")
+print(head(diabetes_data, 10))
+
+# Summary of data
+cat("\n\nData Summary:\n")
+cat(sprintf("Number of unique boys: %d\n", n_distinct(diabetes_data$ID)))
+cat(sprintf("Total visits: %d\n", nrow(diabetes_data)))
+cat(sprintf("Average visits per boy: %.1f\n",
+            nrow(diabetes_data) / n_distinct(diabetes_data$ID)))
+```
+
+## Data Cleaning and Variable Creation
+
+```{r data-cleaning}
+# Clean data and create necessary variables
+diabetes_clean <- diabetes_data %>%
+  filter(!is.na(ID)) %>%
+  # Ensure numeric variables are properly formatted
+  mutate(
+    ID = as.integer(ID),
+    age = as.numeric(age_yrs),
+    hba1c = as.numeric(gly_a1c),
+    weight = as.numeric(wt_kg),
+    height = as.numeric(ht_cm)
+  ) %>%
+  # Remove any rows with missing key variables
+  filter(!is.na(age), !is.na(weight), !is.na(height), !is.na(hba1c)) %>%
+  # Calculate BMI (weight in kg, height in cm)
+  # Convert height from cm to meters
+  mutate(
+    height_m = height / 100,  # Convert cm to m
+    bmi = weight / (height_m^2)
+  ) %>%
+  # Sort by ID and age for each boy
+  arrange(ID, age)
+
+cat("Cleaned Dataset Summary:\n")
+cat(sprintf("Valid observations: %d\n", nrow(diabetes_clean)))
+cat(sprintf("Number of boys: %d\n", n_distinct(diabetes_clean$ID)))
+
+# Summary statistics for key variables
+cat("\n\nKey Variable Summaries:\n\n")
+
+cat("Age (years):\n")
+summary(diabetes_clean$age) %>% print()
+
+cat("\n\nHgbA1c (Glycosylated Hemoglobin):\n")
+summary(diabetes_clean$hba1c) %>% print()
+
+cat("\n\nWeight (kg):\n")
+summary(diabetes_clean$weight) %>% print()
+
+cat("\n\nHeight (cm):\n")
+summary(diabetes_clean$height) %>% print()
+
+cat("\n\nBMI (kg/m²):\n")
+summary(diabetes_clean$bmi) %>% print()
+
+# Check visits per boy
+visits_per_boy <- diabetes_clean %>%
+  group_by(ID) %>%
+  summarise(n_visits = n(), .groups = "drop")
+
+cat("\n\nVisits per Boy Distribution:\n")
+summary(visits_per_boy$n_visits) %>% print()
+```
+
+---
+
+# Calculate Growth Rates and Glycemic Control
+
+```{r calculate-growth-rates}
+cat("=== CALCULATING INDIVIDUAL GROWTH RATES ===\n\n")
+
+# For each boy, calculate:
+# 1. Mean HgbA1c across all visits
+# 2. First and last visit measurements
+# 3. Growth rates for weight, height, and BMI
+
+boy_summary <- diabetes_clean %>%
+  group_by(ID) %>%
+  summarise(
+    # Number of visits
+    n_visits = n(),
+
+    # Mean HgbA1c (average glycemic control)
+    mean_hba1c = mean(hba1c, na.rm = TRUE),
+
+    # First visit data
+    age_first = first(age),
+    weight_first = first(weight),
+    height_first = first(height),
+    bmi_first = first(bmi),
+
+    # Last visit data
+    age_last = last(age),
+    weight_last = last(weight),
+    height_last = last(height),
+    bmi_last = last(bmi),
+
+    # Follow-up duration
+    followup_years = age_last - age_first,
+
+    .groups = "drop"
+  ) %>%
+  # Calculate growth rates (change per year)
+  mutate(
+    weight_growth_rate = (weight_last - weight_first) / followup_years,
+    height_growth_rate = (height_last - height_first) / followup_years,
+    bmi_growth_rate = (bmi_last - bmi_first) / followup_years
+  ) %>%
+  # Remove boys with zero or very short follow-up
+  filter(followup_years > 0.25)  # At least 3 months follow-up
+
+cat(sprintf("Boys with valid growth data: %d\n\n", nrow(boy_summary)))
+
+# Categorize boys by glycemic control (median split)
+median_hba1c <- median(boy_summary$mean_hba1c, na.rm = TRUE)
+
+cat(sprintf("Median HgbA1c across all boys: %.2f\n\n", median_hba1c))
+
+boy_summary <- boy_summary %>%
+  mutate(
+    control_group = ifelse(mean_hba1c < median_hba1c, "Good Control", "Poor Control"),
+    control_group = factor(control_group, levels = c("Good Control", "Poor Control"))
+  )
+
+# Summary by control group
+control_summary <- boy_summary %>%
+  group_by(control_group) %>%
+  summarise(
+    N = n(),
+    Mean_HgbA1c = mean(mean_hba1c, na.rm = TRUE),
+    SD_HgbA1c = sd(mean_hba1c, na.rm = TRUE),
+    Min_HgbA1c = min(mean_hba1c, na.rm = TRUE),
+    Max_HgbA1c = max(mean_hba1c, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cat("GLYCEMIC CONTROL GROUPS:\n\n")
+print(kable(control_summary, digits = 2,
+            caption = "Summary of Glycemic Control by Group"))
+
+# Descriptive statistics for growth rates
+cat("\n\nGROWTH RATE SUMMARIES:\n\n")
+
+growth_summary <- boy_summary %>%
+  group_by(control_group) %>%
+  summarise(
+    N = n(),
+    Mean_Age_First = mean(age_first, na.rm = TRUE),
+    Mean_Followup = mean(followup_years, na.rm = TRUE),
+    Mean_Weight_Growth = mean(weight_growth_rate, na.rm = TRUE),
+    SD_Weight_Growth = sd(weight_growth_rate, na.rm = TRUE),
+    Mean_Height_Growth = mean(height_growth_rate, na.rm = TRUE),
+    SD_Height_Growth = sd(height_growth_rate, na.rm = TRUE),
+    Mean_BMI_Growth = mean(bmi_growth_rate, na.rm = TRUE),
+    SD_BMI_Growth = sd(bmi_growth_rate, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+print(kable(growth_summary, digits = 2,
+            caption = "Growth Rates by Glycemic Control Group"))
+```
+
+---
+
+# Problem 8.152: Weight Growth Rate Comparison
+
+```{r problem-8-152}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.152: WEIGHT GROWTH RATE BY GLYCEMIC CONTROL\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("RESEARCH QUESTION:\n")
+cat("Do boys with better glycemic control have different growth patterns\n")
+cat("in WEIGHT than boys with poorer glycemic control?\n\n")
+
+# Extract weight growth rates by group
+good_control_weight <- boy_summary %>%
+  filter(control_group == "Good Control") %>%
+  pull(weight_growth_rate)
+
+poor_control_weight <- boy_summary %>%
+  filter(control_group == "Poor Control") %>%
+  pull(weight_growth_rate)
+
+# Remove any NA values
+good_control_weight <- good_control_weight[!is.na(good_control_weight)]
+poor_control_weight <- poor_control_weight[!is.na(poor_control_weight)]
+
+cat("SAMPLE SIZES:\n")
+cat(sprintf("Good Control: n = %d\n", length(good_control_weight)))
+cat(sprintf("Poor Control: n = %d\n\n", length(poor_control_weight)))
+
+# Descriptive statistics
+cat("DESCRIPTIVE STATISTICS (Weight Growth Rate, kg/year):\n\n")
+
+desc_weight <- data.frame(
+  Group = c("Good Control", "Poor Control"),
+  N = c(length(good_control_weight), length(poor_control_weight)),
+  Mean = c(mean(good_control_weight), mean(poor_control_weight)),
+  SD = c(sd(good_control_weight), sd(poor_control_weight)),
+  Median = c(median(good_control_weight), median(poor_control_weight)),
+  Min = c(min(good_control_weight), min(poor_control_weight)),
+  Max = c(max(good_control_weight), max(poor_control_weight))
+)
+
+print(kable(desc_weight, digits = 3))
+
+# Hypothesis test
+cat("\n\nHYPOTHESIS TEST:\n")
+cat("H₀: μ_good = μ_poor (no difference in weight growth rate)\n")
+cat("H₁: μ_good ≠ μ_poor (weight growth rate differs by control)\n")
+cat("Test: Two-sample t-test (Welch's, two-sided)\n\n")
+
+test_weight <- t.test(good_control_weight, poor_control_weight,
+                      var.equal = FALSE,
+                      alternative = "two.sided")
+
+cat(sprintf("t-statistic: %.4f\n", test_weight$statistic))
+cat(sprintf("df: %.2f\n", test_weight$parameter))
+cat(sprintf("p-value: %.4f\n", test_weight$p.value))
+cat(sprintf("95%% CI for difference: [%.3f, %.3f] kg/year\n",
+            test_weight$conf.int[1], test_weight$conf.int[2]))
+
+# Effect size (Cohen's d)
+pooled_sd_weight <- sqrt(((length(good_control_weight) - 1) * var(good_control_weight) +
+                           (length(poor_control_weight) - 1) * var(poor_control_weight)) /
+                          (length(good_control_weight) + length(poor_control_weight) - 2))
+
+cohens_d_weight <- (mean(good_control_weight) - mean(poor_control_weight)) / pooled_sd_weight
+
+cat(sprintf("\nEffect size (Cohen's d): %.3f\n", cohens_d_weight))
+
+# Interpretation
+cat("\n=== CONCLUSION FOR PROBLEM 8.152 ===\n")
+if (test_weight$p.value < 0.05) {
+  cat("✓ SIGNIFICANT difference at α = 0.05\n\n")
+  if (mean(good_control_weight) > mean(poor_control_weight)) {
+    cat("Boys with GOOD glycemic control have HIGHER weight growth rates.\n")
+    cat(sprintf("Mean difference: %.3f kg/year (95%% CI: [%.3f, %.3f])\n",
+                mean(good_control_weight) - mean(poor_control_weight),
+                test_weight$conf.int[1], test_weight$conf.int[2]))
+  } else {
+    cat("Boys with GOOD glycemic control have LOWER weight growth rates.\n")
+    cat(sprintf("Mean difference: %.3f kg/year (95%% CI: [%.3f, %.3f])\n",
+                mean(good_control_weight) - mean(poor_control_weight),
+                test_weight$conf.int[1], test_weight$conf.int[2]))
+  }
+} else {
+  cat("✗ NO significant difference at α = 0.05\n\n")
+  cat("There is insufficient evidence to conclude that glycemic control\n")
+  cat("affects weight growth rate in adolescent boys with Type I diabetes.\n")
+}
+```
+
+---
+
+# Problem 8.153: Height Growth Rate Comparison
+
+```{r problem-8-153}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.153: HEIGHT GROWTH RATE BY GLYCEMIC CONTROL\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("RESEARCH QUESTION:\n")
+cat("Do boys with better glycemic control have different growth patterns\n")
+cat("in HEIGHT than boys with poorer glycemic control?\n\n")
+
+# Extract height growth rates by group
+good_control_height <- boy_summary %>%
+  filter(control_group == "Good Control") %>%
+  pull(height_growth_rate)
+
+poor_control_height <- boy_summary %>%
+  filter(control_group == "Poor Control") %>%
+  pull(height_growth_rate)
+
+# Remove any NA values
+good_control_height <- good_control_height[!is.na(good_control_height)]
+poor_control_height <- poor_control_height[!is.na(poor_control_height)]
+
+cat("SAMPLE SIZES:\n")
+cat(sprintf("Good Control: n = %d\n", length(good_control_height)))
+cat(sprintf("Poor Control: n = %d\n\n", length(poor_control_height)))
+
+# Descriptive statistics
+cat("DESCRIPTIVE STATISTICS (Height Growth Rate, cm/year or in/year):\n\n")
+
+desc_height <- data.frame(
+  Group = c("Good Control", "Poor Control"),
+  N = c(length(good_control_height), length(poor_control_height)),
+  Mean = c(mean(good_control_height), mean(poor_control_height)),
+  SD = c(sd(good_control_height), sd(poor_control_height)),
+  Median = c(median(good_control_height), median(poor_control_height)),
+  Min = c(min(good_control_height), min(poor_control_height)),
+  Max = c(max(good_control_height), max(poor_control_height))
+)
+
+print(kable(desc_height, digits = 3))
+
+# Hypothesis test
+cat("\n\nHYPOTHESIS TEST:\n")
+cat("H₀: μ_good = μ_poor (no difference in height growth rate)\n")
+cat("H₁: μ_good ≠ μ_poor (height growth rate differs by control)\n")
+cat("Test: Two-sample t-test (Welch's, two-sided)\n\n")
+
+test_height <- t.test(good_control_height, poor_control_height,
+                      var.equal = FALSE,
+                      alternative = "two.sided")
+
+cat(sprintf("t-statistic: %.4f\n", test_height$statistic))
+cat(sprintf("df: %.2f\n", test_height$parameter))
+cat(sprintf("p-value: %.4f\n", test_height$p.value))
+cat(sprintf("95%% CI for difference: [%.3f, %.3f] cm/year\n",
+            test_height$conf.int[1], test_height$conf.int[2]))
+
+# Effect size (Cohen's d)
+pooled_sd_height <- sqrt(((length(good_control_height) - 1) * var(good_control_height) +
+                           (length(poor_control_height) - 1) * var(poor_control_height)) /
+                          (length(good_control_height) + length(poor_control_height) - 2))
+
+cohens_d_height <- (mean(good_control_height) - mean(poor_control_height)) / pooled_sd_height
+
+cat(sprintf("\nEffect size (Cohen's d): %.3f\n", cohens_d_height))
+
+# Interpretation
+cat("\n=== CONCLUSION FOR PROBLEM 8.153 ===\n")
+if (test_height$p.value < 0.05) {
+  cat("✓ SIGNIFICANT difference at α = 0.05\n\n")
+  if (mean(good_control_height) > mean(poor_control_height)) {
+    cat("Boys with GOOD glycemic control have HIGHER height growth rates.\n")
+    cat(sprintf("Mean difference: %.3f cm/year (95%% CI: [%.3f, %.3f])\n",
+                mean(good_control_height) - mean(poor_control_height),
+                test_height$conf.int[1], test_height$conf.int[2]))
+  } else {
+    cat("Boys with GOOD glycemic control have LOWER height growth rates.\n")
+    cat(sprintf("Mean difference: %.3f cm/year (95%% CI: [%.3f, %.3f])\n",
+                mean(good_control_height) - mean(poor_control_height),
+                test_height$conf.int[1], test_height$conf.int[2]))
+  }
+} else {
+  cat("✗ NO significant difference at α = 0.05\n\n")
+  cat("There is insufficient evidence to conclude that glycemic control\n")
+  cat("affects height growth rate in adolescent boys with Type I diabetes.\n")
+}
+```
+
+---
+
+# Problem 8.154: BMI Growth Rate Comparison
+
+```{r problem-8-154}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.154: BMI GROWTH RATE BY GLYCEMIC CONTROL\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("RESEARCH QUESTION:\n")
+cat("Do boys with better glycemic control have different growth patterns\n")
+cat("in BMI than boys with poorer glycemic control?\n\n")
+
+# Extract BMI growth rates by group
+good_control_bmi <- boy_summary %>%
+  filter(control_group == "Good Control") %>%
+  pull(bmi_growth_rate)
+
+poor_control_bmi <- boy_summary %>%
+  filter(control_group == "Poor Control") %>%
+  pull(bmi_growth_rate)
+
+# Remove any NA values
+good_control_bmi <- good_control_bmi[!is.na(good_control_bmi)]
+poor_control_bmi <- poor_control_bmi[!is.na(poor_control_bmi)]
+
+cat("SAMPLE SIZES:\n")
+cat(sprintf("Good Control: n = %d\n", length(good_control_bmi)))
+cat(sprintf("Poor Control: n = %d\n\n", length(poor_control_bmi)))
+
+# Descriptive statistics
+cat("DESCRIPTIVE STATISTICS (BMI Growth Rate, kg/m²/year):\n\n")
+
+desc_bmi <- data.frame(
+  Group = c("Good Control", "Poor Control"),
+  N = c(length(good_control_bmi), length(poor_control_bmi)),
+  Mean = c(mean(good_control_bmi), mean(poor_control_bmi)),
+  SD = c(sd(good_control_bmi), sd(poor_control_bmi)),
+  Median = c(median(good_control_bmi), median(poor_control_bmi)),
+  Min = c(min(good_control_bmi), min(poor_control_bmi)),
+  Max = c(max(good_control_bmi), max(poor_control_bmi))
+)
+
+print(kable(desc_bmi, digits = 3))
+
+# Hypothesis test
+cat("\n\nHYPOTHESIS TEST:\n")
+cat("H₀: μ_good = μ_poor (no difference in BMI growth rate)\n")
+cat("H₁: μ_good ≠ μ_poor (BMI growth rate differs by control)\n")
+cat("Test: Two-sample t-test (Welch's, two-sided)\n\n")
+
+test_bmi <- t.test(good_control_bmi, poor_control_bmi,
+                   var.equal = FALSE,
+                   alternative = "two.sided")
+
+cat(sprintf("t-statistic: %.4f\n", test_bmi$statistic))
+cat(sprintf("df: %.2f\n", test_bmi$parameter))
+cat(sprintf("p-value: %.4f\n", test_bmi$p.value))
+cat(sprintf("95%% CI for difference: [%.3f, %.3f] BMI units/year\n",
+            test_bmi$conf.int[1], test_bmi$conf.int[2]))
+
+# Effect size (Cohen's d)
+pooled_sd_bmi <- sqrt(((length(good_control_bmi) - 1) * var(good_control_bmi) +
+                        (length(poor_control_bmi) - 1) * var(poor_control_bmi)) /
+                       (length(good_control_bmi) + length(poor_control_bmi) - 2))
+
+cohens_d_bmi <- (mean(good_control_bmi) - mean(poor_control_bmi)) / pooled_sd_bmi
+
+cat(sprintf("\nEffect size (Cohen's d): %.3f\n", cohens_d_bmi))
+
+# Interpretation
+cat("\n=== CONCLUSION FOR PROBLEM 8.154 ===\n")
+if (test_bmi$p.value < 0.05) {
+  cat("✓ SIGNIFICANT difference at α = 0.05\n\n")
+  if (mean(good_control_bmi) > mean(poor_control_bmi)) {
+    cat("Boys with GOOD glycemic control have HIGHER BMI growth rates.\n")
+    cat(sprintf("Mean difference: %.3f BMI units/year (95%% CI: [%.3f, %.3f])\n",
+                mean(good_control_bmi) - mean(poor_control_bmi),
+                test_bmi$conf.int[1], test_bmi$conf.int[2]))
+  } else {
+    cat("Boys with GOOD glycemic control have LOWER BMI growth rates.\n")
+    cat(sprintf("Mean difference: %.3f BMI units/year (95%% CI: [%.3f, %.3f])\n",
+                mean(good_control_bmi) - mean(poor_control_bmi),
+                test_bmi$conf.int[1], test_bmi$conf.int[2]))
+  }
+} else {
+  cat("✗ NO significant difference at α = 0.05\n\n")
+  cat("There is insufficient evidence to conclude that glycemic control\n")
+  cat("affects BMI growth rate in adolescent boys with Type I diabetes.\n")
+}
+```
+
+---
+
+# Visualizations
+
+## Growth Rate Distributions by Glycemic Control
+
+```{r viz-growth-rates, fig.height=10}
+# Prepare data for visualization
+viz_data <- boy_summary %>%
+  filter(!is.na(control_group)) %>%
+  select(ID, control_group, weight_growth_rate, height_growth_rate, bmi_growth_rate)
+
+# Box plots for all three growth measures
+p1 <- ggplot(viz_data, aes(x = control_group, y = weight_growth_rate, fill = control_group)) +
+  geom_boxplot(alpha = 0.7, outlier.colour = "red", outlier.size = 2) +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 2) +
+  labs(title = "Weight Growth Rate by Glycemic Control",
+       x = "Glycemic Control Group",
+       y = "Weight Growth Rate (kg/year)",
+       subtitle = sprintf("Good Control (n=%d) vs Poor Control (n=%d)",
+                         sum(viz_data$control_group == "Good Control"),
+                         sum(viz_data$control_group == "Poor Control"))) +
+  scale_fill_manual(values = c("Good Control" = "#2E7D32", "Poor Control" = "#C62828")) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(face = "bold", size = 14))
+
+p2 <- ggplot(viz_data, aes(x = control_group, y = height_growth_rate, fill = control_group)) +
+  geom_boxplot(alpha = 0.7, outlier.colour = "red", outlier.size = 2) +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 2) +
+  labs(title = "Height Growth Rate by Glycemic Control",
+       x = "Glycemic Control Group",
+       y = "Height Growth Rate (cm/year)",
+       subtitle = sprintf("Good Control (n=%d) vs Poor Control (n=%d)",
+                         sum(viz_data$control_group == "Good Control"),
+                         sum(viz_data$control_group == "Poor Control"))) +
+  scale_fill_manual(values = c("Good Control" = "#2E7D32", "Poor Control" = "#C62828")) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(face = "bold", size = 14))
+
+p3 <- ggplot(viz_data, aes(x = control_group, y = bmi_growth_rate, fill = control_group)) +
+  geom_boxplot(alpha = 0.7, outlier.colour = "red", outlier.size = 2) +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 2) +
+  labs(title = "BMI Growth Rate by Glycemic Control",
+       x = "Glycemic Control Group",
+       y = "BMI Growth Rate (kg/m²/year)",
+       subtitle = sprintf("Good Control (n=%d) vs Poor Control (n=%d)",
+                         sum(viz_data$control_group == "Good Control"),
+                         sum(viz_data$control_group == "Poor Control"))) +
+  scale_fill_manual(values = c("Good Control" = "#2E7D32", "Poor Control" = "#C62828")) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(face = "bold", size = 14))
+
+# Display plots
+grid.arrange(p1, p2, p3, ncol = 1)
+```
+
+## Distribution Comparisons (Histograms)
+
+```{r viz-histograms, fig.height=8}
+# Histograms for weight growth rate
+p4 <- ggplot(viz_data, aes(x = weight_growth_rate, fill = control_group)) +
+  geom_histogram(bins = 20, alpha = 0.6, position = "identity", color = "black") +
+  facet_wrap(~control_group, ncol = 1) +
+  labs(title = "Distribution of Weight Growth Rates",
+       x = "Weight Growth Rate (kg/year)",
+       y = "Frequency") +
+  scale_fill_manual(values = c("Good Control" = "#2E7D32", "Poor Control" = "#C62828")) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Histograms for height growth rate
+p5 <- ggplot(viz_data, aes(x = height_growth_rate, fill = control_group)) +
+  geom_histogram(bins = 20, alpha = 0.6, position = "identity", color = "black") +
+  facet_wrap(~control_group, ncol = 1) +
+  labs(title = "Distribution of Height Growth Rates",
+       x = "Height Growth Rate (cm/year)",
+       y = "Frequency") +
+  scale_fill_manual(values = c("Good Control" = "#2E7D32", "Poor Control" = "#C62828")) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Histograms for BMI growth rate
+p6 <- ggplot(viz_data, aes(x = bmi_growth_rate, fill = control_group)) +
+  geom_histogram(bins = 20, alpha = 0.6, position = "identity", color = "black") +
+  facet_wrap(~control_group, ncol = 1) +
+  labs(title = "Distribution of BMI Growth Rates",
+       x = "BMI Growth Rate (kg/m²/year)",
+       y = "Frequency") +
+  scale_fill_manual(values = c("Good Control" = "#2E7D32", "Poor Control" = "#C62828")) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Display plots
+grid.arrange(p4, p5, p6, ncol = 3)
+```
+
+## Scatter Plots: HgbA1c vs Growth Rates
+
+```{r viz-scatter, fig.height=10}
+# Scatter plots showing relationship between mean HgbA1c and growth rates
+
+p7 <- ggplot(viz_data %>% left_join(boy_summary %>% select(ID, mean_hba1c), by = "ID"),
+             aes(x = mean_hba1c, y = weight_growth_rate, color = control_group)) +
+  geom_point(size = 3, alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, alpha = 0.2) +
+  geom_vline(xintercept = median_hba1c, linetype = "dashed", color = "black") +
+  annotate("text", x = median_hba1c + 0.5, y = max(viz_data$weight_growth_rate, na.rm = TRUE),
+           label = paste0("Median HgbA1c = ", round(median_hba1c, 2)),
+           hjust = 0, size = 4) +
+  labs(title = "Weight Growth Rate vs. Mean HgbA1c",
+       x = "Mean HgbA1c (Average Glycemic Control)",
+       y = "Weight Growth Rate (kg/year)",
+       color = "Control Group") +
+  scale_color_manual(values = c("Good Control" = "#2E7D32", "Poor Control" = "#C62828")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+p8 <- ggplot(viz_data %>% left_join(boy_summary %>% select(ID, mean_hba1c), by = "ID"),
+             aes(x = mean_hba1c, y = height_growth_rate, color = control_group)) +
+  geom_point(size = 3, alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, alpha = 0.2) +
+  geom_vline(xintercept = median_hba1c, linetype = "dashed", color = "black") +
+  labs(title = "Height Growth Rate vs. Mean HgbA1c",
+       x = "Mean HgbA1c (Average Glycemic Control)",
+       y = "Height Growth Rate (cm/year)",
+       color = "Control Group") +
+  scale_color_manual(values = c("Good Control" = "#2E7D32", "Poor Control" = "#C62828")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+p9 <- ggplot(viz_data %>% left_join(boy_summary %>% select(ID, mean_hba1c), by = "ID"),
+             aes(x = mean_hba1c, y = bmi_growth_rate, color = control_group)) +
+  geom_point(size = 3, alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, alpha = 0.2) +
+  geom_vline(xintercept = median_hba1c, linetype = "dashed", color = "black") +
+  labs(title = "BMI Growth Rate vs. Mean HgbA1c",
+       x = "Mean HgbA1c (Average Glycemic Control)",
+       y = "BMI Growth Rate (kg/m²/year)",
+       color = "Control Group") +
+  scale_color_manual(values = c("Good Control" = "#2E7D32", "Poor Control" = "#C62828")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# Display plots
+grid.arrange(p7, p8, p9, ncol = 1)
+```
+
+---
+
+# Overall Summary
+
+```{r overall-summary}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("COMPREHENSIVE SUMMARY: DIABETES AND GROWTH STUDY\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("STUDY DESIGN:\n")
+cat(sprintf("  Total boys analyzed: %d\n", nrow(boy_summary)))
+cat(sprintf("  Total visits: %d\n", nrow(diabetes_clean)))
+cat(sprintf("  Average visits per boy: %.1f\n",
+            nrow(diabetes_clean) / n_distinct(diabetes_clean$id)))
+cat(sprintf("  Average follow-up duration: %.2f years\n",
+            mean(boy_summary$followup_years, na.rm = TRUE)))
+cat(sprintf("\n  Median HgbA1c (cutoff): %.2f\n", median_hba1c))
+cat(sprintf("  Good Control group: n = %d (HgbA1c < %.2f)\n",
+            sum(boy_summary$control_group == "Good Control"), median_hba1c))
+cat(sprintf("  Poor Control group: n = %d (HgbA1c ≥ %.2f)\n\n",
+            sum(boy_summary$control_group == "Poor Control"), median_hba1c))
+
+# Create summary table of all results
+summary_table <- data.frame(
+  Problem = c("8.152 (Weight)", "8.153 (Height)", "8.154 (BMI)"),
+  Good_Control_Mean = c(mean(good_control_weight),
+                        mean(good_control_height),
+                        mean(good_control_bmi)),
+  Poor_Control_Mean = c(mean(poor_control_weight),
+                        mean(poor_control_height),
+                        mean(poor_control_bmi)),
+  Mean_Difference = c(mean(good_control_weight) - mean(poor_control_weight),
+                      mean(good_control_height) - mean(poor_control_height),
+                      mean(good_control_bmi) - mean(poor_control_bmi)),
+  t_statistic = c(test_weight$statistic,
+                  test_height$statistic,
+                  test_bmi$statistic),
+  p_value = c(test_weight$p.value,
+              test_height$p.value,
+              test_bmi$p.value),
+  Cohens_d = c(cohens_d_weight, cohens_d_height, cohens_d_bmi),
+  Significant = c(
+    ifelse(test_weight$p.value < 0.05, "Yes", "No"),
+    ifelse(test_height$p.value < 0.05, "Yes", "No"),
+    ifelse(test_bmi$p.value < 0.05, "Yes", "No")
+  )
+)
+
+cat("RESULTS SUMMARY:\n\n")
+print(kable(summary_table, digits = 4,
+            col.names = c("Growth Measure", "Good Control Mean", "Poor Control Mean",
+                         "Difference", "t-statistic", "p-value", "Cohen's d", "Significant?"),
+            caption = "Summary of Glycemic Control Effects on Growth Rates"))
+
+cat("\n\nKEY FINDINGS:\n")
+n_sig <- sum(summary_table$p_value < 0.05)
+cat(sprintf("- Number of significant tests (α = 0.05): %d out of 3\n\n", n_sig))
+
+if (n_sig == 0) {
+  cat("✗ NO significant differences found for any growth measure.\n")
+  cat("  Glycemic control does not appear to affect growth patterns\n")
+  cat("  in weight, height, or BMI using this simple analytical approach.\n\n")
+} else if (n_sig == 3) {
+  cat("✓ ALL growth measures show significant differences.\n")
+  cat("  Strong evidence that glycemic control affects growth patterns\n")
+  cat("  across multiple dimensions (weight, height, and BMI).\n\n")
+} else {
+  cat("~ MIXED results across different growth measures.\n")
+  cat("  Glycemic control appears to affect some aspects of growth\n")
+  cat("  but not others.\n\n")
+}
+
+cat("CLINICAL INTERPRETATION:\n")
+cat("- HgbA1c < 7.0 is considered normal/good control\n")
+cat(sprintf("- Study median HgbA1c = %.2f (above normal)\n", median_hba1c))
+cat("- Even boys in 'good control' group may have suboptimal control\n")
+cat("- More sophisticated regression methods (Chapter 11) can provide\n")
+cat("  better insights by using all available data points and adjusting\n")
+cat("  for age, baseline measurements, and other confounders.\n\n")
+
+cat("METHODOLOGICAL NOTES:\n")
+cat("- Analysis used median split to dichotomize glycemic control\n")
+cat("- Growth rates calculated using first and last visits only\n")
+cat("- Welch's t-test allows for unequal variances between groups\n")
+cat("- Effect sizes (Cohen's d) interpret as:\n")
+cat("  Small: 0.2, Medium: 0.5, Large: 0.8\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

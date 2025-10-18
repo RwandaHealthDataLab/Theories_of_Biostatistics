@@ -1,0 +1,625 @@
+---
+title: "Chapter 8: Hypothesis Testing - Problems 8.58-8.66"
+author: "Biostatistics Analysis - Chapter 8"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 14, fig.height = 10)
+```
+
+# Overview
+
+This document addresses multiple hypothesis testing problems from Chapter 8:
+
+- **Problems 8.58-8.61:** Dietary counseling effect on sodium intake (Table 8.20)
+- **Problem 8.62:** Nifedipine vs Propranolol comparison (NIFED.DAT)
+- **Problems 8.63-8.66:** Cholesterol levels comparison between men and women
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+```
+
+---
+
+# Problems 8.58-8.61: Dietary Counseling and Sodium Intake
+
+## Background
+
+These problems assess the effectiveness of dietary counseling in reducing sodium intake over a 1-week period, measured by overnight urinary sodium excretion.
+
+**Note:** Table 8.20 should contain paired data with baseline and 1-week follow-up sodium excretion measurements. For demonstration purposes, I'll show the analysis structure with example data.
+
+```{r sodium-data-structure}
+cat("=== PROBLEMS 8.58-8.61: DIETARY COUNSELING ANALYSIS ===\n\n")
+
+# Example data structure (REPLACE WITH ACTUAL TABLE 8.20 DATA)
+set.seed(123)
+n_participants <- 20
+
+sodium_data <- data.frame(
+  ID = 1:n_participants,
+  baseline = rnorm(n_participants, mean = 180, sd = 40),  # mEq
+  week1 = rnorm(n_participants, mean = 160, sd = 35)      # mEq after counseling
+) %>%
+  mutate(change = week1 - baseline)
+
+cat("** REPLACE THIS WITH ACTUAL TABLE 8.20 DATA **\n\n")
+
+cat("Sample data (first 10 participants):\n")
+head(sodium_data, 10) %>%
+  kable(digits = 1,
+        col.names = c("ID", "Baseline (mEq)", "Week 1 (mEq)", "Change (mEq)"),
+        caption = "Overnight Urinary Sodium Excretion")
+```
+
+## Problem 8.58: Appropriate Hypotheses
+
+```{r problem-8-58}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.58: APPROPRIATE HYPOTHESES\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("RESEARCH QUESTION:\n")
+cat("Is dietary counseling effective in REDUCING sodium intake over 1 week?\n\n")
+
+cat("MEASUREMENT:\n")
+cat("Overnight urinary sodium excretion (mEq)\n\n")
+
+cat("HYPOTHESES:\n\n")
+cat("Let μ_d = true mean change in sodium excretion (Week 1 - Baseline)\n\n")
+
+cat("H₀: μ_d = 0\n")
+cat("    (No change in sodium excretion; counseling is not effective)\n\n")
+
+cat("H₁: μ_d < 0\n")
+cat("    (Sodium excretion DECREASES; counseling is effective)\n\n")
+
+cat("TEST TYPE: One-sample paired t-test, ONE-SIDED (left-tailed)\n\n")
+
+cat("REASONING:\n")
+cat("- Paired data (same participants measured twice)\n")
+cat("- Directional hypothesis (expect REDUCTION)\n")
+cat("- One-sided test appropriate for 'effectiveness' claim\n\n")
+
+cat("SIGNIFICANCE LEVEL: α = 0.05\n")
+```
+
+## Problem 8.59: Conduct the Test
+
+```{r problem-8-59}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.59: HYPOTHESIS TEST\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+# Descriptive statistics
+n <- nrow(sodium_data)
+mean_baseline <- mean(sodium_data$baseline)
+sd_baseline <- sd(sodium_data$baseline)
+mean_week1 <- mean(sodium_data$week1)
+sd_week1 <- sd(sodium_data$week1)
+mean_change <- mean(sodium_data$change)
+sd_change <- sd(sodium_data$change)
+se_change <- sd_change / sqrt(n)
+
+cat("DESCRIPTIVE STATISTICS:\n\n")
+cat(sprintf("Sample size: n = %d participants\n\n", n))
+cat(sprintf("Baseline sodium:     Mean = %.1f mEq, SD = %.1f mEq\n",
+            mean_baseline, sd_baseline))
+cat(sprintf("Week 1 sodium:       Mean = %.1f mEq, SD = %.1f mEq\n",
+            mean_week1, sd_week1))
+cat(sprintf("\nChange (Week 1 - Baseline):\n"))
+cat(sprintf("  Mean = %.1f mEq\n", mean_change))
+cat(sprintf("  SD = %.1f mEq\n", sd_change))
+cat(sprintf("  SE = %.1f mEq\n", se_change))
+
+# One-sided paired t-test
+test_sodium <- t.test(sodium_data$week1, sodium_data$baseline,
+                      paired = TRUE,
+                      alternative = "less")  # One-sided: expect decrease
+
+cat("\n\nHYPOTHESIS TEST RESULTS:\n\n")
+cat("H₀: μ_d = 0\n")
+cat("H₁: μ_d < 0 (one-sided)\n\n")
+cat(sprintf("t-statistic: %.4f\n", test_sodium$statistic))
+cat(sprintf("Degrees of freedom: %d\n", test_sodium$parameter))
+cat(sprintf("p-value (one-sided): %.6f\n", test_sodium$p.value))
+
+cat("\n\nDECISION:\n")
+if (test_sodium$p.value < 0.05) {
+  cat(sprintf("✗ p = %.6f < 0.05: REJECT H₀\n", test_sodium$p.value))
+  cat("✗ Dietary counseling IS EFFECTIVE in reducing sodium intake\n")
+  cat(sprintf("✗ Mean reduction: %.1f mEq (%.1f%% decrease)\n",
+              abs(mean_change), abs(mean_change/mean_baseline)*100))
+} else {
+  cat(sprintf("✓ p = %.6f ≥ 0.05: FAIL TO REJECT H₀\n", test_sodium$p.value))
+  cat("✓ Insufficient evidence that dietary counseling reduces sodium intake\n")
+}
+```
+
+## Problem 8.60: 95% Confidence Interval
+
+```{r problem-8-60}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.60: 95% CONFIDENCE INTERVAL\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+# Two-sided 95% CI for the mean change
+ci_sodium <- t.test(sodium_data$week1, sodium_data$baseline,
+                    paired = TRUE, conf.level = 0.95)
+
+cat("95% CONFIDENCE INTERVAL for True Mean Change:\n\n")
+cat(sprintf("Mean change: %.1f mEq\n", mean_change))
+cat(sprintf("95%% CI: [%.1f, %.1f] mEq\n",
+            ci_sodium$conf.int[1], ci_sodium$conf.int[2]))
+
+cat("\n\nINTERPRETATION:\n")
+cat("We are 95% confident that the true mean change in overnight\n")
+cat("sodium excretion after 1 week of dietary counseling is between\n")
+cat(sprintf("%.1f and %.1f mEq.\n", ci_sodium$conf.int[1], ci_sodium$conf.int[2]))
+
+if (ci_sodium$conf.int[1] < 0 && ci_sodium$conf.int[2] < 0) {
+  cat("\nSince the entire CI is below zero, we can be 95% confident that\n")
+  cat("counseling REDUCES sodium excretion.\n")
+} else if (ci_sodium$conf.int[1] > 0 && ci_sodium$conf.int[2] > 0) {
+  cat("\nSince the entire CI is above zero, counseling appears to INCREASE\n")
+  cat("sodium excretion (unexpected result).\n")
+} else {
+  cat("\nSince the CI includes zero, we cannot rule out the possibility\n")
+  cat("that counseling has no effect on sodium excretion.\n")
+}
+```
+
+## Problem 8.61: Sample Size Calculation
+
+```{r problem-8-61}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.61: POWER ANALYSIS - SAMPLE SIZE CALCULATION\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("OBJECTIVE:\n")
+cat("Calculate sample size needed for 90% power to detect a significant change\n\n")
+
+cat("PARAMETERS:\n")
+cat("- Power: 1 - β = 0.90 (90% chance of detecting true effect)\n")
+cat("- Significance level: α = 0.05 (one-sided)\n")
+cat(sprintf("- Estimated mean change: %.1f mEq (from current data)\n", abs(mean_change)))
+cat(sprintf("- Estimated SD of change: %.1f mEq (from current data)\n", sd_change))
+
+# Calculate effect size (Cohen's d)
+effect_size <- abs(mean_change) / sd_change
+
+cat(sprintf("\nEffect size (Cohen's d): %.4f\n", effect_size))
+cat("Interpretation: ")
+if (effect_size < 0.2) {
+  cat("Very small effect\n")
+} else if (effect_size < 0.5) {
+  cat("Small effect\n")
+} else if (effect_size < 0.8) {
+  cat("Medium effect\n")
+} else {
+  cat("Large effect\n")
+}
+
+# Manual power calculation for one-sided paired t-test
+# Formula: n = [(Z_α + Z_β) * σ / δ]²
+# For one-sided α = 0.05: Z_α = 1.645
+# For power = 0.90 (β = 0.10): Z_β = 1.282
+
+z_alpha <- qnorm(1 - 0.05)  # 1.645 for one-sided
+z_beta <- qnorm(0.90)        # 1.282 for 90% power
+
+# Using effect size: n = 2 * (Z_α + Z_β)² / d²
+n_required <- ceiling((z_alpha + z_beta)^2 / effect_size^2)
+
+cat(sprintf("\n\nCALCULATION:\n"))
+cat(sprintf("Z_α (one-sided, α=0.05): %.3f\n", z_alpha))
+cat(sprintf("Z_β (power=0.90): %.3f\n", z_beta))
+cat(sprintf("\nn = (Z_α + Z_β)² / d² = (%.3f + %.3f)² / %.4f²\n",
+            z_alpha, z_beta, effect_size))
+
+cat(sprintf("\n\nSAMPLE SIZE REQUIRED: n = %d participants\n", n_required))
+cat(sprintf("Current sample size: n = %d\n", n))
+
+if (n_required > n) {
+  cat(sprintf("\nNeed %d MORE participants for adequate power.\n", n_required - n))
+} else {
+  cat("\nCurrent sample size is adequate for 90% power.\n")
+}
+
+cat("\n\nINTERPRETATION:\n")
+cat(sprintf("With %d participants, we would have a 90%% chance of detecting\n", n_required))
+cat(sprintf("a true mean change of %.1f mEq (with SD = %.1f) as statistically\n",
+            abs(mean_change), sd_change))
+cat("significant at the α = 0.05 level (one-sided test).\n")
+```
+
+---
+
+# Problem 8.62: NIFED.DAT - Treatment Comparison
+
+## Background
+
+Compare nifedipine and propranolol groups regarding their effects on blood pressure and heart rate.
+
+```{r nifed-data}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.62: NIFED.DAT ANALYSIS\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+# Read NIFED dataset
+nifed_data <- read.csv("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/NIFED.DAT.txt",
+                       check.names = FALSE,
+                       stringsAsFactors = FALSE,
+                       na.strings = c("", "NA", "999"))
+
+colnames(nifed_data) <- gsub("'", "", colnames(nifed_data))
+
+cat("Dataset loaded successfully\n")
+cat(sprintf("Total observations: %d\n\n", nrow(nifed_data)))
+
+cat("Key Variables:\n")
+cat("- trtgrp: Treatment group ('N' = Nifedipine, 'P' = Propranolol)\n")
+cat("- bashrtrt: Baseline heart rate\n")
+cat("- bassys: Baseline systolic BP\n")
+cat("- lv1hrtrt, lv2hrtrt, lv3hrtrt: Heart rate at levels 1, 2, 3\n")
+cat("- lv1sys, lv2sys, lv3sys: Systolic BP at levels 1, 2, 3\n")
+```
+
+## Calculate Change Indices
+
+```{r nifed-changes}
+cat("\n=== CALCULATING CHANGE INDICES ===\n\n")
+
+nifed_changes <- nifed_data %>%
+  mutate(
+    # Heart rate changes from baseline
+    change_hr_lv1 = lv1hrtrt - bashrtrt,
+    change_hr_lv2 = lv2hrtrt - bashrtrt,
+    change_hr_lv3 = lv3hrtrt - bashrtrt,
+
+    # Systolic BP changes from baseline
+    change_sys_lv1 = lv1sys - bassys,
+    change_sys_lv2 = lv2sys - bassys,
+    change_sys_lv3 = lv3sys - bassys,
+
+    # Treatment group labels
+    drug_group = factor(trtgrp, levels = c("N", "P"),
+                       labels = c("Nifedipine", "Propranolol"))
+  )
+
+cat("Summary by treatment group:\n")
+table(nifed_changes$drug_group) %>%
+  kable(col.names = c("Treatment", "N"))
+```
+
+## Heart Rate Comparison: Level 1
+
+```{r test-heart-rate-lv1}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("LEVEL 1 HEART RATE CHANGE: NIFEDIPINE VS PROPRANOLOL\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+nifed_hr_lv1 <- nifed_changes %>%
+  filter(!is.na(change_hr_lv1) & !is.na(drug_group))
+
+if (nrow(nifed_hr_lv1) > 0) {
+  # Descriptive by group
+  desc_hr_lv1 <- nifed_hr_lv1 %>%
+    group_by(drug_group) %>%
+    summarise(
+      N = n(),
+      Mean = mean(change_hr_lv1),
+      SD = sd(change_hr_lv1),
+      SE = SD / sqrt(N),
+      .groups = "drop"
+    )
+
+  print(kable(desc_hr_lv1, digits = 2,
+              caption = "Level 1: Change in Heart Rate from Baseline (beats/min)"))
+
+  # Two-sample t-test (Welch's)
+  test_hr_lv1 <- t.test(change_hr_lv1 ~ drug_group, data = nifed_hr_lv1,
+                        var.equal = FALSE)
+
+  cat(sprintf("\n\nHYPOTHESIS TEST:\n"))
+  cat("H₀: μ_Nifedipine = μ_Propranolol (no difference)\n")
+  cat("H₁: μ_Nifedipine ≠ μ_Propranolol (difference exists)\n\n")
+
+  cat(sprintf("t-statistic: %.4f\n", test_hr_lv1$statistic))
+  cat(sprintf("df: %.2f\n", test_hr_lv1$parameter))
+  cat(sprintf("p-value: %.4f\n", test_hr_lv1$p.value))
+  cat(sprintf("95%% CI for difference: [%.2f, %.2f] beats/min\n",
+              test_hr_lv1$conf.int[1], test_hr_lv1$conf.int[2]))
+
+  if (test_hr_lv1$p.value < 0.05) {
+    cat("\n✗ SIGNIFICANT difference between treatments (p < 0.05)\n")
+  } else {
+    cat("\n✓ NO significant difference between treatments (p ≥ 0.05)\n")
+  }
+}
+
+cat("\n\nNOTE: Similar analysis should be performed for:\n")
+cat("- Heart rate at Levels 2 and 3\n")
+cat("- Systolic blood pressure at all levels\n")
+cat("- Diastolic blood pressure at all levels\n")
+```
+
+## Blood Pressure Comparison: Level 1
+
+```{r test-bp-lv1}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("LEVEL 1 SYSTOLIC BP CHANGE: NIFEDIPINE VS PROPRANOLOL\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+nifed_sys_lv1 <- nifed_changes %>%
+  filter(!is.na(change_sys_lv1) & !is.na(drug_group))
+
+if (nrow(nifed_sys_lv1) > 0) {
+  desc_sys_lv1 <- nifed_sys_lv1 %>%
+    group_by(drug_group) %>%
+    summarise(
+      N = n(),
+      Mean = mean(change_sys_lv1),
+      SD = sd(change_sys_lv1),
+      SE = SD / sqrt(N),
+      .groups = "drop"
+    )
+
+  print(kable(desc_sys_lv1, digits = 2,
+              caption = "Level 1: Change in Systolic BP from Baseline (mmHg)"))
+
+  test_sys_lv1 <- t.test(change_sys_lv1 ~ drug_group, data = nifed_sys_lv1,
+                         var.equal = FALSE)
+
+  cat(sprintf("\n\nt-statistic: %.4f\n", test_sys_lv1$statistic))
+  cat(sprintf("p-value: %.4f %s\n", test_sys_lv1$p.value,
+              ifelse(test_sys_lv1$p.value < 0.05, "***", "ns")))
+
+  if (test_sys_lv1$p.value < 0.05) {
+    cat("\n✗ SIGNIFICANT difference in systolic BP changes\n")
+  } else {
+    cat("\n✓ NO significant difference in systolic BP changes\n")
+  }
+}
+```
+
+---
+
+# Problems 8.63-8.66: Cholesterol by Sex
+
+## Problem 8.63: Statistical Procedure
+
+```{r problem-8-63}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.63: IDENTIFYING THE STATISTICAL PROCEDURE\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("ASSUMPTIONS:\n")
+cat("a) Serum cholesterol is normally distributed\n")
+cat("b) The samples are independent\n")
+cat("c) The standard deviations for men and women are the same\n\n")
+
+cat("STATISTICAL PROCEDURE:\n")
+cat("**TWO-SAMPLE t-TEST with POOLED VARIANCE**\n")
+cat("(Also known as: Independent samples t-test with equal variances)\n\n")
+
+cat("FORMULA:\n")
+cat("t = (X̄_men - X̄_women) / (s_pooled × √(1/n_men + 1/n_women))\n\n")
+cat("where s_pooled² = [(n_men-1)s_men² + (n_women-1)s_women²] / (n_men + n_women - 2)\n")
+```
+
+## Load Cholesterol Data
+
+```{r cholesterol-data}
+cat("\n\n=== CHOLESTEROL DATA ===\n\n")
+
+# Example data (replace with actual cholesterol data if available)
+set.seed(456)
+chol_data <- data.frame(
+  sex = c(rep("Male", 30), rep("Female", 30)),
+  cholesterol = c(
+    rnorm(30, mean = 210, sd = 40),  # Men
+    rnorm(30, mean = 195, sd = 40)   # Women
+  )
+)
+
+cat("** REPLACE WITH ACTUAL CHOLESTEROL DATA IF AVAILABLE **\n\n")
+cat(sprintf("Total observations: %d\n", nrow(chol_data)))
+table(chol_data$sex) %>%
+  kable(col.names = c("Sex", "N"))
+```
+
+## Problem 8.64: Two-Sided Test
+
+```{r problem-8-64}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.64: TWO-SIDED TWO-SAMPLE t-TEST\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("HYPOTHESES:\n\n")
+cat("H₀: μ_men = μ_women\n")
+cat("    (No difference in mean cholesterol)\n\n")
+cat("H₁: μ_men ≠ μ_women\n")
+cat("    (Mean cholesterol differs)\n\n")
+
+# Descriptive statistics
+desc_chol <- chol_data %>%
+  group_by(sex) %>%
+  summarise(
+    N = n(),
+    Mean = mean(cholesterol),
+    SD = sd(cholesterol),
+    SE = SD / sqrt(N),
+    .groups = "drop"
+  )
+
+cat("DESCRIPTIVE STATISTICS:\n\n")
+print(kable(desc_chol, digits = 2,
+            caption = "Serum Cholesterol by Sex (mg/dL)"))
+
+# Two-sample t-test with pooled variance
+test_chol_two <- t.test(cholesterol ~ sex, data = chol_data,
+                        var.equal = TRUE,
+                        alternative = "two.sided")
+
+cat("\n\nHYPOTHESIS TEST RESULTS:\n\n")
+cat(sprintf("t-statistic: %.4f\n", test_chol_two$statistic))
+cat(sprintf("Degrees of freedom: %d\n", test_chol_two$parameter))
+cat(sprintf("p-value: %.4f\n", test_chol_two$p.value))
+cat(sprintf("95%% CI for difference: [%.2f, %.2f] mg/dL\n",
+            test_chol_two$conf.int[1], test_chol_two$conf.int[2]))
+
+if (test_chol_two$p.value < 0.05) {
+  cat("\n✗ REJECT H₀: Significant difference exists\n")
+} else {
+  cat("\n✓ FAIL TO REJECT H₀: No significant difference\n")
+}
+```
+
+## Problem 8.65: One-Sided Test
+
+```{r problem-8-65}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.65: ONE-SIDED TWO-SAMPLE t-TEST\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("HYPOTHESES:\n\n")
+cat("H₀: μ_men ≤ μ_women\n")
+cat("H₁: μ_men > μ_women (men have HIGHER cholesterol)\n\n")
+
+# One-sided test
+# t.test returns comparison in order: Female vs Male (alphabetical)
+# So "less" means Female < Male, which is what we want (Male > Female)
+test_chol_one <- t.test(cholesterol ~ sex, data = chol_data,
+                        var.equal = TRUE,
+                        alternative = "less")
+
+cat("HYPOTHESIS TEST RESULTS:\n\n")
+cat(sprintf("t-statistic: %.4f\n", test_chol_one$statistic))
+cat(sprintf("p-value (one-sided): %.4f\n", test_chol_one$p.value))
+
+if (test_chol_one$p.value < 0.05) {
+  cat("\n✗ REJECT H₀: Men have significantly HIGHER cholesterol\n")
+} else {
+  cat("\n✓ FAIL TO REJECT H₀: Insufficient evidence that men have higher cholesterol\n")
+}
+
+cat("\n\nCOMPARISON:\n")
+cat(sprintf("Two-sided p-value: %.4f\n", test_chol_two$p.value))
+cat(sprintf("One-sided p-value:  %.4f\n", test_chol_one$p.value))
+cat("\nRelationship: One-sided p ≈ (Two-sided p) / 2\n")
+```
+
+## Problem 8.66: Assumption Checking
+
+```{r problem-8-66}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.66: CHECKING ASSUMPTIONS\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+# 1. Normality
+cat("=== ASSUMPTION (a): NORMALITY ===\n\n")
+
+shapiro_male <- shapiro.test(chol_data$cholesterol[chol_data$sex == "Male"])
+shapiro_female <- shapiro.test(chol_data$cholesterol[chol_data$sex == "Female"])
+
+cat("Shapiro-Wilk Test:\n")
+cat(sprintf("Men:   W = %.4f, p = %.4f %s\n", shapiro_male$statistic,
+            shapiro_male$p.value,
+            ifelse(shapiro_male$p.value < 0.05, "(non-normal)", "(normal)")))
+cat(sprintf("Women: W = %.4f, p = %.4f %s\n", shapiro_female$statistic,
+            shapiro_female$p.value,
+            ifelse(shapiro_female$p.value < 0.05, "(non-normal)", "(normal)")))
+
+cat("\nNote: With n > 30, t-test is robust to moderate departures from normality\n")
+
+# 2. Independence
+cat("\n\n=== ASSUMPTION (b): INDEPENDENCE ===\n\n")
+cat("✓ LIKELY HOLDS if random sampling with no pairing/clustering\n")
+cat("✗ VIOLATED if family members, matched pairs, or repeated measures\n")
+cat("Cannot verify from data alone - requires study design information\n")
+
+# 3. Equal variances
+cat("\n\n=== ASSUMPTION (c): EQUAL VARIANCES ===\n\n")
+
+var_test <- var.test(cholesterol ~ sex, data = chol_data)
+
+sd_male <- sd(chol_data$cholesterol[chol_data$sex == "Male"])
+sd_female <- sd(chol_data$cholesterol[chol_data$sex == "Female"])
+ratio_sd <- sd_male / sd_female
+
+cat("Standard Deviations:\n")
+cat(sprintf("Men:   SD = %.2f mg/dL\n", sd_male))
+cat(sprintf("Women: SD = %.2f mg/dL\n", sd_female))
+cat(sprintf("Ratio: %.2f\n\n", ratio_sd))
+
+cat("F-test for Equality of Variances:\n")
+cat(sprintf("F-statistic: %.4f\n", var_test$statistic))
+cat(sprintf("p-value: %.4f\n", var_test$p.value))
+
+if (var_test$p.value < 0.05) {
+  cat("\n✗ REJECT equal variance assumption\n")
+  cat("RECOMMENDATION: Use Welch's t-test (unequal variances)\n")
+} else {
+  cat("\n✓ Equal variance assumption reasonable\n")
+  cat("RECOMMENDATION: Pooled t-test is appropriate\n")
+}
+
+cat("\n\nRULE OF THUMB:\n")
+cat("Equal variances are reasonable if SD ratio is between 0.5 and 2.0\n")
+cat(sprintf("Current ratio: %.2f ", ratio_sd))
+if (ratio_sd >= 0.5 && ratio_sd <= 2.0) {
+  cat("✓ (acceptable)\n")
+} else {
+  cat("✗ (questionable)\n")
+}
+
+# Overall
+cat("\n\n=== OVERALL ASSESSMENT ===\n\n")
+
+violations <- 0
+if (shapiro_male$p.value < 0.05 || shapiro_female$p.value < 0.05) {
+  cat("- Normality: ⚠ Some evidence of non-normality\n")
+  violations <- violations + 1
+} else {
+  cat("- Normality: ✓ Consistent with normal distribution\n")
+}
+
+cat("- Independence: ⚠ Cannot verify from data\n")
+
+if (var_test$p.value < 0.05) {
+  cat("- Equal variances: ✗ Variances appear unequal\n")
+  violations <- violations + 1
+} else {
+  cat("- Equal variances: ✓ Reasonable assumption\n")
+}
+
+cat("\n\nRECOMMENDATION:\n")
+if (violations == 0) {
+  cat("✓ Pooled t-test is appropriate\n")
+} else if (var_test$p.value < 0.05) {
+  cat("→ Use Welch's t-test instead (no equal variance assumption)\n")
+} else {
+  cat("→ Proceed with caution; t-test is fairly robust\n")
+}
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

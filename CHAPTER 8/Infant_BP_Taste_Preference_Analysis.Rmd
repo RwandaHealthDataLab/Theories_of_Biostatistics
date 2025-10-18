@@ -1,0 +1,633 @@
+---
+title: "Infant Blood Pressure and Taste Preferences"
+author: "Biostatistics Analysis - Chapter 8 (Problems 8.87-8.88)"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 14, fig.height = 10)
+```
+
+# Background
+
+This analysis examines the relationship between **taste preferences** (salt and sugar) and **blood pressure levels** in infants. We construct taste-preference indices based on infant sucking behavior and compare blood pressure between groups with different taste preferences.
+
+## Research Questions
+
+**Problem 8.87:** Using median splits (high vs low), assess whether mean blood pressure differs between infants with high vs low salt/sugar taste preferences.
+
+**Problem 8.88:** Using quintile/decile splits, compare blood pressure at extremes (highest vs lowest quintile) to better understand the relationship.
+
+## Study Design
+
+- **Participants:** Infants with blood pressure and taste preference measurements
+- **Outcomes:** Mean systolic BP (Mn_sbp), Mean diastolic BP (Mn_dbp)
+- **Predictors:** Salt-taste index, Sugar-taste index
+- **Analysis:** Two-sample t-tests comparing high vs low groups
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+library(gridExtra)
+```
+
+# Data Import and Cleaning
+
+```{r data-import}
+# Read INFANTBP dataset
+infantbp_data <- read.csv("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/INFANTBP.DAT.txt",
+                          check.names = FALSE,
+                          stringsAsFactors = FALSE,
+                          na.strings = c("", "NA", "999.99"))
+
+# Remove quotes from column names
+colnames(infantbp_data) <- gsub("'", "", colnames(infantbp_data))
+
+cat("Dataset Structure:\n")
+cat(sprintf("Total infants: %d\n", nrow(infantbp_data)))
+cat(sprintf("Total variables: %d\n\n", ncol(infantbp_data)))
+
+cat("Key Variables:\n")
+cat("- Mn_sbp: Mean systolic blood pressure (mmHg)\n")
+cat("- Mn_dbp: Mean diastolic blood pressure (mmHg)\n")
+cat("- MSB1slt to MSB10slt: Salt taste trials (10 measurements)\n")
+cat("- MSB1sug to MSB5sug: Sugar taste trials (5 measurements)\n")
+cat("- 999.99 = Missing value code\n")
+```
+
+# Construct Taste Preference Indices
+
+```{r construct-indices}
+cat("\n=== CONSTRUCTING TASTE PREFERENCE INDICES ===\n\n")
+
+# Construct salt-taste index (mean of 10 salt trials)
+salt_vars <- paste0("MSB", 1:10, "slt")
+
+# Construct sugar-taste index (mean of 5 sugar trials)
+sugar_vars <- paste0("MSB", 1:5, "sug")
+
+infantbp_indices <- infantbp_data %>%
+  mutate(
+    # Salt-taste index: average across 10 salt trials
+    salt_index = rowMeans(select(., all_of(salt_vars)), na.rm = TRUE),
+
+    # Sugar-taste index: average across 5 sugar trials
+    sugar_index = rowMeans(select(., all_of(sugar_vars)), na.rm = TRUE),
+
+    # Replace NaN (when all values missing) with NA
+    salt_index = ifelse(is.nan(salt_index), NA, salt_index),
+    sugar_index = ifelse(is.nan(sugar_index), NA, sugar_index)
+  ) %>%
+  # Keep only complete cases for BP
+  filter(!is.na(Mn_sbp) & !is.na(Mn_dbp) &
+         Mn_sbp < 999 & Mn_dbp < 999)
+
+cat("Taste Preference Indices Created:\n\n")
+cat(sprintf("Infants with valid BP data: %d\n", nrow(infantbp_indices)))
+cat(sprintf("Infants with salt index: %d\n", sum(!is.na(infantbp_indices$salt_index))))
+cat(sprintf("Infants with sugar index: %d\n\n", sum(!is.na(infantbp_indices$sugar_index))))
+
+# Summary statistics for indices
+cat("Salt-Taste Index Summary:\n")
+summary(infantbp_indices$salt_index) %>% print()
+
+cat("\n\nSugar-Taste Index Summary:\n")
+summary(infantbp_indices$sugar_index) %>% print()
+
+cat("\n\nBlood Pressure Summary:\n")
+cat("Systolic BP:\n")
+summary(infantbp_indices$Mn_sbp) %>% print()
+cat("\nDiastolic BP:\n")
+summary(infantbp_indices$Mn_dbp) %>% print()
+```
+
+---
+
+# Problem 8.87: Median Split Analysis
+
+## 8.87a: Salt-Taste Index (Median Split)
+
+```{r problem-8-87a-salt}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.87a: SALT-TASTE INDEX - MEDIAN SPLIT\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+# Create median split for salt index
+salt_valid <- infantbp_indices %>%
+  filter(!is.na(salt_index))
+
+salt_median <- median(salt_valid$salt_index, na.rm = TRUE)
+
+salt_valid <- salt_valid %>%
+  mutate(
+    salt_group = ifelse(salt_index > salt_median, "High", "Low"),
+    salt_group = factor(salt_group, levels = c("Low", "High"))
+  )
+
+cat(sprintf("Salt Index Median: %.2f\n", salt_median))
+cat("\nFrequency Distribution:\n")
+table(salt_valid$salt_group) %>%
+  kable(col.names = c("Salt Group", "N"))
+
+# SYSTOLIC BP - Salt
+cat("\n\n=== SYSTOLIC BLOOD PRESSURE vs SALT PREFERENCE ===\n\n")
+
+desc_salt_sbp <- salt_valid %>%
+  group_by(salt_group) %>%
+  summarise(
+    N = n(),
+    Mean_SBP = mean(Mn_sbp),
+    SD_SBP = sd(Mn_sbp),
+    SE_SBP = SD_SBP / sqrt(N),
+    .groups = "drop"
+  )
+
+print(kable(desc_salt_sbp, digits = 2,
+            caption = "Systolic BP by Salt Preference (Median Split)"))
+
+# Two-sample t-test
+test_salt_sbp <- t.test(Mn_sbp ~ salt_group, data = salt_valid,
+                        var.equal = FALSE)
+
+cat("\n\nHYPOTHESIS TEST:\n")
+cat("H₀: μ_High = μ_Low (no difference in SBP)\n")
+cat("H₁: μ_High ≠ μ_Low (SBP differs)\n\n")
+cat(sprintf("t-statistic: %.4f\n", test_salt_sbp$statistic))
+cat(sprintf("df: %.2f\n", test_salt_sbp$parameter))
+cat(sprintf("p-value: %.4f\n", test_salt_sbp$p.value))
+cat(sprintf("95%% CI for difference: [%.2f, %.2f] mmHg\n",
+            test_salt_sbp$conf.int[1], test_salt_sbp$conf.int[2]))
+
+if (test_salt_sbp$p.value < 0.05) {
+  cat("\n✗ SIGNIFICANT difference in systolic BP by salt preference\n")
+} else {
+  cat("\n✓ NO significant difference in systolic BP by salt preference\n")
+}
+
+# DIASTOLIC BP - Salt
+cat("\n\n=== DIASTOLIC BLOOD PRESSURE vs SALT PREFERENCE ===\n\n")
+
+desc_salt_dbp <- salt_valid %>%
+  group_by(salt_group) %>%
+  summarise(
+    N = n(),
+    Mean_DBP = mean(Mn_dbp),
+    SD_DBP = sd(Mn_dbp),
+    SE_DBP = SD_DBP / sqrt(N),
+    .groups = "drop"
+  )
+
+print(kable(desc_salt_dbp, digits = 2,
+            caption = "Diastolic BP by Salt Preference (Median Split)"))
+
+test_salt_dbp <- t.test(Mn_dbp ~ salt_group, data = salt_valid,
+                        var.equal = FALSE)
+
+cat("\n\nt-statistic: %.4f\n", test_salt_dbp$statistic)
+cat(sprintf("p-value: %.4f\n", test_salt_dbp$p.value))
+cat(sprintf("95%% CI: [%.2f, %.2f] mmHg\n",
+            test_salt_dbp$conf.int[1], test_salt_dbp$conf.int[2]))
+
+if (test_salt_dbp$p.value < 0.05) {
+  cat("\n✗ SIGNIFICANT difference in diastolic BP by salt preference\n")
+} else {
+  cat("\n✓ NO significant difference in diastolic BP by salt preference\n")
+}
+```
+
+## 8.87b: Sugar-Taste Index (Median Split)
+
+```{r problem-8-87b-sugar}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.87b: SUGAR-TASTE INDEX - MEDIAN SPLIT\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+# Create median split for sugar index
+sugar_valid <- infantbp_indices %>%
+  filter(!is.na(sugar_index))
+
+sugar_median <- median(sugar_valid$sugar_index, na.rm = TRUE)
+
+sugar_valid <- sugar_valid %>%
+  mutate(
+    sugar_group = ifelse(sugar_index > sugar_median, "High", "Low"),
+    sugar_group = factor(sugar_group, levels = c("Low", "High"))
+  )
+
+cat(sprintf("Sugar Index Median: %.2f\n", sugar_median))
+cat("\nFrequency Distribution:\n")
+table(sugar_valid$sugar_group) %>%
+  kable(col.names = c("Sugar Group", "N"))
+
+# SYSTOLIC BP - Sugar
+cat("\n\n=== SYSTOLIC BLOOD PRESSURE vs SUGAR PREFERENCE ===\n\n")
+
+desc_sugar_sbp <- sugar_valid %>%
+  group_by(sugar_group) %>%
+  summarise(
+    N = n(),
+    Mean_SBP = mean(Mn_sbp),
+    SD_SBP = sd(Mn_sbp),
+    SE_SBP = SD_SBP / sqrt(N),
+    .groups = "drop"
+  )
+
+print(kable(desc_sugar_sbp, digits = 2,
+            caption = "Systolic BP by Sugar Preference (Median Split)"))
+
+test_sugar_sbp <- t.test(Mn_sbp ~ sugar_group, data = sugar_valid,
+                         var.equal = FALSE)
+
+cat("\n\nt-statistic: %.4f\n", test_sugar_sbp$statistic)
+cat(sprintf("p-value: %.4f\n", test_sugar_sbp$p.value))
+cat(sprintf("95%% CI: [%.2f, %.2f] mmHg\n",
+            test_sugar_sbp$conf.int[1], test_sugar_sbp$conf.int[2]))
+
+if (test_sugar_sbp$p.value < 0.05) {
+  cat("\n✗ SIGNIFICANT difference in systolic BP by sugar preference\n")
+} else {
+  cat("\n✓ NO significant difference in systolic BP by sugar preference\n")
+}
+
+# DIASTOLIC BP - Sugar
+cat("\n\n=== DIASTOLIC BLOOD PRESSURE vs SUGAR PREFERENCE ===\n\n")
+
+desc_sugar_dbp <- sugar_valid %>%
+  group_by(sugar_group) %>%
+  summarise(
+    N = n(),
+    Mean_DBP = mean(Mn_dbp),
+    SD_DBP = sd(Mn_dbp),
+    SE_DBP = SD_DBP / sqrt(N),
+    .groups = "drop"
+  )
+
+print(kable(desc_sugar_dbp, digits = 2,
+            caption = "Diastolic BP by Sugar Preference (Median Split)"))
+
+test_sugar_dbp <- t.test(Mn_dbp ~ sugar_group, data = sugar_valid,
+                         var.equal = FALSE)
+
+cat("\n\nt-statistic: %.4f\n", test_sugar_dbp$statistic)
+cat(sprintf("p-value: %.4f\n", test_sugar_dbp$p.value))
+cat(sprintf("95%% CI: [%.2f, %.2f] mmHg\n",
+            test_sugar_dbp$conf.int[1], test_sugar_dbp$conf.int[2]))
+
+if (test_sugar_dbp$p.value < 0.05) {
+  cat("\n✗ SIGNIFICANT difference in diastolic BP by sugar preference\n")
+} else {
+  cat("\n✓ NO significant difference in diastolic BP by sugar preference\n")
+}
+```
+
+---
+
+# Problem 8.88: Quintile Analysis (Extremes)
+
+## 8.88a: Salt-Taste Index (Quintiles)
+
+```{r problem-8-88a-salt-quintiles}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.88a: SALT-TASTE INDEX - QUINTILE ANALYSIS\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+# Create quintiles for salt index
+salt_quintiles <- salt_valid %>%
+  mutate(
+    salt_quintile = ntile(salt_index, 5),
+    salt_quintile = factor(salt_quintile,
+                          levels = 1:5,
+                          labels = c("Q1 (Lowest)", "Q2", "Q3", "Q4", "Q5 (Highest)"))
+  )
+
+cat("Quintile Distribution:\n")
+table(salt_quintiles$salt_quintile) %>%
+  kable(col.names = c("Quintile", "N"))
+
+# Extract extremes (Q1 vs Q5)
+salt_extremes <- salt_quintiles %>%
+  filter(salt_quintile %in% c("Q1 (Lowest)", "Q5 (Highest)")) %>%
+  mutate(
+    extreme_group = ifelse(salt_quintile == "Q1 (Lowest)", "Lowest", "Highest"),
+    extreme_group = factor(extreme_group, levels = c("Lowest", "Highest"))
+  )
+
+cat("\n\n=== COMPARING EXTREMES: Q1 (LOWEST) vs Q5 (HIGHEST) ===\n\n")
+
+# SYSTOLIC BP - Quintile extremes
+cat("SYSTOLIC BP - Salt Quintile Extremes:\n\n")
+
+desc_salt_quint_sbp <- salt_extremes %>%
+  group_by(extreme_group) %>%
+  summarise(
+    N = n(),
+    Mean_Salt = mean(salt_index),
+    Mean_SBP = mean(Mn_sbp),
+    SD_SBP = sd(Mn_sbp),
+    SE_SBP = SD_SBP / sqrt(N),
+    .groups = "drop"
+  )
+
+print(kable(desc_salt_quint_sbp, digits = 2,
+            caption = "Systolic BP: Lowest vs Highest Salt Quintile"))
+
+test_salt_quint_sbp <- t.test(Mn_sbp ~ extreme_group, data = salt_extremes,
+                               var.equal = FALSE)
+
+cat("\n\nt-statistic: %.4f\n", test_salt_quint_sbp$statistic)
+cat(sprintf("p-value: %.4f\n", test_salt_quint_sbp$p.value))
+cat(sprintf("95%% CI: [%.2f, %.2f] mmHg\n",
+            test_salt_quint_sbp$conf.int[1], test_salt_quint_sbp$conf.int[2]))
+
+if (test_salt_quint_sbp$p.value < 0.05) {
+  cat("\n✗ SIGNIFICANT difference between extremes\n")
+} else {
+  cat("\n✓ NO significant difference between extremes\n")
+}
+
+# DIASTOLIC BP - Quintile extremes
+cat("\n\nDIASTOLIC BP - Salt Quintile Extremes:\n\n")
+
+desc_salt_quint_dbp <- salt_extremes %>%
+  group_by(extreme_group) %>%
+  summarise(
+    N = n(),
+    Mean_DBP = mean(Mn_dbp),
+    SD_DBP = sd(Mn_dbp),
+    SE_DBP = SD_DBP / sqrt(N),
+    .groups = "drop"
+  )
+
+print(kable(desc_salt_quint_dbp, digits = 2,
+            caption = "Diastolic BP: Lowest vs Highest Salt Quintile"))
+
+test_salt_quint_dbp <- t.test(Mn_dbp ~ extreme_group, data = salt_extremes,
+                               var.equal = FALSE)
+
+cat("\n\nt-statistic: %.4f\n", test_salt_quint_dbp$statistic)
+cat(sprintf("p-value: %.4f\n", test_salt_quint_dbp$p.value))
+
+if (test_salt_quint_dbp$p.value < 0.05) {
+  cat("✗ SIGNIFICANT difference between extremes\n")
+} else {
+  cat("✓ NO significant difference between extremes\n")
+}
+```
+
+## 8.88b: Sugar-Taste Index (Quintiles)
+
+```{r problem-8-88b-sugar-quintiles}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.88b: SUGAR-TASTE INDEX - QUINTILE ANALYSIS\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+# Create quintiles for sugar index
+sugar_quintiles <- sugar_valid %>%
+  mutate(
+    sugar_quintile = ntile(sugar_index, 5),
+    sugar_quintile = factor(sugar_quintile,
+                           levels = 1:5,
+                           labels = c("Q1 (Lowest)", "Q2", "Q3", "Q4", "Q5 (Highest)"))
+  )
+
+cat("Quintile Distribution:\n")
+table(sugar_quintiles$sugar_quintile) %>%
+  kable(col.names = c("Quintile", "N"))
+
+# Extract extremes
+sugar_extremes <- sugar_quintiles %>%
+  filter(sugar_quintile %in% c("Q1 (Lowest)", "Q5 (Highest)")) %>%
+  mutate(
+    extreme_group = ifelse(sugar_quintile == "Q1 (Lowest)", "Lowest", "Highest"),
+    extreme_group = factor(extreme_group, levels = c("Lowest", "Highest"))
+  )
+
+cat("\n\n=== COMPARING EXTREMES: Q1 (LOWEST) vs Q5 (HIGHEST) ===\n\n")
+
+# SYSTOLIC BP
+cat("SYSTOLIC BP - Sugar Quintile Extremes:\n\n")
+
+desc_sugar_quint_sbp <- sugar_extremes %>%
+  group_by(extreme_group) %>%
+  summarise(
+    N = n(),
+    Mean_Sugar = mean(sugar_index),
+    Mean_SBP = mean(Mn_sbp),
+    SD_SBP = sd(Mn_sbp),
+    SE_SBP = SD_SBP / sqrt(N),
+    .groups = "drop"
+  )
+
+print(kable(desc_sugar_quint_sbp, digits = 2,
+            caption = "Systolic BP: Lowest vs Highest Sugar Quintile"))
+
+test_sugar_quint_sbp <- t.test(Mn_sbp ~ extreme_group, data = sugar_extremes,
+                                var.equal = FALSE)
+
+cat("\n\nt-statistic: %.4f\n", test_sugar_quint_sbp$statistic)
+cat(sprintf("p-value: %.4f\n", test_sugar_quint_sbp$p.value))
+
+if (test_sugar_quint_sbp$p.value < 0.05) {
+  cat("✗ SIGNIFICANT difference between extremes\n")
+} else {
+  cat("✓ NO significant difference between extremes\n")
+}
+
+# DIASTOLIC BP
+cat("\n\nDIASTOLIC BP - Sugar Quintile Extremes:\n\n")
+
+desc_sugar_quint_dbp <- sugar_extremes %>%
+  group_by(extreme_group) %>%
+  summarise(
+    N = n(),
+    Mean_DBP = mean(Mn_dbp),
+    SD_DBP = sd(Mn_dbp),
+    SE_DBP = SD_DBP / sqrt(N),
+    .groups = "drop"
+  )
+
+print(kable(desc_sugar_quint_dbp, digits = 2,
+            caption = "Diastolic BP: Lowest vs Highest Sugar Quintile"))
+
+test_sugar_quint_dbp <- t.test(Mn_dbp ~ extreme_group, data = sugar_extremes,
+                                var.equal = FALSE)
+
+cat("\n\nt-statistic: %.4f\n", test_sugar_quint_dbp$statistic)
+cat(sprintf("p-value: %.4f\n", test_sugar_quint_dbp$p.value))
+
+if (test_sugar_quint_dbp$p.value < 0.05) {
+  cat("✗ SIGNIFICANT difference between extremes\n")
+} else {
+  cat("✓ NO significant difference between extremes\n")
+}
+```
+
+---
+
+# Visualizations
+
+## Median Split Visualizations
+
+```{r viz-median, fig.height=10}
+# Systolic BP by groups
+p1 <- ggplot(salt_valid, aes(x = salt_group, y = Mn_sbp, fill = salt_group)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  labs(title = "Systolic BP by Salt Preference (Median Split)",
+       x = "Salt Preference", y = "Systolic BP (mmHg)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p2 <- ggplot(sugar_valid, aes(x = sugar_group, y = Mn_sbp, fill = sugar_group)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  labs(title = "Systolic BP by Sugar Preference (Median Split)",
+       x = "Sugar Preference", y = "Systolic BP (mmHg)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p3 <- ggplot(salt_valid, aes(x = salt_group, y = Mn_dbp, fill = salt_group)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  labs(title = "Diastolic BP by Salt Preference (Median Split)",
+       x = "Salt Preference", y = "Diastolic BP (mmHg)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p4 <- ggplot(sugar_valid, aes(x = sugar_group, y = Mn_dbp, fill = sugar_group)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  labs(title = "Diastolic BP by Sugar Preference (Median Split)",
+       x = "Sugar Preference", y = "Diastolic BP (mmHg)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+## Quintile Visualizations
+
+```{r viz-quintile, fig.height=10}
+# All quintiles
+p5 <- ggplot(salt_quintiles, aes(x = salt_quintile, y = Mn_sbp, fill = salt_quintile)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(title = "Systolic BP Across Salt Preference Quintiles",
+       x = "Salt Quintile", y = "Systolic BP (mmHg)") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+p6 <- ggplot(sugar_quintiles, aes(x = sugar_quintile, y = Mn_sbp, fill = sugar_quintile)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(title = "Systolic BP Across Sugar Preference Quintiles",
+       x = "Sugar Quintile", y = "Systolic BP (mmHg)") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Extremes only
+p7 <- ggplot(salt_extremes, aes(x = extreme_group, y = Mn_sbp, fill = extreme_group)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.4) +
+  labs(title = "Systolic BP: Salt Extremes (Q1 vs Q5)",
+       x = "Salt Quintile", y = "Systolic BP (mmHg)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p8 <- ggplot(sugar_extremes, aes(x = extreme_group, y = Mn_sbp, fill = extreme_group)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.4) +
+  labs(title = "Systolic BP: Sugar Extremes (Q1 vs Q5)",
+       x = "Sugar Quintile", y = "Systolic BP (mmHg)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+grid.arrange(p5, p6, p7, p8, ncol = 2)
+```
+
+---
+
+# Summary and Conclusions
+
+```{r summary}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("COMPREHENSIVE SUMMARY\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("PROBLEM 8.87 RESULTS (Median Split):\n\n")
+
+cat("Salt-Taste Index:\n")
+cat(sprintf("  Systolic BP:  p = %.4f %s\n", test_salt_sbp$p.value,
+            ifelse(test_salt_sbp$p.value < 0.05, "***", "ns")))
+cat(sprintf("  Diastolic BP: p = %.4f %s\n", test_salt_dbp$p.value,
+            ifelse(test_salt_dbp$p.value < 0.05, "***", "ns")))
+
+cat("\nSugar-Taste Index:\n")
+cat(sprintf("  Systolic BP:  p = %.4f %s\n", test_sugar_sbp$p.value,
+            ifelse(test_sugar_sbp$p.value < 0.05, "***", "ns")))
+cat(sprintf("  Diastolic BP: p = %.4f %s\n", test_sugar_dbp$p.value,
+            ifelse(test_sugar_dbp$p.value < 0.05, "***", "ns")))
+
+cat("\n\nPROBLEM 8.88 RESULTS (Quintile Extremes):\n\n")
+
+cat("Salt-Taste Index (Q1 vs Q5):\n")
+cat(sprintf("  Systolic BP:  p = %.4f %s\n", test_salt_quint_sbp$p.value,
+            ifelse(test_salt_quint_sbp$p.value < 0.05, "***", "ns")))
+cat(sprintf("  Diastolic BP: p = %.4f %s\n", test_salt_quint_dbp$p.value,
+            ifelse(test_salt_quint_dbp$p.value < 0.05, "***", "ns")))
+
+cat("\nSugar-Taste Index (Q1 vs Q5):\n")
+cat(sprintf("  Systolic BP:  p = %.4f %s\n", test_sugar_quint_sbp$p.value,
+            ifelse(test_sugar_quint_sbp$p.value < 0.05, "***", "ns")))
+cat(sprintf("  Diastolic BP: p = %.4f %s\n", test_sugar_quint_dbp$p.value,
+            ifelse(test_sugar_quint_dbp$p.value < 0.05, "***", "ns")))
+
+cat("\n\nOVERALL INTERPRETATION:\n\n")
+
+n_sig_median <- sum(c(test_salt_sbp$p.value, test_salt_dbp$p.value,
+                      test_sugar_sbp$p.value, test_sugar_dbp$p.value) < 0.05)
+
+n_sig_quintile <- sum(c(test_salt_quint_sbp$p.value, test_salt_quint_dbp$p.value,
+                        test_sugar_quint_sbp$p.value, test_sugar_quint_dbp$p.value) < 0.05)
+
+cat(sprintf("Median split: %d out of 4 tests significant\n", n_sig_median))
+cat(sprintf("Quintile extremes: %d out of 4 tests significant\n\n", n_sig_quintile))
+
+cat("RELATIONSHIP BETWEEN TASTE PREFERENCES AND BLOOD PRESSURE:\n\n")
+
+if (n_sig_median == 0 && n_sig_quintile == 0) {
+  cat("✓ NO strong evidence of relationship\n")
+  cat("  Neither median split nor quintile analysis showed consistent associations\n")
+} else if (n_sig_quintile > n_sig_median) {
+  cat("~ MODERATE evidence of relationship at extremes\n")
+  cat("  Quintile analysis (comparing extremes) revealed stronger associations\n")
+  cat("  This suggests a possible dose-response relationship\n")
+} else {
+  cat("~ SOME evidence of relationship\n")
+  cat("  Both median and quintile analyses showed some associations\n")
+}
+
+cat("\n\nMETHODOLOGICAL NOTES:\n")
+cat("- Median split: Provides simple dichotomization, may lose information\n")
+cat("- Quintile extremes: Maximizes contrast, better power to detect associations\n")
+cat("- Regression analysis (Chapter 11) would better model continuous relationships\n")
+cat("- ANOVA (Chapter 12) would allow comparison across all quintiles simultaneously\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

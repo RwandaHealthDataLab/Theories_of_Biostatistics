@@ -1,0 +1,789 @@
+---
+title: "Chapter 8: Additional Problems - 8.125-8.128"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Part I: Swiss Analgesic Study - Renal Disease (Problems 8.125-8.126)
+
+## Background
+
+### Study Design
+
+The **Swiss Analgesic Study** assessed the effect of phenacetin-containing analgesics on kidney function among women workers near Basel, Switzerland.
+
+**Study Groups:**
+- **High-NAPAP group (n=100):** High phenacetin intake
+- **Low-NAPAP group (n=100):** Moderate phenacetin intake
+- **Control group (n=100):** Low/no phenacetin intake
+
+**Study Timeline:**
+- Baseline: 1967-1968
+- Follow-ups: 1969, 1970, 1971, 1972, 1975, 1978
+
+**Key Outcome:** Serum creatinine level (mg/dL) - an important index of kidney function. Higher levels indicate worse kidney function.
+
+### Research Questions
+
+**Problem 8.125:** Do analgesic abusers have different serum-creatinine profiles at baseline?
+
+**Problem 8.126:** Do women with high phenacetin intake show greater change in serum-creatinine level compared to those with low intake over the study period?
+
+## Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+library(gridExtra)
+library(ggplot2)
+```
+
+## Data Import and Processing
+
+```{r data-import-swiss}
+# Read SWISS dataset
+swiss_data <- read.csv("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/SWISS.DAT.txt",
+                       check.names = FALSE,
+                       stringsAsFactors = FALSE,
+                       na.strings = c("", "NA", "9.99", "99.99"))
+
+# Remove quotes from column names
+colnames(swiss_data) <- gsub("'", "", colnames(swiss_data))
+
+cat("Dataset Structure:\n")
+cat(sprintf("Total participants: %d\n", nrow(swiss_data)))
+cat(sprintf("Total variables: %d\n\n", ncol(swiss_data)))
+
+cat("Key Variables:\n")
+cat("- Id: Participant identifier\n")
+cat("- age: Age at baseline\n")
+cat("- group: Study group (1=High-NAPAP, 2=Low-NAPAP, 3=Control)\n")
+cat("- creat_68: Serum creatinine at baseline (1968)\n")
+cat("- creat_69 through creat_78: Follow-up measurements\n")
+cat("- Missing value code: 9.99\n\n")
+
+# Replace 9.99 with NA
+swiss_clean <- swiss_data %>%
+  mutate(across(starts_with("creat_"), ~ifelse(. >= 9.99, NA, .)))
+
+# Create group labels
+swiss_clean <- swiss_clean %>%
+  mutate(
+    group_label = factor(group,
+                        levels = c(1, 2, 3),
+                        labels = c("High-NAPAP", "Low-NAPAP", "Control"))
+  )
+
+# Summary by group
+cat("Sample Sizes by Group:\n")
+group_counts <- swiss_clean %>%
+  group_by(group, group_label) %>%
+  summarise(N = n(), .groups = "drop")
+
+print(kable(group_counts, col.names = c("Group", "Group Label", "N")))
+
+cat("\n\nAge Summary by Group:\n")
+age_summary <- swiss_clean %>%
+  group_by(group_label) %>%
+  summarise(
+    N = n(),
+    Mean_Age = mean(age, na.rm = TRUE),
+    SD_Age = sd(age, na.rm = TRUE),
+    Min_Age = min(age, na.rm = TRUE),
+    Max_Age = max(age, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+print(kable(age_summary, digits = 1))
+```
+
+---
+
+# Problem 8.125: Baseline Serum Creatinine Comparison
+
+```{r problem-8-125}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.125: BASELINE SERUM CREATININE PROFILES\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("HYPOTHESIS: Analgesic abusers have different serum-creatinine at baseline\n\n")
+
+# Extract baseline creatinine (1968)
+baseline_data <- swiss_clean %>%
+  filter(!is.na(creat_68)) %>%
+  select(Id, age, group, group_label, creat_68)
+
+cat(sprintf("Participants with baseline data: %d\n\n", nrow(baseline_data)))
+
+# Descriptive statistics by group
+baseline_summary <- baseline_data %>%
+  group_by(group_label) %>%
+  summarise(
+    N = n(),
+    Mean_Creat = mean(creat_68, na.rm = TRUE),
+    SD_Creat = sd(creat_68, na.rm = TRUE),
+    SE_Creat = SD_Creat / sqrt(N),
+    Median_Creat = median(creat_68, na.rm = TRUE),
+    Q1 = quantile(creat_68, 0.25, na.rm = TRUE),
+    Q3 = quantile(creat_68, 0.75, na.rm = TRUE),
+    Min_Creat = min(creat_68, na.rm = TRUE),
+    Max_Creat = max(creat_68, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cat("BASELINE SERUM CREATININE BY GROUP (1968):\n\n")
+print(kable(baseline_summary, digits = 3,
+            caption = "Baseline Serum Creatinine Summary Statistics (mg/dL)"))
+
+## COMPARISON 1: High-NAPAP vs Control
+cat("\n\n", paste(rep("-", 70), collapse=""), "\n")
+cat("COMPARISON 1: High-NAPAP vs Control\n")
+cat(paste(rep("-", 70), collapse=""), "\n\n")
+
+high_baseline <- baseline_data %>% filter(group == 1) %>% pull(creat_68)
+control_baseline <- baseline_data %>% filter(group == 3) %>% pull(creat_68)
+
+cat("HYPOTHESIS TEST:\n")
+cat("H₀: μ_High = μ_Control (no difference in baseline creatinine)\n")
+cat("H₁: μ_High ≠ μ_Control (baseline creatinine differs)\n")
+cat("Test: Two-sample t-test (Welch's)\n\n")
+
+test_high_control <- t.test(high_baseline, control_baseline,
+                            var.equal = FALSE,
+                            alternative = "two.sided")
+
+cat(sprintf("High-NAPAP: Mean = %.3f mg/dL (SD = %.3f, n = %d)\n",
+            mean(high_baseline), sd(high_baseline), length(high_baseline)))
+cat(sprintf("Control: Mean = %.3f mg/dL (SD = %.3f, n = %d)\n",
+            mean(control_baseline), sd(control_baseline), length(control_baseline)))
+cat(sprintf("\nt-statistic: %.4f\n", test_high_control$statistic))
+cat(sprintf("df: %.2f\n", test_high_control$parameter))
+cat(sprintf("p-value: %.4f\n", test_high_control$p.value))
+cat(sprintf("95%% CI for difference: [%.3f, %.3f] mg/dL\n",
+            test_high_control$conf.int[1], test_high_control$conf.int[2]))
+
+if (test_high_control$p.value < 0.05) {
+  cat("\n✓ SIGNIFICANT difference at α = 0.05\n")
+  if (mean(high_baseline) > mean(control_baseline)) {
+    cat("   High-NAPAP group has HIGHER baseline creatinine (worse kidney function)\n")
+  } else {
+    cat("   High-NAPAP group has LOWER baseline creatinine\n")
+  }
+} else {
+  cat("\n✗ NO significant difference at α = 0.05\n")
+}
+
+## COMPARISON 2: Low-NAPAP vs Control
+cat("\n\n", paste(rep("-", 70), collapse=""), "\n")
+cat("COMPARISON 2: Low-NAPAP vs Control\n")
+cat(paste(rep("-", 70), collapse=""), "\n\n")
+
+low_baseline <- baseline_data %>% filter(group == 2) %>% pull(creat_68)
+
+test_low_control <- t.test(low_baseline, control_baseline,
+                           var.equal = FALSE,
+                           alternative = "two.sided")
+
+cat(sprintf("Low-NAPAP: Mean = %.3f mg/dL (SD = %.3f, n = %d)\n",
+            mean(low_baseline), sd(low_baseline), length(low_baseline)))
+cat(sprintf("Control: Mean = %.3f mg/dL (SD = %.3f, n = %d)\n",
+            mean(control_baseline), sd(control_baseline), length(control_baseline)))
+cat(sprintf("\nt-statistic: %.4f\n", test_low_control$statistic))
+cat(sprintf("df: %.2f\n", test_low_control$parameter))
+cat(sprintf("p-value: %.4f\n", test_low_control$p.value))
+cat(sprintf("95%% CI for difference: [%.3f, %.3f] mg/dL\n",
+            test_low_control$conf.int[1], test_low_control$conf.int[2]))
+
+if (test_low_control$p.value < 0.05) {
+  cat("\n✓ SIGNIFICANT difference at α = 0.05\n")
+} else {
+  cat("\n✗ NO significant difference at α = 0.05\n")
+}
+
+## COMPARISON 3: High-NAPAP vs Low-NAPAP
+cat("\n\n", paste(rep("-", 70), collapse=""), "\n")
+cat("COMPARISON 3: High-NAPAP vs Low-NAPAP\n")
+cat(paste(rep("-", 70), collapse=""), "\n\n")
+
+test_high_low <- t.test(high_baseline, low_baseline,
+                        var.equal = FALSE,
+                        alternative = "two.sided")
+
+cat(sprintf("t-statistic: %.4f\n", test_high_low$statistic))
+cat(sprintf("p-value: %.4f\n", test_high_low$p.value))
+
+if (test_high_low$p.value < 0.05) {
+  cat("\n✓ SIGNIFICANT difference at α = 0.05\n")
+} else {
+  cat("\n✗ NO significant difference at α = 0.05\n")
+}
+
+cat("\n\n=== OVERALL CONCLUSION FOR PROBLEM 8.125 ===\n")
+cat(sprintf("High vs Control: p = %.4f\n", test_high_control$p.value))
+cat(sprintf("Low vs Control: p = %.4f\n", test_low_control$p.value))
+cat(sprintf("High vs Low: p = %.4f\n", test_high_low$p.value))
+```
+
+## Visualization: Baseline Creatinine
+
+```{r viz-baseline, fig.height=8}
+# Box plot
+p1 <- ggplot(baseline_data, aes(x = group_label, y = creat_68, fill = group_label)) +
+  geom_boxplot(alpha = 0.7, outlier.colour = "red", outlier.size = 3) +
+  geom_jitter(width = 0.2, alpha = 0.4) +
+  labs(title = "Baseline Serum Creatinine by Group (1968)",
+       x = "Study Group", y = "Serum Creatinine (mg/dL)",
+       subtitle = paste0("n = ", nrow(baseline_data), " participants")) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Histogram by group
+p2 <- ggplot(baseline_data, aes(x = creat_68, fill = group_label)) +
+  geom_histogram(bins = 20, alpha = 0.6, position = "identity", color = "black") +
+  facet_wrap(~group_label, ncol = 1) +
+  labs(title = "Distribution of Baseline Creatinine by Group",
+       x = "Serum Creatinine (mg/dL)", y = "Frequency") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Display plots
+grid.arrange(p1, p2, ncol = 2)
+```
+
+---
+
+# Problem 8.126: Longitudinal Change in Serum Creatinine
+
+```{r problem-8-126}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.126: CHANGE IN SERUM CREATININE OVER TIME\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("HYPOTHESIS: High phenacetin intake → greater increase in creatinine\n")
+cat("APPROACH: Compare change from baseline (1968) to last visit (1978)\n\n")
+
+# Calculate change from baseline to last follow-up
+change_data <- swiss_clean %>%
+  filter(!is.na(creat_68) & !is.na(creat_78)) %>%
+  mutate(
+    baseline = creat_68,
+    followup = creat_78,
+    change = creat_78 - creat_68,
+    pct_change = 100 * (creat_78 - creat_68) / creat_68,
+    years_followup = 10  # 1968 to 1978
+  ) %>%
+  select(Id, age, group, group_label, baseline, followup, change, pct_change)
+
+cat(sprintf("Participants with both baseline and final data: %d\n\n", nrow(change_data)))
+
+# Summary statistics for change
+change_summary <- change_data %>%
+  group_by(group_label) %>%
+  summarise(
+    N = n(),
+    Mean_Baseline = mean(baseline, na.rm = TRUE),
+    Mean_Followup = mean(followup, na.rm = TRUE),
+    Mean_Change = mean(change, na.rm = TRUE),
+    SD_Change = sd(change, na.rm = TRUE),
+    SE_Change = SD_Change / sqrt(N),
+    Median_Change = median(change, na.rm = TRUE),
+    Pct_Increased = 100 * sum(change > 0) / N,
+    .groups = "drop"
+  )
+
+cat("CHANGE IN SERUM CREATININE (1968 to 1978):\n\n")
+print(kable(change_summary, digits = 3,
+            col.names = c("Group", "N", "Baseline Mean", "1978 Mean",
+                         "Mean Change", "SD", "SE", "Median Change", "% Increased"),
+            caption = "Summary of 10-Year Change in Serum Creatinine (mg/dL)"))
+
+## COMPARISON 1: High-NAPAP vs Control (Change)
+cat("\n\n", paste(rep("-", 70), collapse=""), "\n")
+cat("COMPARISON 1: Change in High-NAPAP vs Control\n")
+cat(paste(rep("-", 70), collapse=""), "\n\n")
+
+high_change <- change_data %>% filter(group == 1) %>% pull(change)
+control_change <- change_data %>% filter(group == 3) %>% pull(change)
+
+cat("HYPOTHESIS TEST:\n")
+cat("H₀: μ_change_High = μ_change_Control (equal change in creatinine)\n")
+cat("H₁: μ_change_High ≠ μ_change_Control (different change)\n")
+cat("Test: Two-sample t-test (Welch's)\n\n")
+
+test_change_high_control <- t.test(high_change, control_change,
+                                   var.equal = FALSE,
+                                   alternative = "two.sided")
+
+cat(sprintf("High-NAPAP change: Mean = %.3f mg/dL (SD = %.3f, n = %d)\n",
+            mean(high_change), sd(high_change), length(high_change)))
+cat(sprintf("Control change: Mean = %.3f mg/dL (SD = %.3f, n = %d)\n",
+            mean(control_change), sd(control_change), length(control_change)))
+cat(sprintf("\nt-statistic: %.4f\n", test_change_high_control$statistic))
+cat(sprintf("df: %.2f\n", test_change_high_control$parameter))
+cat(sprintf("p-value: %.4f\n", test_change_high_control$p.value))
+cat(sprintf("95%% CI for difference in change: [%.3f, %.3f] mg/dL\n",
+            test_change_high_control$conf.int[1], test_change_high_control$conf.int[2]))
+
+if (test_change_high_control$p.value < 0.05) {
+  cat("\n✓ SIGNIFICANT difference in change at α = 0.05\n")
+  if (mean(high_change) > mean(control_change)) {
+    cat("   High-NAPAP group shows GREATER increase in creatinine\n")
+    cat("   This suggests WORSE kidney function decline with high phenacetin intake\n")
+  } else {
+    cat("   High-NAPAP group shows SMALLER increase in creatinine\n")
+  }
+} else {
+  cat("\n✗ NO significant difference in change at α = 0.05\n")
+}
+
+## COMPARISON 2: Low-NAPAP vs Control (Change)
+cat("\n\n", paste(rep("-", 70), collapse=""), "\n")
+cat("COMPARISON 2: Change in Low-NAPAP vs Control\n")
+cat(paste(rep("-", 70), collapse=""), "\n\n")
+
+low_change <- change_data %>% filter(group == 2) %>% pull(change)
+
+test_change_low_control <- t.test(low_change, control_change,
+                                  var.equal = FALSE,
+                                  alternative = "two.sided")
+
+cat(sprintf("Low-NAPAP change: Mean = %.3f mg/dL (SD = %.3f, n = %d)\n",
+            mean(low_change), sd(low_change), length(low_change)))
+cat(sprintf("\nt-statistic: %.4f\n", test_change_low_control$statistic))
+cat(sprintf("p-value: %.4f\n", test_change_low_control$p.value))
+
+if (test_change_low_control$p.value < 0.05) {
+  cat("\n✓ SIGNIFICANT difference in change at α = 0.05\n")
+} else {
+  cat("\n✗ NO significant difference in change at α = 0.05\n")
+}
+
+## COMPARISON 3: High-NAPAP vs Low-NAPAP (Change)
+cat("\n\n", paste(rep("-", 70), collapse=""), "\n")
+cat("COMPARISON 3: Change in High-NAPAP vs Low-NAPAP\n")
+cat(paste(rep("-", 70), collapse=""), "\n\n")
+
+test_change_high_low <- t.test(high_change, low_change,
+                               var.equal = FALSE,
+                               alternative = "two.sided")
+
+cat(sprintf("t-statistic: %.4f\n", test_change_high_low$statistic))
+cat(sprintf("p-value: %.4f\n", test_change_high_low$p.value))
+
+if (test_change_high_low$p.value < 0.05) {
+  cat("\n✓ SIGNIFICANT difference in change at α = 0.05\n")
+  cat("   This suggests dose-response relationship with phenacetin\n")
+} else {
+  cat("\n✗ NO significant difference in change at α = 0.05\n")
+}
+
+cat("\n\n=== OVERALL CONCLUSION FOR PROBLEM 8.126 ===\n")
+cat(sprintf("High vs Control (change): p = %.4f\n", test_change_high_control$p.value))
+cat(sprintf("Low vs Control (change): p = %.4f\n", test_change_low_control$p.value))
+cat(sprintf("High vs Low (change): p = %.4f\n", test_change_high_low$p.value))
+
+# Effect size
+cohens_d_change <- (mean(high_change) - mean(control_change)) /
+  sqrt(((length(high_change)-1)*var(high_change) + (length(control_change)-1)*var(control_change)) /
+       (length(high_change) + length(control_change) - 2))
+
+cat(sprintf("\nEffect size (High vs Control change): Cohen's d = %.3f\n", cohens_d_change))
+```
+
+## Visualization: Change in Creatinine
+
+```{r viz-change, fig.height=10}
+# Box plot of change
+p3 <- ggplot(change_data, aes(x = group_label, y = change, fill = group_label)) +
+  geom_boxplot(alpha = 0.7, outlier.colour = "red", outlier.size = 3) +
+  geom_jitter(width = 0.2, alpha = 0.4) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Change in Serum Creatinine (1968 to 1978)",
+       x = "Study Group", y = "Change in Creatinine (mg/dL)",
+       subtitle = "Positive values indicate worsening kidney function") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Before-After plot
+before_after <- change_data %>%
+  pivot_longer(cols = c(baseline, followup),
+               names_to = "timepoint",
+               values_to = "creatinine") %>%
+  mutate(timepoint = factor(timepoint, levels = c("baseline", "followup"),
+                            labels = c("1968 (Baseline)", "1978 (10-year)")))
+
+p4 <- ggplot(before_after, aes(x = timepoint, y = creatinine, group = Id)) +
+  geom_line(alpha = 0.2) +
+  geom_point(aes(color = group_label), alpha = 0.5) +
+  facet_wrap(~group_label, ncol = 1) +
+  labs(title = "Individual Trajectories: Baseline to 10-Year Follow-up",
+       x = "Time Point", y = "Serum Creatinine (mg/dL)",
+       color = "Group") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Mean trajectories with error bars
+mean_trajectories <- before_after %>%
+  group_by(group_label, timepoint) %>%
+  summarise(
+    Mean = mean(creatinine, na.rm = TRUE),
+    SE = sd(creatinine, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"
+  )
+
+p5 <- ggplot(mean_trajectories, aes(x = timepoint, y = Mean, color = group_label, group = group_label)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.1) +
+  labs(title = "Mean Serum Creatinine Trajectories by Group",
+       x = "Time Point", y = "Mean Serum Creatinine (mg/dL)",
+       color = "Study Group") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# Display plots
+grid.arrange(p3, p4, ncol = 2)
+print(p5)
+```
+
+---
+
+# Part II: Smoking Cessation Power Analysis (Problems 8.127-8.128)
+
+## Background
+
+### Study Design: School-Based Smoking Intervention
+
+A smoking-cessation intervention study is planned among teenage smokers in 4 high schools.
+
+**Groups:**
+- **Active intervention (2 schools):** Psychologist-led program
+- **Control (2 schools):** Pamphlets only
+
+**Study Parameters:**
+- Duration: 1 year
+- Baseline smoking: Mean = 30 cigarettes/day, SD = 5
+- After 1 year SD: 7 cigarettes/day
+- Correlation between baseline and 1-year: r = 0.80
+
+**Hypothesized Changes:**
+- Active intervention: -5 cigarettes/day (reduction)
+- Control: +2 cigarettes/day (increase)
+- Expected difference: 7 cigarettes/day
+
+### Research Questions
+
+**Problem 8.127:** What is the power of the study with current sample sizes using α = 0.05 (two-sided)?
+
+**Problem 8.128:** How many participants needed in each group for 80% power with α = 0.05 (two-sided)?
+
+## Problem 8.127: Calculate Power
+
+```{r problem-8-127}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.127: POWER CALCULATION\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+# Given parameters
+mu0_baseline <- 30  # Mean at baseline (both groups)
+sd0 <- 5            # SD at baseline
+sd1 <- 7            # SD after 1 year
+r <- 0.80           # Correlation baseline to 1-year
+
+# Expected changes
+delta_active <- -5   # Active intervention change
+delta_control <- 2   # Control group change
+
+# Expected means after 1 year
+mu1_active <- mu0_baseline + delta_active    # 25
+mu1_control <- mu0_baseline + delta_control  # 32
+
+# Expected difference
+expected_diff <- mu1_active - mu1_control    # -7
+
+cat("STUDY PARAMETERS:\n")
+cat(sprintf("Baseline mean (both groups): %.0f cigarettes/day\n", mu0_baseline))
+cat(sprintf("Baseline SD: %.0f cigarettes/day\n", sd0))
+cat(sprintf("1-year SD: %.0f cigarettes/day\n", sd1))
+cat(sprintf("Correlation (baseline to 1-year): %.2f\n\n", r))
+
+cat("EXPECTED CHANGES:\n")
+cat(sprintf("Active intervention: %+.0f cigarettes/day\n", delta_active))
+cat(sprintf("Control: %+.0f cigarettes/day\n", delta_control))
+cat(sprintf("Expected 1-year mean (active): %.0f cigarettes/day\n", mu1_active))
+cat(sprintf("Expected 1-year mean (control): %.0f cigarettes/day\n", mu1_control))
+cat(sprintf("Expected difference: %.0f cigarettes/day\n\n", expected_diff))
+
+# For a study comparing change scores or using ANCOVA
+# Variance of change = var(Y1) + var(Y0) - 2*r*sd(Y1)*sd(Y0)
+var_change <- sd1^2 + sd0^2 - 2*r*sd1*sd0
+sd_change <- sqrt(var_change)
+
+cat("VARIANCE CALCULATIONS:\n")
+cat(sprintf("Variance of change: %.3f\n", var_change))
+cat(sprintf("SD of change: %.3f cigarettes/day\n\n", sd_change))
+
+# Assume current sample sizes from problem context
+# The problem doesn't specify, so we need to check if mentioned in text
+# Let's assume n1 = n2 = 50 per group as a reasonable school size
+# (User should adjust if different sample size is mentioned)
+
+n_per_group <- 50  # ADJUST THIS based on actual study design
+
+cat("ASSUMED SAMPLE SIZE (adjust if different in problem):\n")
+cat(sprintf("n per group: %d\n\n", n_per_group))
+
+# Standard error for difference in means
+se_diff <- sd_change * sqrt(2/n_per_group)
+
+# Effect size (standardized difference)
+effect_size <- abs(expected_diff) / sd_change
+
+cat("EFFECT SIZE CALCULATION:\n")
+cat(sprintf("SE of difference: %.3f\n", se_diff))
+cat(sprintf("Standardized effect size (d): %.3f\n\n", effect_size))
+
+# Power calculation for two-sample t-test
+alpha <- 0.05
+z_alpha_2 <- qnorm(1 - alpha/2)  # Two-sided test
+
+# Non-centrality parameter
+ncp <- effect_size * sqrt(n_per_group/2)
+
+# Power = P(reject H0 | H1 is true)
+# For two-sided test with equal sample sizes
+critical_value <- z_alpha_2
+power <- pnorm(ncp - critical_value) + pnorm(-ncp - critical_value)
+
+cat("POWER CALCULATION:\n")
+cat(sprintf("Significance level (α): %.3f (two-sided)\n", alpha))
+cat(sprintf("Critical z-value: %.3f\n", z_alpha_2))
+cat(sprintf("Non-centrality parameter: %.3f\n", ncp))
+cat(sprintf("\nPOWER: %.4f (%.1f%%)\n\n", power, 100*power))
+
+# Alternative using pwr package (if available)
+# library(pwr)
+# pwr_result <- pwr.t.test(n = n_per_group, d = effect_size,
+#                          sig.level = alpha, type = "two.sample")
+
+cat("=== ANSWER TO PROBLEM 8.127 ===\n")
+cat(sprintf("With n = %d per group, the study has approximately %.1f%% power\n",
+            n_per_group, 100*power))
+cat(sprintf("to detect a difference of %.0f cigarettes/day at α = 0.05 (two-sided)\n",
+            abs(expected_diff)))
+
+if (power >= 0.80) {
+  cat("\n✓ The study has ADEQUATE power (≥80%)\n")
+} else {
+  cat("\n✗ The study has INADEQUATE power (<80%)\n")
+  cat("   Consider increasing sample size.\n")
+}
+```
+
+---
+
+# Problem 8.128: Sample Size for 80% Power
+
+```{r problem-8-128}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.128: SAMPLE SIZE FOR 80% POWER\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("GOAL: Determine sample size needed for 80% power\n")
+cat("Test: Two-sided, α = 0.05\n\n")
+
+# Target power
+target_power <- 0.80
+z_beta <- qnorm(target_power)  # For 80% power
+
+cat("PARAMETERS:\n")
+cat(sprintf("Target power: %.0f%%\n", 100*target_power))
+cat(sprintf("Significance level: %.3f (two-sided)\n", alpha))
+cat(sprintf("Expected difference: %.0f cigarettes/day\n", abs(expected_diff)))
+cat(sprintf("SD of change: %.3f cigarettes/day\n\n", sd_change))
+
+# Sample size formula for two-sample t-test
+# n = 2 * ((Z_α/2 + Z_β)^2) * (σ^2 / δ^2)
+# where δ is the true difference and σ is the common SD
+
+numerator <- 2 * (z_alpha_2 + z_beta)^2 * sd_change^2
+denominator <- expected_diff^2
+
+n_required <- ceiling(numerator / denominator)
+
+cat("SAMPLE SIZE CALCULATION:\n")
+cat(sprintf("Formula: n = 2 × (Z_α/2 + Z_β)² × σ² / δ²\n"))
+cat(sprintf("Z_α/2 (for α=0.05, two-sided): %.3f\n", z_alpha_2))
+cat(sprintf("Z_β (for power=0.80): %.3f\n", z_beta))
+cat(sprintf("\nn = 2 × (%.3f + %.3f)² × %.3f² / %.0f²\n",
+            z_alpha_2, z_beta, sd_change, abs(expected_diff)))
+cat(sprintf("n = %.1f\n", numerator / denominator))
+cat(sprintf("\n=== REQUIRED SAMPLE SIZE PER GROUP: %d ===\n", n_required))
+cat(sprintf("Total sample size (both groups): %d\n\n", 2*n_required))
+
+# Verify power with calculated sample size
+ncp_verify <- effect_size * sqrt(n_required/2)
+power_verify <- pnorm(ncp_verify - critical_value) + pnorm(-ncp_verify - critical_value)
+
+cat("VERIFICATION:\n")
+cat(sprintf("With n = %d per group:\n", n_required))
+cat(sprintf("  Calculated power: %.4f (%.1f%%)\n", power_verify, 100*power_verify))
+
+if (power_verify >= target_power) {
+  cat("  ✓ Achieves target power\n")
+} else {
+  cat("  Note: Slight difference due to rounding\n")
+}
+
+cat("\n=== ANSWER TO PROBLEM 8.128 ===\n")
+cat(sprintf("Enroll %d participants per group\n", n_required))
+cat(sprintf("(Total: %d participants across both intervention groups)\n", 2*n_required))
+cat(sprintf("to achieve 80%% power at α = 0.05 (two-sided)\n"))
+```
+
+## Sample Size Sensitivity Analysis
+
+```{r sensitivity-analysis, fig.height=8}
+cat("\n\n=== SENSITIVITY ANALYSIS ===\n\n")
+
+# Create power curve
+sample_sizes <- seq(10, 150, by = 5)
+powers <- sapply(sample_sizes, function(n) {
+  ncp_temp <- effect_size * sqrt(n/2)
+  pnorm(ncp_temp - z_alpha_2) + pnorm(-ncp_temp - z_alpha_2)
+})
+
+power_data <- data.frame(
+  n = sample_sizes,
+  power = powers
+)
+
+# Power curve
+p_power <- ggplot(power_data, aes(x = n, y = power)) +
+  geom_line(color = "blue", size = 1.2) +
+  geom_hline(yintercept = 0.80, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = n_required, linetype = "dashed", color = "darkgreen") +
+  annotate("text", x = n_required + 15, y = 0.85,
+           label = paste0("n = ", n_required, "\nfor 80% power"),
+           color = "darkgreen", size = 4) +
+  labs(title = "Power Curve for Smoking Cessation Study",
+       x = "Sample Size per Group (n)",
+       y = "Statistical Power",
+       subtitle = paste0("Two-sided test, α = 0.05, Expected difference = ",
+                        abs(expected_diff), " cigarettes/day")) +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.1),
+                     labels = scales::percent) +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold"))
+
+# Effect size sensitivity
+effect_sizes <- seq(0.2, 1.5, by = 0.05)
+n_for_80_power <- sapply(effect_sizes, function(d) {
+  ceiling(2 * (z_alpha_2 + z_beta)^2 * sd_change^2 / (d * sd_change)^2)
+})
+
+effect_data <- data.frame(
+  effect_size = effect_sizes,
+  n_required = n_for_80_power
+)
+
+p_effect <- ggplot(effect_data, aes(x = effect_size, y = n_required)) +
+  geom_line(color = "purple", size = 1.2) +
+  geom_vline(xintercept = effect_size, linetype = "dashed", color = "red") +
+  geom_hline(yintercept = n_required, linetype = "dashed", color = "darkgreen") +
+  annotate("point", x = effect_size, y = n_required,
+           color = "red", size = 4) +
+  labs(title = "Sample Size vs. Effect Size",
+       x = "Standardized Effect Size (Cohen's d)",
+       y = "Required Sample Size per Group",
+       subtitle = "For 80% power, two-sided α = 0.05") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold"))
+
+# Display plots
+print(p_power)
+print(p_effect)
+
+# Summary table for different power levels
+power_levels <- c(0.70, 0.75, 0.80, 0.85, 0.90, 0.95)
+sample_sizes_table <- data.frame(
+  Power = paste0(100*power_levels, "%"),
+  n_per_group = sapply(power_levels, function(pwr) {
+    z_b <- qnorm(pwr)
+    ceiling(2 * (z_alpha_2 + z_b)^2 * sd_change^2 / expected_diff^2)
+  })
+)
+
+sample_sizes_table$total_n <- 2 * sample_sizes_table$n_per_group
+
+cat("\nSample Size Requirements for Different Power Levels:\n")
+print(kable(sample_sizes_table,
+            col.names = c("Target Power", "n per Group", "Total n"),
+            caption = "Sample Size for Various Power Levels (α = 0.05, two-sided)"))
+```
+
+---
+
+# Overall Summary
+
+```{r overall-summary-swiss}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("CHAPTER 8 ANALYSIS SUMMARY\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("PART I - SWISS ANALGESIC STUDY (Problems 8.125-8.126):\n")
+cat(sprintf("  Sample: %d women in 3 groups\n", nrow(swiss_clean)))
+cat(sprintf("  Follow-up: 10 years (1968-1978)\n"))
+cat(sprintf("  Outcome: Serum creatinine (kidney function marker)\n\n"))
+
+cat("  Problem 8.125 - Baseline Comparison:\n")
+cat(sprintf("    High vs Control: p = %.4f\n", test_high_control$p.value))
+cat(sprintf("    Low vs Control: p = %.4f\n", test_low_control$p.value))
+cat(sprintf("    High vs Low: p = %.4f\n\n", test_high_low$p.value))
+
+cat("  Problem 8.126 - Change Over Time:\n")
+cat(sprintf("    High vs Control (change): p = %.4f\n", test_change_high_control$p.value))
+cat(sprintf("    Low vs Control (change): p = %.4f\n", test_change_low_control$p.value))
+cat(sprintf("    High vs Low (change): p = %.4f\n", test_change_high_low$p.value))
+cat(sprintf("    Effect size (Cohen's d): %.3f\n\n", cohens_d_change))
+
+cat("PART II - SMOKING CESSATION STUDY (Problems 8.127-8.128):\n")
+cat(sprintf("  Design: School-based intervention\n"))
+cat(sprintf("  Expected difference: %.0f cigarettes/day\n", abs(expected_diff)))
+cat(sprintf("  SD of change: %.3f cigarettes/day\n\n", sd_change))
+
+cat(sprintf("  Problem 8.127 - Power with n = %d per group:\n", n_per_group))
+cat(sprintf("    Power: %.1f%%\n\n", 100*power))
+
+cat(sprintf("  Problem 8.128 - Sample Size for 80%% power:\n"))
+cat(sprintf("    Required n per group: %d\n", n_required))
+cat(sprintf("    Total required n: %d\n\n", 2*n_required))
+
+cat("KEY METHODOLOGICAL POINTS:\n")
+cat("- Two-sample t-tests for comparing independent groups\n")
+cat("- Longitudinal analysis using change scores\n")
+cat("- Power analysis for two-sample comparisons\n")
+cat("- Sample size calculation using normal approximation\n")
+cat("- Correlation affects variance of change scores\n")
+cat("- Effect size standardization (Cohen's d)\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

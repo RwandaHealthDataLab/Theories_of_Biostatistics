@@ -1,0 +1,1251 @@
+---
+title: "Chapter 8: Hypothesis Testing - Problems 8.89-8.92, 8.94-8.96"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Part I: Tennis Elbow Treatment Study (Problems 8.89-8.92)
+
+## Background
+
+### Study Design: Cross-Over Trial
+
+This study examines the effectiveness of **Motrin (ibuprofen)** versus **placebo** for treating tennis elbow pain among 87 participants using a **crossover design**.
+
+**Treatment Schedule:**
+- **Group A:** Motrin (3 weeks) → Washout (2 weeks) → Placebo (3 weeks)
+- **Group B:** Placebo (3 weeks) → Washout (2 weeks) → Motrin (3 weeks)
+
+**Pain Assessment Scale (1-6):**
+- 1 = Worse than baseline
+- 6 = Completely improved
+
+**Four Pain Measurements:**
+1. During maximum activity
+2. 12 hours following maximum activity
+3. During the average day
+4. Overall impression of drug efficacy
+
+### Research Questions
+
+**Problems 8.89-8.92:** For each of the four pain measures, compare the degree of pain while on Motrin versus placebo using **paired t-tests** (since each participant receives both treatments).
+
+## Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+library(gridExtra)
+library(ggplot2)
+```
+
+## Data Import and Processing
+
+```{r data-import-tennis}
+# Read TENNIS2 dataset
+tennis_data <- read.csv("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/TENNIS2.DAT.txt",
+                        check.names = FALSE,
+                        stringsAsFactors = FALSE,
+                        na.strings = c("", "NA", "9", "99"))
+
+# Remove quotes from column names
+colnames(tennis_data) <- gsub("'", "", colnames(tennis_data))
+
+cat("Dataset Structure:\n")
+cat(sprintf("Total participants: %d\n", nrow(tennis_data)))
+cat(sprintf("Total variables: %d\n\n", ncol(tennis_data)))
+
+# Display variable names
+cat("Variables:\n")
+cat(paste(colnames(tennis_data), collapse = ", "))
+cat("\n\n")
+
+# Data structure explanation
+cat("Variable Naming Convention:\n")
+cat("- drg_ord: Drug order (1 = Motrin first, 2 = Placebo first)\n")
+cat("- painmx_2: Pain during max activity at period 2 (after first 3-week treatment)\n")
+cat("- pain12_2: Pain 12h after max activity at period 2\n")
+cat("- painav_2: Pain during average day at period 2\n")
+cat("- painov_2: Overall impression at period 2\n")
+cat("- painmx_3: Pain during max activity at period 3 (after washout)\n")
+cat("- painmx_4: Pain during max activity at period 4 (after second treatment)\n")
+cat("- Periods 2 and 4 are active treatment periods\n")
+```
+
+## Create Motrin vs Placebo Variables
+
+```{r create-paired-vars}
+cat("\n=== CREATING PAIRED VARIABLES (MOTRIN VS PLACEBO) ===\n\n")
+
+# For participants with drg_ord = 1: Motrin at period 2, Placebo at period 4
+# For participants with drg_ord = 2: Placebo at period 2, Motrin at period 4
+
+tennis_paired <- tennis_data %>%
+  filter(!is.na(drg_ord)) %>%
+  mutate(
+    # Maximum activity pain
+    pain_max_motrin = ifelse(drg_ord == 1, painmx_2, painmx_4),
+    pain_max_placebo = ifelse(drg_ord == 1, painmx_4, painmx_2),
+
+    # Pain 12h after maximum activity
+    pain_12h_motrin = ifelse(drg_ord == 1, pain12_2, pain12_4),
+    pain_12h_placebo = ifelse(drg_ord == 1, pain12_4, pain12_2),
+
+    # Average day pain
+    pain_avg_motrin = ifelse(drg_ord == 1, painav_2, painav_4),
+    pain_avg_placebo = ifelse(drg_ord == 1, painav_4, painav_2),
+
+    # Overall impression
+    pain_overall_motrin = ifelse(drg_ord == 1, painov_2, painov_4),
+    pain_overall_placebo = ifelse(drg_ord == 1, painov_4, painov_2)
+  )
+
+cat(sprintf("Participants with complete data: %d\n", nrow(tennis_paired)))
+
+# Summary statistics
+cat("\n\nSummary Statistics:\n")
+summary_stats <- tennis_paired %>%
+  summarise(
+    N = n(),
+    Motrin_MaxPain_Mean = mean(pain_max_motrin, na.rm = TRUE),
+    Placebo_MaxPain_Mean = mean(pain_max_placebo, na.rm = TRUE),
+    Motrin_12h_Mean = mean(pain_12h_motrin, na.rm = TRUE),
+    Placebo_12h_Mean = mean(pain_12h_placebo, na.rm = TRUE),
+    Motrin_Avg_Mean = mean(pain_avg_motrin, na.rm = TRUE),
+    Placebo_Avg_Mean = mean(pain_avg_placebo, na.rm = TRUE),
+    Motrin_Overall_Mean = mean(pain_overall_motrin, na.rm = TRUE),
+    Placebo_Overall_Mean = mean(pain_overall_placebo, na.rm = TRUE)
+  )
+
+print(kable(summary_stats, digits = 2))
+```
+
+---
+
+# Problem 8.89: Pain During Maximum Activity
+
+```{r problem-8-89}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.89: PAIN DURING MAXIMUM ACTIVITY\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+# Filter complete cases
+max_activity <- tennis_paired %>%
+  filter(!is.na(pain_max_motrin) & !is.na(pain_max_placebo))
+
+cat(sprintf("Sample size (complete pairs): %d\n\n", nrow(max_activity)))
+
+# Descriptive statistics
+desc_max <- data.frame(
+  Treatment = c("Motrin", "Placebo"),
+  N = c(nrow(max_activity), nrow(max_activity)),
+  Mean = c(mean(max_activity$pain_max_motrin),
+           mean(max_activity$pain_max_placebo)),
+  SD = c(sd(max_activity$pain_max_motrin),
+         sd(max_activity$pain_max_placebo)),
+  Median = c(median(max_activity$pain_max_motrin),
+             median(max_activity$pain_max_placebo)),
+  Min = c(min(max_activity$pain_max_motrin),
+          min(max_activity$pain_max_placebo)),
+  Max = c(max(max_activity$pain_max_motrin),
+          max(max_activity$pain_max_placebo))
+)
+
+print(kable(desc_max, digits = 2,
+            caption = "Pain During Maximum Activity"))
+
+# Calculate differences
+max_activity <- max_activity %>%
+  mutate(diff_max = pain_max_motrin - pain_max_placebo)
+
+cat("\n\nDifference Statistics (Motrin - Placebo):\n")
+cat(sprintf("Mean difference: %.3f\n", mean(max_activity$diff_max)))
+cat(sprintf("SD of differences: %.3f\n", sd(max_activity$diff_max)))
+cat(sprintf("SE of differences: %.3f\n", sd(max_activity$diff_max)/sqrt(nrow(max_activity))))
+
+# Paired t-test (two-sided)
+cat("\n\nHYPOTHESIS TEST:\n")
+cat("H₀: μ_Motrin = μ_Placebo (no difference in pain scores)\n")
+cat("H₁: μ_Motrin ≠ μ_Placebo (pain scores differ)\n")
+cat("Test: Paired t-test (two-sided)\n\n")
+
+test_max <- t.test(max_activity$pain_max_motrin,
+                   max_activity$pain_max_placebo,
+                   paired = TRUE,
+                   alternative = "two.sided")
+
+cat(sprintf("t-statistic: %.4f\n", test_max$statistic))
+cat(sprintf("df: %d\n", test_max$parameter))
+cat(sprintf("p-value: %.4f\n", test_max$p.value))
+cat(sprintf("95%% CI for mean difference: [%.3f, %.3f]\n",
+            test_max$conf.int[1], test_max$conf.int[2]))
+
+# Decision
+if (test_max$p.value < 0.05) {
+  cat("\n✓ CONCLUSION: Reject H₀ at α = 0.05\n")
+  cat("   There IS a significant difference in pain during maximum activity\n")
+  cat("   between Motrin and placebo.\n")
+  if (mean(max_activity$diff_max) > 0) {
+    cat("   Motrin is associated with HIGHER pain scores (worse outcome).\n")
+  } else {
+    cat("   Motrin is associated with LOWER pain scores (better outcome).\n")
+  }
+} else {
+  cat("\n✗ CONCLUSION: Fail to reject H₀ at α = 0.05\n")
+  cat("   There is NO significant difference in pain during maximum activity\n")
+  cat("   between Motrin and placebo.\n")
+}
+```
+
+---
+
+# Problem 8.90: Pain 12 Hours After Maximum Activity
+
+```{r problem-8-90}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.90: PAIN 12 HOURS AFTER MAXIMUM ACTIVITY\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+# Filter complete cases
+pain_12h <- tennis_paired %>%
+  filter(!is.na(pain_12h_motrin) & !is.na(pain_12h_placebo))
+
+cat(sprintf("Sample size (complete pairs): %d\n\n", nrow(pain_12h)))
+
+# Descriptive statistics
+desc_12h <- data.frame(
+  Treatment = c("Motrin", "Placebo"),
+  N = c(nrow(pain_12h), nrow(pain_12h)),
+  Mean = c(mean(pain_12h$pain_12h_motrin),
+           mean(pain_12h$pain_12h_placebo)),
+  SD = c(sd(pain_12h$pain_12h_motrin),
+         sd(pain_12h$pain_12h_placebo)),
+  Median = c(median(pain_12h$pain_12h_motrin),
+             median(pain_12h$pain_12h_placebo)),
+  Min = c(min(pain_12h$pain_12h_motrin),
+          min(pain_12h$pain_12h_placebo)),
+  Max = c(max(pain_12h$pain_12h_motrin),
+          max(pain_12h$pain_12h_placebo))
+)
+
+print(kable(desc_12h, digits = 2,
+            caption = "Pain 12 Hours After Maximum Activity"))
+
+# Calculate differences
+pain_12h <- pain_12h %>%
+  mutate(diff_12h = pain_12h_motrin - pain_12h_placebo)
+
+cat("\n\nDifference Statistics (Motrin - Placebo):\n")
+cat(sprintf("Mean difference: %.3f\n", mean(pain_12h$diff_12h)))
+cat(sprintf("SD of differences: %.3f\n", sd(pain_12h$diff_12h)))
+
+# Paired t-test
+cat("\n\nHYPOTHESIS TEST:\n")
+cat("H₀: μ_Motrin = μ_Placebo\n")
+cat("H₁: μ_Motrin ≠ μ_Placebo\n\n")
+
+test_12h <- t.test(pain_12h$pain_12h_motrin,
+                   pain_12h$pain_12h_placebo,
+                   paired = TRUE,
+                   alternative = "two.sided")
+
+cat(sprintf("t-statistic: %.4f\n", test_12h$statistic))
+cat(sprintf("df: %d\n", test_12h$parameter))
+cat(sprintf("p-value: %.4f\n", test_12h$p.value))
+cat(sprintf("95%% CI for mean difference: [%.3f, %.3f]\n",
+            test_12h$conf.int[1], test_12h$conf.int[2]))
+
+# Decision
+if (test_12h$p.value < 0.05) {
+  cat("\n✓ CONCLUSION: Significant difference at α = 0.05\n")
+  if (mean(pain_12h$diff_12h) > 0) {
+    cat("   Motrin associated with higher pain 12h after activity.\n")
+  } else {
+    cat("   Motrin associated with lower pain 12h after activity.\n")
+  }
+} else {
+  cat("\n✗ CONCLUSION: No significant difference at α = 0.05\n")
+}
+```
+
+---
+
+# Problem 8.91: Pain During Average Day
+
+```{r problem-8-91}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.91: PAIN DURING AVERAGE DAY\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+# Filter complete cases
+pain_avg <- tennis_paired %>%
+  filter(!is.na(pain_avg_motrin) & !is.na(pain_avg_placebo))
+
+cat(sprintf("Sample size (complete pairs): %d\n\n", nrow(pain_avg)))
+
+# Descriptive statistics
+desc_avg <- data.frame(
+  Treatment = c("Motrin", "Placebo"),
+  N = c(nrow(pain_avg), nrow(pain_avg)),
+  Mean = c(mean(pain_avg$pain_avg_motrin),
+           mean(pain_avg$pain_avg_placebo)),
+  SD = c(sd(pain_avg$pain_avg_motrin),
+         sd(pain_avg$pain_avg_placebo)),
+  Median = c(median(pain_avg$pain_avg_motrin),
+             median(pain_avg$pain_avg_placebo)),
+  Min = c(min(pain_avg$pain_avg_motrin),
+          min(pain_avg$pain_avg_placebo)),
+  Max = c(max(pain_avg$pain_avg_motrin),
+          max(pain_avg$pain_avg_placebo))
+)
+
+print(kable(desc_avg, digits = 2,
+            caption = "Pain During Average Day"))
+
+# Calculate differences
+pain_avg <- pain_avg %>%
+  mutate(diff_avg = pain_avg_motrin - pain_avg_placebo)
+
+cat("\n\nDifference Statistics (Motrin - Placebo):\n")
+cat(sprintf("Mean difference: %.3f\n", mean(pain_avg$diff_avg)))
+cat(sprintf("SD of differences: %.3f\n", sd(pain_avg$diff_avg)))
+
+# Paired t-test
+cat("\n\nHYPOTHESIS TEST:\n")
+cat("H₀: μ_Motrin = μ_Placebo\n")
+cat("H₁: μ_Motrin ≠ μ_Placebo\n\n")
+
+test_avg <- t.test(pain_avg$pain_avg_motrin,
+                   pain_avg$pain_avg_placebo,
+                   paired = TRUE,
+                   alternative = "two.sided")
+
+cat(sprintf("t-statistic: %.4f\n", test_avg$statistic))
+cat(sprintf("df: %d\n", test_avg$parameter))
+cat(sprintf("p-value: %.4f\n", test_avg$p.value))
+cat(sprintf("95%% CI for mean difference: [%.3f, %.3f]\n",
+            test_avg$conf.int[1], test_avg$conf.int[2]))
+
+# Decision
+if (test_avg$p.value < 0.05) {
+  cat("\n✓ CONCLUSION: Significant difference at α = 0.05\n")
+  if (mean(pain_avg$diff_avg) > 0) {
+    cat("   Motrin associated with higher pain during average day.\n")
+  } else {
+    cat("   Motrin associated with lower pain during average day.\n")
+  }
+} else {
+  cat("\n✗ CONCLUSION: No significant difference at α = 0.05\n")
+}
+```
+
+---
+
+# Problem 8.92: Overall Impression of Drug Efficacy
+
+```{r problem-8-92}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.92: OVERALL IMPRESSION OF DRUG EFFICACY\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+# Filter complete cases
+pain_overall <- tennis_paired %>%
+  filter(!is.na(pain_overall_motrin) & !is.na(pain_overall_placebo))
+
+cat(sprintf("Sample size (complete pairs): %d\n\n", nrow(pain_overall)))
+
+# Descriptive statistics
+desc_overall <- data.frame(
+  Treatment = c("Motrin", "Placebo"),
+  N = c(nrow(pain_overall), nrow(pain_overall)),
+  Mean = c(mean(pain_overall$pain_overall_motrin),
+           mean(pain_overall$pain_overall_placebo)),
+  SD = c(sd(pain_overall$pain_overall_motrin),
+         sd(pain_overall$pain_overall_placebo)),
+  Median = c(median(pain_overall$pain_overall_motrin),
+             median(pain_overall$pain_overall_placebo)),
+  Min = c(min(pain_overall$pain_overall_motrin),
+          min(pain_overall$pain_overall_placebo)),
+  Max = c(max(pain_overall$pain_overall_motrin),
+          max(pain_overall$pain_overall_placebo))
+)
+
+print(kable(desc_overall, digits = 2,
+            caption = "Overall Impression of Drug Efficacy"))
+
+# Calculate differences
+pain_overall <- pain_overall %>%
+  mutate(diff_overall = pain_overall_motrin - pain_overall_placebo)
+
+cat("\n\nDifference Statistics (Motrin - Placebo):\n")
+cat(sprintf("Mean difference: %.3f\n", mean(pain_overall$diff_overall)))
+cat(sprintf("SD of differences: %.3f\n", sd(pain_overall$diff_overall)))
+
+# Paired t-test
+cat("\n\nHYPOTHESIS TEST:\n")
+cat("H₀: μ_Motrin = μ_Placebo\n")
+cat("H₁: μ_Motrin ≠ μ_Placebo\n\n")
+
+test_overall <- t.test(pain_overall$pain_overall_motrin,
+                       pain_overall$pain_overall_placebo,
+                       paired = TRUE,
+                       alternative = "two.sided")
+
+cat(sprintf("t-statistic: %.4f\n", test_overall$statistic))
+cat(sprintf("df: %d\n", test_overall$parameter))
+cat(sprintf("p-value: %.4f\n", test_overall$p.value))
+cat(sprintf("95%% CI for mean difference: [%.3f, %.3f]\n",
+            test_overall$conf.int[1], test_overall$conf.int[2]))
+
+# Decision
+if (test_overall$p.value < 0.05) {
+  cat("\n✓ CONCLUSION: Significant difference at α = 0.05\n")
+  if (mean(pain_overall$diff_overall) > 0) {
+    cat("   Motrin associated with higher overall pain scores.\n")
+  } else {
+    cat("   Motrin associated with lower overall pain scores.\n")
+  }
+} else {
+  cat("\n✗ CONCLUSION: No significant difference at α = 0.05\n")
+}
+```
+
+---
+
+# Visualizations: Tennis Elbow Study
+
+```{r viz-tennis, fig.height=10}
+# Create separate datasets for each measure (to handle different sample sizes)
+
+# Max Activity data
+viz_max <- data.frame(
+  Treatment = rep(c("Motrin", "Placebo"), each = nrow(max_activity)),
+  Pain_Score = c(max_activity$pain_max_motrin, max_activity$pain_max_placebo)
+) %>%
+  mutate(Treatment = factor(Treatment, levels = c("Placebo", "Motrin")))
+
+# Pain 12h data
+viz_12h <- data.frame(
+  Treatment = rep(c("Motrin", "Placebo"), each = nrow(pain_12h)),
+  Pain_Score = c(pain_12h$pain_12h_motrin, pain_12h$pain_12h_placebo)
+) %>%
+  mutate(Treatment = factor(Treatment, levels = c("Placebo", "Motrin")))
+
+# Average day data
+viz_avg <- data.frame(
+  Treatment = rep(c("Motrin", "Placebo"), each = nrow(pain_avg)),
+  Pain_Score = c(pain_avg$pain_avg_motrin, pain_avg$pain_avg_placebo)
+) %>%
+  mutate(Treatment = factor(Treatment, levels = c("Placebo", "Motrin")))
+
+# Overall impression data
+viz_overall <- data.frame(
+  Treatment = rep(c("Motrin", "Placebo"), each = nrow(pain_overall)),
+  Pain_Score = c(pain_overall$pain_overall_motrin, pain_overall$pain_overall_placebo)
+) %>%
+  mutate(Treatment = factor(Treatment, levels = c("Placebo", "Motrin")))
+
+# Box plots for all four measures
+p1 <- ggplot(viz_max, aes(x = Treatment, y = Pain_Score, fill = Treatment)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  labs(title = "Pain During Maximum Activity",
+       x = "Treatment", y = "Pain Score (1-6)",
+       subtitle = paste0("n = ", nrow(max_activity), " pairs")) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p2 <- ggplot(viz_12h, aes(x = Treatment, y = Pain_Score, fill = Treatment)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  labs(title = "Pain 12h After Maximum Activity",
+       x = "Treatment", y = "Pain Score (1-6)",
+       subtitle = paste0("n = ", nrow(pain_12h), " pairs")) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p3 <- ggplot(viz_avg, aes(x = Treatment, y = Pain_Score, fill = Treatment)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  labs(title = "Pain During Average Day",
+       x = "Treatment", y = "Pain Score (1-6)",
+       subtitle = paste0("n = ", nrow(pain_avg), " pairs")) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p4 <- ggplot(viz_overall, aes(x = Treatment, y = Pain_Score, fill = Treatment)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  labs(title = "Overall Impression of Efficacy",
+       x = "Treatment", y = "Pain Score (1-6)",
+       subtitle = paste0("n = ", nrow(pain_overall), " pairs")) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+---
+
+# Tennis Elbow Study Summary
+
+```{r summary-tennis}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("COMPREHENSIVE SUMMARY: TENNIS ELBOW STUDY\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+# Create summary table
+summary_table <- data.frame(
+  Measure = c("Maximum Activity", "12h After Activity",
+              "Average Day", "Overall Impression"),
+  Mean_Diff = c(mean(max_activity$diff_max),
+                mean(pain_12h$diff_12h),
+                mean(pain_avg$diff_avg),
+                mean(pain_overall$diff_overall)),
+  t_statistic = c(test_max$statistic,
+                  test_12h$statistic,
+                  test_avg$statistic,
+                  test_overall$statistic),
+  p_value = c(test_max$p.value,
+              test_12h$p.value,
+              test_avg$p.value,
+              test_overall$p.value),
+  Significant = c(
+    ifelse(test_max$p.value < 0.05, "Yes", "No"),
+    ifelse(test_12h$p.value < 0.05, "Yes", "No"),
+    ifelse(test_avg$p.value < 0.05, "Yes", "No"),
+    ifelse(test_overall$p.value < 0.05, "Yes", "No")
+  )
+)
+
+print(kable(summary_table, digits = 4,
+            col.names = c("Pain Measure", "Mean Diff (M-P)",
+                         "t-statistic", "p-value", "Significant?"),
+            caption = "Summary of All Four Pain Measures"))
+
+cat("\n\nINTERPRETATION:\n")
+n_sig <- sum(summary_table$p_value < 0.05)
+cat(sprintf("Number of significant tests (α = 0.05): %d out of 4\n\n", n_sig))
+
+if (n_sig == 0) {
+  cat("✗ NO significant differences found on any pain measure.\n")
+  cat("  Motrin does not appear more effective than placebo.\n")
+} else if (n_sig == 4) {
+  cat("✓ ALL pain measures show significant differences.\n")
+  cat("  Strong evidence for Motrin efficacy.\n")
+} else {
+  cat("~ MIXED results across different pain measures.\n")
+  cat("  Some evidence for differential effects.\n")
+}
+
+cat("\n\nNOTE: Higher scores on the 1-6 scale indicate BETTER outcomes\n")
+cat("(6 = completely improved, 1 = worse than baseline)\n")
+```
+
+---
+
+# Part II: Lead Exposure and IQ (Problems 8.94-8.95)
+
+## Background
+
+### Study Context
+
+This analysis examines the relationship between **lead exposure** and **full-scale IQ** in children. The study compares:
+- **Exposed group:** Children with lead exposure
+- **Control group:** Children without lead exposure
+
+### Research Questions
+
+**Problem 8.94:** Assess whether there are any outliers for full-scale IQ in the exposed group.
+
+**Problem 8.95:** Compare mean full-scale IQ between exposed and control groups, after exclusion of outliers.
+
+## Data Import: Lead Exposure Study
+
+```{r data-import-lead}
+# Read LEAD dataset
+lead_data <- read.csv("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/LEAD.DAT.txt",
+                      check.names = FALSE,
+                      stringsAsFactors = FALSE,
+                      na.strings = c("", "NA", "99", "999"))
+
+# Remove quotes from column names
+colnames(lead_data) <- gsub("'", "", colnames(lead_data))
+
+cat("Dataset Structure:\n")
+cat(sprintf("Total children: %d\n", nrow(lead_data)))
+cat(sprintf("Total variables: %d\n\n", ncol(lead_data)))
+
+cat("Key Variables:\n")
+cat("- iqf: Full-scale IQ score\n")
+cat("- lead_grp: Lead exposure group indicator\n")
+cat("- Group: Group classification\n")
+cat("- iq_type: IQ test type\n\n")
+
+# Check group coding
+cat("Group Distribution:\n")
+table(lead_data$lead_grp) %>%
+  kable(col.names = c("Lead Group", "N"))
+
+cat("\n\n")
+table(lead_data$Group) %>%
+  kable(col.names = c("Group", "N"))
+```
+
+## Identify Exposed and Control Groups
+
+```{r identify-groups}
+cat("\n=== IDENTIFYING EXPOSED AND CONTROL GROUPS ===\n\n")
+
+# Based on the data, it appears:
+# lead_grp = 1 (exposed), lead_grp = 2 or 3 (control)
+# Group: 1 = exposed, 2 = control
+
+lead_clean <- lead_data %>%
+  filter(!is.na(iqf) & !is.na(Group)) %>%
+  mutate(
+    exposure_status = factor(Group,
+                            levels = c(1, 2),
+                            labels = c("Exposed", "Control"))
+  )
+
+cat("Sample Sizes:\n")
+group_sizes <- lead_clean %>%
+  group_by(exposure_status) %>%
+  summarise(N = n(), .groups = "drop")
+print(kable(group_sizes))
+
+cat("\n\nFull-Scale IQ Summary by Group:\n")
+iq_summary <- lead_clean %>%
+  group_by(exposure_status) %>%
+  summarise(
+    N = n(),
+    Mean_IQ = mean(iqf, na.rm = TRUE),
+    SD_IQ = sd(iqf, na.rm = TRUE),
+    Median_IQ = median(iqf, na.rm = TRUE),
+    Min_IQ = min(iqf, na.rm = TRUE),
+    Max_IQ = max(iqf, na.rm = TRUE),
+    .groups = "drop"
+  )
+print(kable(iq_summary, digits = 2))
+```
+
+---
+
+# Problem 8.94: Outlier Detection in Exposed Group
+
+```{r problem-8-94}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.94: OUTLIER DETECTION - EXPOSED GROUP\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+# Extract exposed group
+exposed_group <- lead_clean %>%
+  filter(exposure_status == "Exposed")
+
+cat(sprintf("Exposed group sample size: %d\n\n", nrow(exposed_group)))
+
+# Calculate outlier thresholds using IQR method
+Q1 <- quantile(exposed_group$iqf, 0.25, na.rm = TRUE)
+Q3 <- quantile(exposed_group$iqf, 0.75, na.rm = TRUE)
+IQR_val <- Q3 - Q1
+
+lower_fence <- Q1 - 1.5 * IQR_val
+upper_fence <- Q3 + 1.5 * IQR_val
+
+cat("IQR METHOD FOR OUTLIER DETECTION:\n")
+cat(sprintf("Q1 (25th percentile): %.2f\n", Q1))
+cat(sprintf("Q3 (75th percentile): %.2f\n", Q3))
+cat(sprintf("IQR: %.2f\n", IQR_val))
+cat(sprintf("Lower fence (Q1 - 1.5×IQR): %.2f\n", lower_fence))
+cat(sprintf("Upper fence (Q3 + 1.5×IQR): %.2f\n", upper_fence))
+
+# Identify outliers
+outliers_exposed <- exposed_group %>%
+  filter(iqf < lower_fence | iqf > upper_fence) %>%
+  select(id, iqf, exposure_status)
+
+cat(sprintf("\n\nNumber of outliers detected: %d\n\n", nrow(outliers_exposed)))
+
+if (nrow(outliers_exposed) > 0) {
+  cat("Outlier IQ Scores:\n")
+  print(kable(outliers_exposed,
+              col.names = c("ID", "Full-Scale IQ", "Group")))
+} else {
+  cat("No outliers detected using the IQR method.\n")
+}
+
+# Alternative: Z-score method (|z| > 3)
+mean_iq_exposed <- mean(exposed_group$iqf, na.rm = TRUE)
+sd_iq_exposed <- sd(exposed_group$iqf, na.rm = TRUE)
+
+exposed_group <- exposed_group %>%
+  mutate(z_score = (iqf - mean_iq_exposed) / sd_iq_exposed)
+
+outliers_z <- exposed_group %>%
+  filter(abs(z_score) > 3)
+
+cat("\n\nALTERNATIVE METHOD - Z-SCORE (|z| > 3):\n")
+cat(sprintf("Mean IQ: %.2f\n", mean_iq_exposed))
+cat(sprintf("SD: %.2f\n", sd_iq_exposed))
+cat(sprintf("Outliers (|z| > 3): %d\n", nrow(outliers_z)))
+
+if (nrow(outliers_z) > 0) {
+  print(kable(outliers_z %>% select(id, iqf, z_score),
+              col.names = c("ID", "IQ", "Z-score"),
+              digits = 2))
+}
+
+# Store outlier IDs for exclusion
+outlier_ids <- unique(c(outliers_exposed$id, outliers_z$id))
+```
+
+---
+
+# Problem 8.95: Compare IQ After Outlier Exclusion
+
+```{r problem-8-95}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.95: IQ COMPARISON AFTER OUTLIER EXCLUSION\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+# Exclude outliers
+lead_no_outliers <- lead_clean %>%
+  filter(!(id %in% outlier_ids))
+
+cat(sprintf("Original sample size: %d\n", nrow(lead_clean)))
+cat(sprintf("After outlier exclusion: %d\n", nrow(lead_no_outliers)))
+cat(sprintf("Number excluded: %d\n\n", nrow(lead_clean) - nrow(lead_no_outliers)))
+
+# Group summary after exclusion
+iq_summary_clean <- lead_no_outliers %>%
+  group_by(exposure_status) %>%
+  summarise(
+    N = n(),
+    Mean_IQ = mean(iqf, na.rm = TRUE),
+    SD_IQ = sd(iqf, na.rm = TRUE),
+    SE_IQ = SD_IQ / sqrt(N),
+    Median_IQ = median(iqf, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cat("Full-Scale IQ After Outlier Exclusion:\n")
+print(kable(iq_summary_clean, digits = 2))
+
+# Two-sample t-test (Welch's)
+cat("\n\nHYPOTHESIS TEST:\n")
+cat("H₀: μ_Exposed = μ_Control (no difference in mean IQ)\n")
+cat("H₁: μ_Exposed ≠ μ_Control (mean IQ differs)\n")
+cat("Test: Two-sample t-test (Welch's, unequal variances)\n\n")
+
+exposed_iq <- lead_no_outliers %>%
+  filter(exposure_status == "Exposed") %>%
+  pull(iqf)
+
+control_iq <- lead_no_outliers %>%
+  filter(exposure_status == "Control") %>%
+  pull(iqf)
+
+test_iq <- t.test(exposed_iq, control_iq,
+                  var.equal = FALSE,
+                  alternative = "two.sided")
+
+cat(sprintf("t-statistic: %.4f\n", test_iq$statistic))
+cat(sprintf("df: %.2f\n", test_iq$parameter))
+cat(sprintf("p-value: %.4f\n", test_iq$p.value))
+cat(sprintf("95%% CI for difference (Exposed - Control): [%.2f, %.2f]\n",
+            test_iq$conf.int[1], test_iq$conf.int[2]))
+
+# Effect size (Cohen's d)
+pooled_sd <- sqrt(((length(exposed_iq) - 1) * sd(exposed_iq)^2 +
+                   (length(control_iq) - 1) * sd(control_iq)^2) /
+                  (length(exposed_iq) + length(control_iq) - 2))
+cohens_d <- (mean(exposed_iq) - mean(control_iq)) / pooled_sd
+
+cat(sprintf("\nEffect size (Cohen's d): %.3f\n", cohens_d))
+
+# Decision
+if (test_iq$p.value < 0.05) {
+  cat("\n✓ CONCLUSION: Reject H₀ at α = 0.05\n")
+  cat("   There IS a significant difference in mean full-scale IQ\n")
+  cat("   between exposed and control groups.\n")
+  if (mean(exposed_iq) < mean(control_iq)) {
+    cat("   Exposed children have LOWER mean IQ than controls.\n")
+    cat("   This suggests a negative effect of lead exposure on IQ.\n")
+  } else {
+    cat("   Exposed children have HIGHER mean IQ than controls.\n")
+  }
+} else {
+  cat("\n✗ CONCLUSION: Fail to reject H₀ at α = 0.05\n")
+  cat("   There is NO significant difference in mean full-scale IQ\n")
+  cat("   between exposed and control groups.\n")
+}
+
+# Check assumptions
+cat("\n\nASSUMPTION CHECKING:\n")
+
+# Normality tests
+cat("Shapiro-Wilk test for normality:\n")
+shapiro_exposed <- shapiro.test(exposed_iq)
+shapiro_control <- shapiro.test(control_iq)
+
+cat(sprintf("  Exposed group: W = %.4f, p = %.4f\n",
+            shapiro_exposed$statistic, shapiro_exposed$p.value))
+cat(sprintf("  Control group: W = %.4f, p = %.4f\n",
+            shapiro_control$statistic, shapiro_control$p.value))
+
+if (shapiro_exposed$p.value > 0.05 & shapiro_control$p.value > 0.05) {
+  cat("  ✓ Both groups approximately normal (p > 0.05)\n")
+} else {
+  cat("  ~ Some deviation from normality detected\n")
+  cat("  Large sample sizes make t-test robust to non-normality\n")
+}
+
+# Variance equality
+var_test <- var.test(exposed_iq, control_iq)
+cat(sprintf("\nF-test for equal variances: F = %.4f, p = %.4f\n",
+            var_test$statistic, var_test$p.value))
+if (var_test$p.value < 0.05) {
+  cat("  Variances appear unequal (Welch's t-test appropriate)\n")
+} else {
+  cat("  Variances appear equal\n")
+}
+```
+
+---
+
+# Visualizations: Lead Exposure and IQ
+
+```{r viz-lead, fig.height=10}
+# Box plot with outliers highlighted
+p5 <- ggplot(lead_clean, aes(x = exposure_status, y = iqf, fill = exposure_status)) +
+  geom_boxplot(alpha = 0.7, outlier.colour = "red", outlier.size = 3) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  labs(title = "Full-Scale IQ by Exposure Status (Before Outlier Removal)",
+       x = "Exposure Group", y = "Full-Scale IQ") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# After outlier removal
+p6 <- ggplot(lead_no_outliers, aes(x = exposure_status, y = iqf, fill = exposure_status)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  labs(title = "Full-Scale IQ by Exposure Status (After Outlier Removal)",
+       x = "Exposure Group", y = "Full-Scale IQ") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Histograms
+p7 <- ggplot(lead_no_outliers %>% filter(exposure_status == "Exposed"),
+             aes(x = iqf)) +
+  geom_histogram(bins = 20, fill = "steelblue", alpha = 0.7, color = "black") +
+  labs(title = "Distribution: Exposed Group",
+       x = "Full-Scale IQ", y = "Frequency") +
+  theme_minimal()
+
+p8 <- ggplot(lead_no_outliers %>% filter(exposure_status == "Control"),
+             aes(x = iqf)) +
+  geom_histogram(bins = 20, fill = "coral", alpha = 0.7, color = "black") +
+  labs(title = "Distribution: Control Group",
+       x = "Full-Scale IQ", y = "Frequency") +
+  theme_minimal()
+
+grid.arrange(p5, p6, p7, p8, ncol = 2)
+```
+
+---
+
+# Part III: FEV Outlier Analysis (Problem 8.96)
+
+## Background
+
+### Pulmonary Disease Study
+
+This analysis examines **forced expiratory volume (FEV)** data across different age-sex groups to identify potential outliers. FEV is an important measure of pulmonary function.
+
+### Research Question
+
+**Problem 8.96:** Assess whether there are any outliers in FEV for the following groups:
+- 5- to 9-year-old boys
+- 5- to 9-year-old girls
+- 10- to 14-year-old boys
+- 10- to 14-year-old girls
+- 15- to 19-year-old boys
+- 15- to 19-year-old girls
+
+## Data Import: FEV Study
+
+```{r data-import-fev}
+# Read FEV dataset
+fev_data <- read.csv("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/FEV.DAT.txt",
+                     check.names = FALSE,
+                     stringsAsFactors = FALSE,
+                     na.strings = c("", "NA"))
+
+# Remove quotes from column names
+colnames(fev_data) <- gsub("'", "", colnames(fev_data))
+
+cat("Dataset Structure:\n")
+cat(sprintf("Total participants: %d\n", nrow(fev_data)))
+cat(sprintf("Total variables: %d\n\n", ncol(fev_data)))
+
+cat("Key Variables:\n")
+cat("- Id: Participant identifier\n")
+cat("- Age: Age in years\n")
+cat("- FEV: Forced expiratory volume (liters)\n")
+cat("- Hgt: Height (inches)\n")
+cat("- Sex: Sex (0 = female, 1 = male)\n")
+cat("- Smoke: Smoking status (0 = non-smoker, 1 = smoker)\n\n")
+
+# Summary of data
+cat("Age Range:\n")
+summary(fev_data$Age) %>% print()
+
+cat("\n\nSex Distribution:\n")
+table(fev_data$Sex) %>%
+  kable(col.names = c("Sex", "N"))
+
+cat("\n\nSmoking Status:\n")
+table(fev_data$Smoke) %>%
+  kable(col.names = c("Smoker", "N"))
+```
+
+## Create Age-Sex Groups
+
+```{r create-age-sex-groups}
+cat("\n=== CREATING AGE-SEX GROUPS ===\n\n")
+
+# Create age groups and sex labels
+fev_grouped <- fev_data %>%
+  filter(!is.na(FEV) & !is.na(Age) & !is.na(Sex)) %>%
+  mutate(
+    # Create age groups
+    age_group = case_when(
+      Age >= 5 & Age <= 9 ~ "5-9 years",
+      Age >= 10 & Age <= 14 ~ "10-14 years",
+      Age >= 15 & Age <= 19 ~ "15-19 years",
+      TRUE ~ "Other"
+    ),
+    # Create sex labels
+    sex_label = factor(Sex, levels = c(0, 1), labels = c("Female", "Male")),
+    # Combine age-sex groups
+    group = paste(age_group, sex_label, sep = ", ")
+  ) %>%
+  filter(age_group != "Other")
+
+# Summary by group
+cat("Sample Sizes by Age-Sex Group:\n")
+group_summary <- fev_grouped %>%
+  group_by(age_group, sex_label, group) %>%
+  summarise(
+    N = n(),
+    Mean_FEV = mean(FEV, na.rm = TRUE),
+    SD_FEV = sd(FEV, na.rm = TRUE),
+    Min_FEV = min(FEV, na.rm = TRUE),
+    Max_FEV = max(FEV, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(age_group, sex_label)
+
+print(kable(group_summary, digits = 3,
+            col.names = c("Age Group", "Sex", "Combined Group", "N",
+                         "Mean FEV", "SD", "Min", "Max")))
+```
+
+---
+
+# Problem 8.96: Outlier Detection by Age-Sex Group
+
+```{r problem-8-96}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 8.96: FEV OUTLIER DETECTION BY AGE-SEX GROUPS\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+# Define the six groups
+groups_to_analyze <- c(
+  "5-9 years, Male",
+  "5-9 years, Female",
+  "10-14 years, Male",
+  "10-14 years, Female",
+  "15-19 years, Male",
+  "15-19 years, Female"
+)
+
+# Function to detect outliers using IQR method
+detect_outliers_iqr <- function(data) {
+  Q1 <- quantile(data, 0.25, na.rm = TRUE)
+  Q3 <- quantile(data, 0.75, na.rm = TRUE)
+  IQR_val <- Q3 - Q1
+
+  lower_fence <- Q1 - 1.5 * IQR_val
+  upper_fence <- Q3 + 1.5 * IQR_val
+
+  outliers <- data < lower_fence | data > upper_fence
+
+  list(
+    Q1 = Q1,
+    Q3 = Q3,
+    IQR = IQR_val,
+    lower_fence = lower_fence,
+    upper_fence = upper_fence,
+    outliers = outliers,
+    n_outliers = sum(outliers, na.rm = TRUE)
+  )
+}
+
+# Function to detect outliers using z-score method
+detect_outliers_zscore <- function(data, threshold = 3) {
+  mean_val <- mean(data, na.rm = TRUE)
+  sd_val <- sd(data, na.rm = TRUE)
+  z_scores <- (data - mean_val) / sd_val
+  outliers <- abs(z_scores) > threshold
+
+  list(
+    mean = mean_val,
+    sd = sd_val,
+    outliers = outliers,
+    n_outliers = sum(outliers, na.rm = TRUE),
+    z_scores = z_scores
+  )
+}
+
+# Store all outlier results
+all_outliers <- list()
+outlier_summary <- data.frame()
+
+# Analyze each group
+for (grp in groups_to_analyze) {
+  cat("\n", paste(rep("-", 70), collapse=""), "\n")
+  cat(sprintf("GROUP: %s\n", grp))
+  cat(paste(rep("-", 70), collapse=""), "\n\n")
+
+  # Extract group data
+  group_data <- fev_grouped %>%
+    filter(group == grp)
+
+  cat(sprintf("Sample size: %d\n\n", nrow(group_data)))
+
+  # IQR method
+  iqr_result <- detect_outliers_iqr(group_data$FEV)
+
+  cat("IQR METHOD:\n")
+  cat(sprintf("  Q1: %.3f L\n", iqr_result$Q1))
+  cat(sprintf("  Q3: %.3f L\n", iqr_result$Q3))
+  cat(sprintf("  IQR: %.3f L\n", iqr_result$IQR))
+  cat(sprintf("  Lower fence: %.3f L\n", iqr_result$lower_fence))
+  cat(sprintf("  Upper fence: %.3f L\n", iqr_result$upper_fence))
+  cat(sprintf("  Outliers detected: %d\n", iqr_result$n_outliers))
+
+  # Z-score method
+  zscore_result <- detect_outliers_zscore(group_data$FEV)
+
+  cat("\nZ-SCORE METHOD (|z| > 3):\n")
+  cat(sprintf("  Mean: %.3f L\n", zscore_result$mean))
+  cat(sprintf("  SD: %.3f L\n", zscore_result$sd))
+  cat(sprintf("  Outliers detected: %d\n", zscore_result$n_outliers))
+
+  # Identify specific outliers
+  outlier_ids_iqr <- group_data$Id[iqr_result$outliers]
+  outlier_ids_z <- group_data$Id[zscore_result$outliers]
+  all_outlier_ids <- unique(c(outlier_ids_iqr, outlier_ids_z))
+
+  if (length(all_outlier_ids) > 0) {
+    cat("\n\nOUTLIER DETAILS:\n")
+    outlier_details <- group_data %>%
+      filter(Id %in% all_outlier_ids) %>%
+      mutate(
+        z_score = (FEV - zscore_result$mean) / zscore_result$sd,
+        iqr_outlier = Id %in% outlier_ids_iqr,
+        z_outlier = Id %in% outlier_ids_z
+      ) %>%
+      select(Id, Age, FEV, Hgt, z_score, iqr_outlier, z_outlier) %>%
+      arrange(FEV)
+
+    print(kable(outlier_details, digits = 3,
+                col.names = c("ID", "Age", "FEV (L)", "Height",
+                             "Z-score", "IQR Outlier?", "Z Outlier?")))
+  } else {
+    cat("\n\nNo outliers detected by either method.\n")
+  }
+
+  # Store results for summary
+  outlier_summary <- rbind(outlier_summary, data.frame(
+    Group = grp,
+    N = nrow(group_data),
+    Mean_FEV = zscore_result$mean,
+    SD_FEV = zscore_result$sd,
+    IQR_Outliers = iqr_result$n_outliers,
+    Z_Outliers = zscore_result$n_outliers,
+    Total_Unique_Outliers = length(all_outlier_ids)
+  ))
+
+  all_outliers[[grp]] <- list(
+    iqr = iqr_result,
+    zscore = zscore_result,
+    outlier_ids = all_outlier_ids
+  )
+}
+```
+
+## Outlier Summary Across All Groups
+
+```{r outlier-summary-table}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("SUMMARY: OUTLIERS ACROSS ALL AGE-SEX GROUPS\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+print(kable(outlier_summary, digits = 3,
+            col.names = c("Group", "N", "Mean FEV", "SD",
+                         "IQR Outliers", "Z Outliers", "Total Outliers"),
+            caption = "FEV Outlier Detection Summary by Age-Sex Group"))
+
+cat("\n\nOVERALL FINDINGS:\n")
+total_outliers <- sum(outlier_summary$Total_Unique_Outliers)
+total_subjects <- sum(outlier_summary$N)
+
+cat(sprintf("Total subjects analyzed: %d\n", total_subjects))
+cat(sprintf("Total outliers detected: %d (%.1f%%)\n",
+            total_outliers, 100 * total_outliers / total_subjects))
+
+cat("\n\nGroups with outliers:\n")
+groups_with_outliers <- outlier_summary %>%
+  filter(Total_Unique_Outliers > 0) %>%
+  select(Group, Total_Unique_Outliers, Mean_FEV)
+
+if (nrow(groups_with_outliers) > 0) {
+  print(kable(groups_with_outliers, digits = 3,
+              col.names = c("Group", "Number of Outliers", "Mean FEV (L)")))
+} else {
+  cat("No outliers detected in any group.\n")
+}
+
+cat("\n\nINTERPRETATION:\n")
+cat("- IQR method identifies values beyond Q1 - 1.5×IQR and Q3 + 1.5×IQR\n")
+cat("- Z-score method identifies values with |z| > 3 (> 3 SD from mean)\n")
+cat("- Both methods used to ensure robust outlier detection\n")
+cat("- Outliers may represent measurement errors or true biological extremes\n")
+```
+
+## Visualization: FEV by Age-Sex Groups with Outliers
+
+```{r viz-fev-outliers, fig.height=12}
+# Add outlier flags to data
+fev_with_outliers <- fev_grouped %>%
+  filter(group %in% groups_to_analyze) %>%
+  rowwise() %>%
+  mutate(
+    is_outlier = Id %in% unlist(lapply(all_outliers, function(x) x$outlier_ids))
+  ) %>%
+  ungroup()
+
+# Box plots by group
+p_fev1 <- ggplot(fev_with_outliers, aes(x = group, y = FEV, fill = sex_label)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  geom_jitter(aes(color = is_outlier, size = is_outlier),
+              width = 0.2, alpha = 0.6) +
+  scale_color_manual(values = c("FALSE" = "gray40", "TRUE" = "red"),
+                     name = "Outlier") +
+  scale_size_manual(values = c("FALSE" = 1, "TRUE" = 3),
+                    name = "Outlier") +
+  labs(title = "FEV by Age-Sex Groups with Outliers Highlighted",
+       x = "Age-Sex Group", y = "FEV (Liters)",
+       fill = "Sex") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
+        legend.position = "right")
+
+# Separate plots for each age group
+p_fev2 <- ggplot(fev_with_outliers %>% filter(age_group == "5-9 years"),
+                 aes(x = sex_label, y = FEV, fill = sex_label)) +
+  geom_boxplot(alpha = 0.7, outlier.colour = "red", outlier.size = 3) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  labs(title = "Ages 5-9",
+       x = "Sex", y = "FEV (L)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p_fev3 <- ggplot(fev_with_outliers %>% filter(age_group == "10-14 years"),
+                 aes(x = sex_label, y = FEV, fill = sex_label)) +
+  geom_boxplot(alpha = 0.7, outlier.colour = "red", outlier.size = 3) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  labs(title = "Ages 10-14",
+       x = "Sex", y = "FEV (L)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p_fev4 <- ggplot(fev_with_outliers %>% filter(age_group == "15-19 years"),
+                 aes(x = sex_label, y = FEV, fill = sex_label)) +
+  geom_boxplot(alpha = 0.7, outlier.colour = "red", outlier.size = 3) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  labs(title = "Ages 15-19",
+       x = "Sex", y = "FEV (L)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Display plots
+print(p_fev1)
+grid.arrange(p_fev2, p_fev3, p_fev4, ncol = 3)
+```
+
+---
+
+# Overall Summary
+
+```{r overall-summary}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("CHAPTER 8 ANALYSIS SUMMARY\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("PART I - TENNIS ELBOW STUDY (Problems 8.89-8.92):\n")
+cat(sprintf("  Design: Crossover trial with %d participants\n", nrow(tennis_paired)))
+cat("  Comparison: Motrin vs. Placebo\n")
+cat("  Analysis: Paired t-tests for 4 pain measures\n")
+cat(sprintf("  Significant results: %d out of 4 tests\n\n", n_sig))
+
+cat("PART II - LEAD EXPOSURE AND IQ (Problems 8.94-8.95):\n")
+cat(sprintf("  Total sample: %d children\n", nrow(lead_clean)))
+cat(sprintf("  Exposed group: %d\n", sum(lead_clean$exposure_status == "Exposed")))
+cat(sprintf("  Control group: %d\n", sum(lead_clean$exposure_status == "Control")))
+cat(sprintf("  Outliers detected: %d\n", length(outlier_ids)))
+cat(sprintf("  IQ comparison p-value: %.4f\n", test_iq$p.value))
+cat(sprintf("  Significant difference: %s\n\n",
+            ifelse(test_iq$p.value < 0.05, "Yes", "No")))
+
+cat("PART III - FEV OUTLIER ANALYSIS (Problem 8.96):\n")
+cat(sprintf("  Total participants: %d\n", total_subjects))
+cat(sprintf("  Age-sex groups analyzed: %d\n", nrow(outlier_summary)))
+cat(sprintf("  Total outliers detected: %d (%.1f%%)\n",
+            total_outliers, 100 * total_outliers / total_subjects))
+cat(sprintf("  Groups with outliers: %d out of %d\n",
+            nrow(groups_with_outliers), nrow(outlier_summary)))
+
+cat("\n\nKEY METHODOLOGICAL POINTS:\n")
+cat("- Crossover design controls for between-subject variability\n")
+cat("- Paired t-tests appropriate for within-subject comparisons\n")
+cat("- Outlier detection using both IQR and z-score methods\n")
+cat("- IQR method: values beyond Q1 - 1.5×IQR and Q3 + 1.5×IQR\n")
+cat("- Z-score method: values with |z| > 3 standard deviations\n")
+cat("- Welch's t-test robust to unequal variances\n")
+cat("- Assumption checking critical for valid inference\n")
+cat("- Stratified outlier analysis by age-sex groups\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
