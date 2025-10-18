@@ -1,0 +1,831 @@
+---
+title: "Hepatic Disease - Hormone Study (Problems 9.34-9.37)"
+subtitle: "Nonparametric Methods for Comparing Hormone Effects"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: united
+    highlight: tango
+    fig_width: 10
+    fig_height: 6
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = 'center'
+)
+```
+
+# Introduction
+
+This document analyzes data from a hepatic disease study examining the effects of different hormones on bile and pancreatic secretion and pH levels. The analysis uses the **HORMONE.DAT** dataset and applies **nonparametric methods** (Problems 9.34-9.36) to answer the same research questions originally addressed with parametric methods (Problems 8.82-8.84).
+
+## Dataset Description
+
+**File**: HORMONE.DAT
+
+**Variables**:
+
+- `ID`: Subject identifier
+- `Bilsecpr`: Bile secretion pretreatment (µL/kg/min)
+- `Bilphpr`: Bile pH pretreatment
+- `Pansecpr`: Pancreatic secretion pretreatment (µL/kg/min)
+- `Panphpr`: Pancreatic pH pretreatment
+- `Dose`: Hormone dose level (µg/kg/hr)
+- `Bilsecpt`: Bile secretion post-treatment (µL/kg/min)
+- `Bilphpt`: Bile pH post-treatment
+- `Pansecpt`: Pancreatic secretion post-treatment (µL/kg/min)
+- `Panphpt`: Pancreatic pH post-treatment
+- `Hormone`: Hormone type (1-5)
+
+**Missing Values**: 0 typically indicates missing or undetectable values for secretion measures
+
+---
+
+# Problem 9.34: Bile Secretion Post-Treatment by Hormone Type
+
+**Problem 9.34**: Use nonparametric methods to compare bile secretion post-treatment across different hormone types (analogous to Problem 8.82).
+
+## Data Preparation
+
+```{r load-libraries}
+# Load required libraries
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(knitr)
+library(rstatix)
+```
+
+```{r load-data-934}
+# Read the HORMONE.DAT file using read_csv for better handling
+hormone_data <- read_csv(
+  "Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/HORMONE.DAT.txt",
+  show_col_types = FALSE,
+  name_repair = "minimal"
+)
+
+# Clean column names (remove quotes and ensure proper names)
+names(hormone_data) <- gsub("'", "", names(hormone_data))
+names(hormone_data) <- trimws(names(hormone_data))
+
+# Display column names for verification (will be visible in knitted output)
+cat("Column names in dataset:", paste(names(hormone_data), collapse = ", "), "\n\n")
+
+# Verify the structure
+cat("First few rows:\n")
+print(head(hormone_data, 3))
+cat("\n")
+
+# Data cleaning for bile secretion analysis
+# Use .data pronoun to ensure proper column reference
+bile_sec_data <- hormone_data %>%
+  filter(!is.na(.data$Hormone) & !is.na(.data$Bilsecpt)) %>%
+  mutate(
+    Hormone = factor(.data$Hormone, levels = 1:5,
+                     labels = c("Hormone 1", "Hormone 2", "Hormone 3",
+                               "Hormone 4", "Hormone 5")),
+    Bile_secretion_post = as.numeric(.data$Bilsecpt)
+  ) %>%
+  # Filter out missing/undetectable values (coded as 0)
+  # Keep 0 values but note them as potentially undetectable
+  select(.data$ID, Hormone, Bile_secretion_post)
+
+# Summary statistics by hormone type
+cat("=== BILE SECRETION POST-TREATMENT BY HORMONE TYPE ===\n\n")
+cat("Sample sizes by hormone type:\n")
+table(bile_sec_data$Hormone) %>% print()
+cat("\n")
+```
+
+## Descriptive Statistics
+
+```{r descriptives-934}
+# Descriptive statistics by hormone group
+bile_summary <- bile_sec_data %>%
+  group_by(Hormone) %>%
+  summarise(
+    N = n(),
+    Mean = mean(Bile_secretion_post, na.rm = TRUE),
+    SD = sd(Bile_secretion_post, na.rm = TRUE),
+    Median = median(Bile_secretion_post, na.rm = TRUE),
+    Q1 = quantile(Bile_secretion_post, 0.25, na.rm = TRUE),
+    Q3 = quantile(Bile_secretion_post, 0.75, na.rm = TRUE),
+    IQR = IQR(Bile_secretion_post, na.rm = TRUE),
+    Min = min(Bile_secretion_post, na.rm = TRUE),
+    Max = max(Bile_secretion_post, na.rm = TRUE),
+    N_zeros = sum(Bile_secretion_post == 0),
+    .groups = "drop"
+  )
+
+kable(bile_summary,
+      caption = "Descriptive Statistics: Bile Secretion Post-Treatment by Hormone Type",
+      digits = 2)
+```
+
+## Visualization
+
+```{r plots-934, fig.width=12, fig.height=5}
+# Box plot
+p1 <- ggplot(bile_sec_data, aes(x = Hormone, y = Bile_secretion_post, fill = Hormone)) +
+  geom_boxplot(alpha = 0.7, outlier.color = "red") +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 1.5) +
+  labs(
+    title = "Distribution of Bile Secretion Post-Treatment by Hormone Type",
+    x = "Hormone Type",
+    y = "Bile Secretion (µL/kg/min)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5, face = "bold"))
+
+# Violin plot
+p2 <- ggplot(bile_sec_data, aes(x = Hormone, y = Bile_secretion_post, fill = Hormone)) +
+  geom_violin(alpha = 0.7, trim = FALSE) +
+  geom_boxplot(width = 0.2, alpha = 0.5, outlier.shape = NA) +
+  labs(
+    title = "Violin Plot: Bile Secretion Post-Treatment",
+    x = "Hormone Type",
+    y = "Bile Secretion (µL/kg/min)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5, face = "bold"))
+
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+## Kruskal-Wallis Test
+
+The **Kruskal-Wallis test** is the nonparametric alternative to one-way ANOVA, used to compare more than two independent groups.
+
+```{r kruskal-wallis-934}
+# Perform Kruskal-Wallis test
+kruskal_result <- kruskal.test(Bile_secretion_post ~ Hormone, data = bile_sec_data)
+
+cat("=== KRUSKAL-WALLIS TEST RESULTS ===\n\n")
+cat("Null Hypothesis: The distributions of bile secretion are the same across hormone types\n")
+cat("Alternative Hypothesis: At least one hormone type differs in bile secretion distribution\n\n")
+cat(sprintf("Kruskal-Wallis chi-squared = %.4f\n", kruskal_result$statistic))
+cat(sprintf("Degrees of freedom = %d\n", kruskal_result$parameter))
+cat(sprintf("p-value = %.6f\n\n", kruskal_result$p.value))
+
+if (kruskal_result$p.value < 0.05) {
+  cat("CONCLUSION: At α = 0.05, we REJECT the null hypothesis.\n")
+  cat("There is significant evidence that bile secretion differs among hormone types.\n")
+} else {
+  cat("CONCLUSION: At α = 0.05, we FAIL TO REJECT the null hypothesis.\n")
+  cat("There is insufficient evidence that bile secretion differs among hormone types.\n")
+}
+```
+
+## Post-Hoc Pairwise Comparisons (Dunn's Test)
+
+If the Kruskal-Wallis test is significant, perform pairwise comparisons using Dunn's test with Bonferroni correction.
+
+```{r posthoc-934}
+if (kruskal_result$p.value < 0.05) {
+  cat("\n=== POST-HOC PAIRWISE COMPARISONS (DUNN'S TEST) ===\n\n")
+
+  # Dunn's test for pairwise comparisons
+  dunn_results <- bile_sec_data %>%
+    dunn_test(Bile_secretion_post ~ Hormone, p.adjust.method = "bonferroni")
+
+  print(kable(dunn_results %>%
+          select(group1, group2, n1, n2, statistic, p, p.adj, p.adj.signif),
+        caption = "Dunn's Test: Pairwise Comparisons with Bonferroni Correction",
+        digits = 4))
+}
+```
+
+---
+
+# Problem 9.35: Pancreatic pH Post-Treatment by Hormone Type
+
+**Problem 9.35**: Use nonparametric methods to compare pancreatic pH post-treatment across different hormone types (analogous to Problem 8.83).
+
+## Data Preparation
+
+```{r load-data-935}
+# Data cleaning for pancreatic pH analysis
+pan_ph_data <- hormone_data %>%
+  filter(!is.na(.data$Hormone) & !is.na(.data$Panphpt) & .data$Panphpt > 0) %>%
+  mutate(
+    Hormone = factor(.data$Hormone, levels = 1:5,
+                     labels = c("Hormone 1", "Hormone 2", "Hormone 3",
+                               "Hormone 4", "Hormone 5")),
+    Pancreatic_pH_post = as.numeric(.data$Panphpt)
+  ) %>%
+  select(.data$ID, Hormone, Pancreatic_pH_post)
+
+cat("=== PANCREATIC pH POST-TREATMENT BY HORMONE TYPE ===\n\n")
+cat("Sample sizes by hormone type:\n")
+table(pan_ph_data$Hormone) %>% print()
+cat("\n")
+```
+
+## Descriptive Statistics
+
+```{r descriptives-935}
+# Descriptive statistics by hormone group
+pan_ph_summary <- pan_ph_data %>%
+  group_by(Hormone) %>%
+  summarise(
+    N = n(),
+    Mean = mean(Pancreatic_pH_post, na.rm = TRUE),
+    SD = sd(Pancreatic_pH_post, na.rm = TRUE),
+    Median = median(Pancreatic_pH_post, na.rm = TRUE),
+    Q1 = quantile(Pancreatic_pH_post, 0.25, na.rm = TRUE),
+    Q3 = quantile(Pancreatic_pH_post, 0.75, na.rm = TRUE),
+    IQR = IQR(Pancreatic_pH_post, na.rm = TRUE),
+    Min = min(Pancreatic_pH_post, na.rm = TRUE),
+    Max = max(Pancreatic_pH_post, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+kable(pan_ph_summary,
+      caption = "Descriptive Statistics: Pancreatic pH Post-Treatment by Hormone Type",
+      digits = 3)
+```
+
+## Visualization
+
+```{r plots-935, fig.width=12, fig.height=5}
+# Box plot
+p3 <- ggplot(pan_ph_data, aes(x = Hormone, y = Pancreatic_pH_post, fill = Hormone)) +
+  geom_boxplot(alpha = 0.7, outlier.color = "red") +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 1.5) +
+  labs(
+    title = "Distribution of Pancreatic pH Post-Treatment by Hormone Type",
+    x = "Hormone Type",
+    y = "Pancreatic pH"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5, face = "bold"))
+
+# Violin plot
+p4 <- ggplot(pan_ph_data, aes(x = Hormone, y = Pancreatic_pH_post, fill = Hormone)) +
+  geom_violin(alpha = 0.7, trim = FALSE) +
+  geom_boxplot(width = 0.2, alpha = 0.5, outlier.shape = NA) +
+  labs(
+    title = "Violin Plot: Pancreatic pH Post-Treatment",
+    x = "Hormone Type",
+    y = "Pancreatic pH"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5, face = "bold"))
+
+gridExtra::grid.arrange(p3, p4, ncol = 2)
+```
+
+## Kruskal-Wallis Test
+
+```{r kruskal-wallis-935}
+# Perform Kruskal-Wallis test
+kruskal_result_ph <- kruskal.test(Pancreatic_pH_post ~ Hormone, data = pan_ph_data)
+
+cat("=== KRUSKAL-WALLIS TEST RESULTS ===\n\n")
+cat("Null Hypothesis: The distributions of pancreatic pH are the same across hormone types\n")
+cat("Alternative Hypothesis: At least one hormone type differs in pancreatic pH distribution\n\n")
+cat(sprintf("Kruskal-Wallis chi-squared = %.4f\n", kruskal_result_ph$statistic))
+cat(sprintf("Degrees of freedom = %d\n", kruskal_result_ph$parameter))
+cat(sprintf("p-value = %.6f\n\n", kruskal_result_ph$p.value))
+
+if (kruskal_result_ph$p.value < 0.05) {
+  cat("CONCLUSION: At α = 0.05, we REJECT the null hypothesis.\n")
+  cat("There is significant evidence that pancreatic pH differs among hormone types.\n")
+} else {
+  cat("CONCLUSION: At α = 0.05, we FAIL TO REJECT the null hypothesis.\n")
+  cat("There is insufficient evidence that pancreatic pH differs among hormone types.\n")
+}
+```
+
+## Post-Hoc Pairwise Comparisons
+
+```{r posthoc-935}
+if (kruskal_result_ph$p.value < 0.05) {
+  cat("\n=== POST-HOC PAIRWISE COMPARISONS (DUNN'S TEST) ===\n\n")
+
+  # Dunn's test for pairwise comparisons
+  dunn_results_ph <- pan_ph_data %>%
+    dunn_test(Pancreatic_pH_post ~ Hormone, p.adjust.method = "bonferroni")
+
+  print(kable(dunn_results_ph %>%
+          select(group1, group2, n1, n2, statistic, p, p.adj, p.adj.signif),
+        caption = "Dunn's Test: Pairwise Comparisons with Bonferroni Correction",
+        digits = 4))
+}
+```
+
+---
+
+# Problem 9.36: Change in Bile Secretion by Hormone Type
+
+**Problem 9.36**: Use nonparametric methods to compare the change in bile secretion (post - pre) across different hormone types (analogous to Problem 8.84).
+
+## Data Preparation
+
+```{r load-data-936}
+# Data cleaning for bile secretion change analysis
+bile_change_data <- hormone_data %>%
+  filter(!is.na(.data$Hormone) & !is.na(.data$Bilsecpr) & !is.na(.data$Bilsecpt)) %>%
+  mutate(
+    Hormone = factor(.data$Hormone, levels = 1:5,
+                     labels = c("Hormone 1", "Hormone 2", "Hormone 3",
+                               "Hormone 4", "Hormone 5")),
+    Bile_sec_pre = as.numeric(.data$Bilsecpr),
+    Bile_sec_post = as.numeric(.data$Bilsecpt),
+    Bile_sec_change = Bile_sec_post - Bile_sec_pre
+  ) %>%
+  select(.data$ID, Hormone, Bile_sec_pre, Bile_sec_post, Bile_sec_change)
+
+cat("=== CHANGE IN BILE SECRETION (POST - PRE) BY HORMONE TYPE ===\n\n")
+cat("Sample sizes by hormone type:\n")
+table(bile_change_data$Hormone) %>% print()
+cat("\n")
+```
+
+## Descriptive Statistics
+
+```{r descriptives-936}
+# Descriptive statistics by hormone group
+bile_change_summary <- bile_change_data %>%
+  group_by(Hormone) %>%
+  summarise(
+    N = n(),
+    Mean_Change = mean(Bile_sec_change, na.rm = TRUE),
+    SD_Change = sd(Bile_sec_change, na.rm = TRUE),
+    Median_Change = median(Bile_sec_change, na.rm = TRUE),
+    Q1 = quantile(Bile_sec_change, 0.25, na.rm = TRUE),
+    Q3 = quantile(Bile_sec_change, 0.75, na.rm = TRUE),
+    IQR = IQR(Bile_sec_change, na.rm = TRUE),
+    Min = min(Bile_sec_change, na.rm = TRUE),
+    Max = max(Bile_sec_change, na.rm = TRUE),
+    N_increase = sum(Bile_sec_change > 0),
+    N_decrease = sum(Bile_sec_change < 0),
+    N_no_change = sum(Bile_sec_change == 0),
+    .groups = "drop"
+  )
+
+kable(bile_change_summary,
+      caption = "Descriptive Statistics: Change in Bile Secretion by Hormone Type",
+      digits = 2)
+```
+
+## Visualization
+
+```{r plots-936, fig.width=12, fig.height=8}
+# Box plot of change
+p5 <- ggplot(bile_change_data, aes(x = Hormone, y = Bile_sec_change, fill = Hormone)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black", linewidth = 0.8) +
+  geom_boxplot(alpha = 0.7, outlier.color = "red") +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 1.5) +
+  labs(
+    title = "Change in Bile Secretion (Post - Pre) by Hormone Type",
+    x = "Hormone Type",
+    y = "Change in Bile Secretion (µL/kg/min)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5, face = "bold"))
+
+# Pre vs Post comparison
+bile_change_long <- bile_change_data %>%
+  pivot_longer(cols = c(Bile_sec_pre, Bile_sec_post),
+               names_to = "Time",
+               values_to = "Bile_secretion") %>%
+  mutate(Time = factor(Time, levels = c("Bile_sec_pre", "Bile_sec_post"),
+                      labels = c("Pre-treatment", "Post-treatment")))
+
+p6 <- ggplot(bile_change_long, aes(x = Hormone, y = Bile_secretion, fill = Time)) +
+  geom_boxplot(alpha = 0.7, position = position_dodge(width = 0.8)) +
+  labs(
+    title = "Bile Secretion: Pre-treatment vs Post-treatment by Hormone",
+    x = "Hormone Type",
+    y = "Bile Secretion (µL/kg/min)",
+    fill = "Treatment Phase"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        legend.position = "bottom")
+
+gridExtra::grid.arrange(p5, p6, ncol = 1)
+```
+
+## Kruskal-Wallis Test
+
+```{r kruskal-wallis-936}
+# Perform Kruskal-Wallis test on change scores
+kruskal_result_change <- kruskal.test(Bile_sec_change ~ Hormone, data = bile_change_data)
+
+cat("=== KRUSKAL-WALLIS TEST RESULTS ===\n\n")
+cat("Null Hypothesis: The distributions of bile secretion change are the same across hormone types\n")
+cat("Alternative Hypothesis: At least one hormone type differs in bile secretion change distribution\n\n")
+cat(sprintf("Kruskal-Wallis chi-squared = %.4f\n", kruskal_result_change$statistic))
+cat(sprintf("Degrees of freedom = %d\n", kruskal_result_change$parameter))
+cat(sprintf("p-value = %.6f\n\n", kruskal_result_change$p.value))
+
+if (kruskal_result_change$p.value < 0.05) {
+  cat("CONCLUSION: At α = 0.05, we REJECT the null hypothesis.\n")
+  cat("There is significant evidence that change in bile secretion differs among hormone types.\n")
+} else {
+  cat("CONCLUSION: At α = 0.05, we FAIL TO REJECT the null hypothesis.\n")
+  cat("There is insufficient evidence that change in bile secretion differs among hormone types.\n")
+}
+```
+
+## Post-Hoc Pairwise Comparisons
+
+```{r posthoc-936}
+if (kruskal_result_change$p.value < 0.05) {
+  cat("\n=== POST-HOC PAIRWISE COMPARISONS (DUNN'S TEST) ===\n\n")
+
+  # Dunn's test for pairwise comparisons
+  dunn_results_change <- bile_change_data %>%
+    dunn_test(Bile_sec_change ~ Hormone, p.adjust.method = "bonferroni")
+
+  print(kable(dunn_results_change %>%
+          select(group1, group2, n1, n2, statistic, p, p.adj, p.adj.signif),
+        caption = "Dunn's Test: Pairwise Comparisons with Bonferroni Correction",
+        digits = 4))
+}
+```
+
+---
+
+# Problem 9.37: Comparison of Nonparametric vs Parametric Methods
+
+**Problem 9.37**: Compare your results in Problems 9.34-9.36 (nonparametric methods) with the corresponding results using parametric methods in Problems 8.82-8.84.
+
+## Summary of Nonparametric Results
+
+```{r summary-nonparametric}
+# Create summary table of all nonparametric test results
+nonparametric_summary <- data.frame(
+  Problem = c("9.34 (8.82)", "9.35 (8.83)", "9.36 (8.84)"),
+  Analysis = c(
+    "Bile secretion post-treatment by hormone type",
+    "Pancreatic pH post-treatment by hormone type",
+    "Change in bile secretion by hormone type"
+  ),
+  Test = rep("Kruskal-Wallis", 3),
+  Test_Statistic = c(
+    kruskal_result$statistic,
+    kruskal_result_ph$statistic,
+    kruskal_result_change$statistic
+  ),
+  DF = c(
+    kruskal_result$parameter,
+    kruskal_result_ph$parameter,
+    kruskal_result_change$parameter
+  ),
+  P_Value = c(
+    kruskal_result$p.value,
+    kruskal_result_ph$p.value,
+    kruskal_result_change$p.value
+  ),
+  Significant = c(
+    kruskal_result$p.value < 0.05,
+    kruskal_result_ph$p.value < 0.05,
+    kruskal_result_change$p.value < 0.05
+  )
+)
+
+kable(nonparametric_summary,
+      caption = "Summary of Nonparametric Test Results (Problems 9.34-9.36)",
+      digits = 4,
+      col.names = c("Problem", "Analysis", "Test", "χ²", "df", "p-value", "Significant?"))
+```
+
+## Parametric Analyses (for Comparison)
+
+Now let's perform the corresponding **parametric analyses** (one-way ANOVA) to compare with nonparametric results.
+
+### Problem 8.82 - One-way ANOVA: Bile Secretion Post-Treatment
+
+```{r parametric-882}
+cat("=== PARAMETRIC ANALYSIS: ONE-WAY ANOVA ===\n")
+cat("Problem 8.82: Bile Secretion Post-Treatment by Hormone Type\n\n")
+
+# One-way ANOVA
+anova_bile_sec <- aov(Bile_secretion_post ~ Hormone, data = bile_sec_data)
+anova_summary_bile <- summary(anova_bile_sec)
+
+print(anova_summary_bile)
+
+# Extract F-statistic and p-value
+f_stat_bile <- anova_summary_bile[[1]]$`F value`[1]
+p_val_bile <- anova_summary_bile[[1]]$`Pr(>F)`[1]
+
+cat(sprintf("\nF-statistic = %.4f\n", f_stat_bile))
+cat(sprintf("p-value = %.6f\n", p_val_bile))
+cat(sprintf("Significant at α = 0.05? %s\n", ifelse(p_val_bile < 0.05, "YES", "NO")))
+
+# Check assumptions
+cat("\n--- ANOVA Assumptions Check ---\n\n")
+
+# Normality test (Shapiro-Wilk on residuals)
+residuals_bile <- residuals(anova_bile_sec)
+shapiro_test_bile <- shapiro.test(residuals_bile)
+cat(sprintf("Shapiro-Wilk test for normality: W = %.4f, p-value = %.6f\n",
+            shapiro_test_bile$statistic, shapiro_test_bile$p.value))
+cat(sprintf("Normality assumption satisfied? %s\n",
+            ifelse(shapiro_test_bile$p.value > 0.05, "YES", "NO")))
+
+# Levene's test for homogeneity of variance
+levene_test_bile <- bile_sec_data %>% levene_test(Bile_secretion_post ~ Hormone)
+cat(sprintf("Levene's test for equal variances: F = %.4f, p-value = %.6f\n",
+            levene_test_bile$statistic, levene_test_bile$p))
+cat(sprintf("Equal variance assumption satisfied? %s\n",
+            ifelse(levene_test_bile$p > 0.05, "YES", "NO")))
+```
+
+### Problem 8.83 - One-way ANOVA: Pancreatic pH Post-Treatment
+
+```{r parametric-883}
+cat("\n\n=== PARAMETRIC ANALYSIS: ONE-WAY ANOVA ===\n")
+cat("Problem 8.83: Pancreatic pH Post-Treatment by Hormone Type\n\n")
+
+# One-way ANOVA
+anova_pan_ph <- aov(Pancreatic_pH_post ~ Hormone, data = pan_ph_data)
+anova_summary_ph <- summary(anova_pan_ph)
+
+print(anova_summary_ph)
+
+# Extract F-statistic and p-value
+f_stat_ph <- anova_summary_ph[[1]]$`F value`[1]
+p_val_ph <- anova_summary_ph[[1]]$`Pr(>F)`[1]
+
+cat(sprintf("\nF-statistic = %.4f\n", f_stat_ph))
+cat(sprintf("p-value = %.6f\n", p_val_ph))
+cat(sprintf("Significant at α = 0.05? %s\n", ifelse(p_val_ph < 0.05, "YES", "NO")))
+
+# Check assumptions
+cat("\n--- ANOVA Assumptions Check ---\n\n")
+
+# Normality test
+residuals_ph <- residuals(anova_pan_ph)
+shapiro_test_ph <- shapiro.test(residuals_ph)
+cat(sprintf("Shapiro-Wilk test for normality: W = %.4f, p-value = %.6f\n",
+            shapiro_test_ph$statistic, shapiro_test_ph$p.value))
+cat(sprintf("Normality assumption satisfied? %s\n",
+            ifelse(shapiro_test_ph$p.value > 0.05, "YES", "NO")))
+
+# Levene's test
+levene_test_ph <- pan_ph_data %>% levene_test(Pancreatic_pH_post ~ Hormone)
+cat(sprintf("Levene's test for equal variances: F = %.4f, p-value = %.6f\n",
+            levene_test_ph$statistic, levene_test_ph$p))
+cat(sprintf("Equal variance assumption satisfied? %s\n",
+            ifelse(levene_test_ph$p > 0.05, "YES", "NO")))
+```
+
+### Problem 8.84 - One-way ANOVA: Change in Bile Secretion
+
+```{r parametric-884}
+cat("\n\n=== PARAMETRIC ANALYSIS: ONE-WAY ANOVA ===\n")
+cat("Problem 8.84: Change in Bile Secretion by Hormone Type\n\n")
+
+# One-way ANOVA
+anova_change <- aov(Bile_sec_change ~ Hormone, data = bile_change_data)
+anova_summary_change <- summary(anova_change)
+
+print(anova_summary_change)
+
+# Extract F-statistic and p-value
+f_stat_change <- anova_summary_change[[1]]$`F value`[1]
+p_val_change <- anova_summary_change[[1]]$`Pr(>F)`[1]
+
+cat(sprintf("\nF-statistic = %.4f\n", f_stat_change))
+cat(sprintf("p-value = %.6f\n", p_val_change))
+cat(sprintf("Significant at α = 0.05? %s\n", ifelse(p_val_change < 0.05, "YES", "NO")))
+
+# Check assumptions
+cat("\n--- ANOVA Assumptions Check ---\n\n")
+
+# Normality test
+residuals_change <- residuals(anova_change)
+shapiro_test_change <- shapiro.test(residuals_change)
+cat(sprintf("Shapiro-Wilk test for normality: W = %.4f, p-value = %.6f\n",
+            shapiro_test_change$statistic, shapiro_test_change$p.value))
+cat(sprintf("Normality assumption satisfied? %s\n",
+            ifelse(shapiro_test_change$p.value > 0.05, "YES", "NO")))
+
+# Levene's test
+levene_test_change <- bile_change_data %>% levene_test(Bile_sec_change ~ Hormone)
+cat(sprintf("Levene's test for equal variances: F = %.4f, p-value = %.6f\n",
+            levene_test_change$statistic, levene_test_change$p))
+cat(sprintf("Equal variance assumption satisfied? %s\n",
+            ifelse(levene_test_change$p > 0.05, "YES", "NO")))
+```
+
+## Comprehensive Comparison Table
+
+```{r comparison-table}
+# Create comprehensive comparison table
+comparison_table <- data.frame(
+  Problem = c("9.34 vs 8.82", "9.35 vs 8.83", "9.36 vs 8.84"),
+  Analysis = c(
+    "Bile secretion post-treatment",
+    "Pancreatic pH post-treatment",
+    "Change in bile secretion"
+  ),
+  Nonparametric_Test = rep("Kruskal-Wallis χ²", 3),
+  Nonparametric_Stat = c(
+    sprintf("%.4f", kruskal_result$statistic),
+    sprintf("%.4f", kruskal_result_ph$statistic),
+    sprintf("%.4f", kruskal_result_change$statistic)
+  ),
+  Nonparametric_P = c(
+    sprintf("%.6f", kruskal_result$p.value),
+    sprintf("%.6f", kruskal_result_ph$p.value),
+    sprintf("%.6f", kruskal_result_change$p.value)
+  ),
+  Parametric_Test = rep("One-way ANOVA F", 3),
+  Parametric_Stat = c(
+    sprintf("%.4f", f_stat_bile),
+    sprintf("%.4f", f_stat_ph),
+    sprintf("%.4f", f_stat_change)
+  ),
+  Parametric_P = c(
+    sprintf("%.6f", p_val_bile),
+    sprintf("%.6f", p_val_ph),
+    sprintf("%.6f", p_val_change)
+  ),
+  Agreement = c(
+    (kruskal_result$p.value < 0.05) == (p_val_bile < 0.05),
+    (kruskal_result_ph$p.value < 0.05) == (p_val_ph < 0.05),
+    (kruskal_result_change$p.value < 0.05) == (p_val_change < 0.05)
+  )
+)
+
+kable(comparison_table,
+      caption = "Comparison of Nonparametric vs Parametric Methods",
+      col.names = c("Problem", "Analysis", "Nonparametric Test", "Statistic", "p-value",
+                    "Parametric Test", "Statistic", "p-value", "Agreement?"))
+```
+
+## Discussion and Interpretation
+
+```{r discussion}
+cat("=== COMPARISON OF NONPARAMETRIC VS PARAMETRIC METHODS ===\n\n")
+
+cat("1. METHODOLOGICAL DIFFERENCES:\n\n")
+cat("   a) Kruskal-Wallis Test (Nonparametric):\n")
+cat("      - Tests whether distributions differ across groups\n")
+cat("      - Based on ranks, not raw values\n")
+cat("      - No assumptions about data distribution\n")
+cat("      - Robust to outliers and skewed data\n")
+cat("      - Less powerful when assumptions are met\n\n")
+
+cat("   b) One-way ANOVA (Parametric):\n")
+cat("      - Tests whether population means differ across groups\n")
+cat("      - Based on raw values\n")
+cat("      - Assumes normality and equal variances\n")
+cat("      - More powerful when assumptions are met\n")
+cat("      - Sensitive to outliers and departures from normality\n\n")
+
+cat("2. ASSUMPTION VIOLATIONS:\n\n")
+
+# Bile secretion
+cat("   a) Bile Secretion Post-Treatment:\n")
+cat(sprintf("      - Normality: %s (Shapiro-Wilk p = %.6f)\n",
+            ifelse(shapiro_test_bile$p.value > 0.05, "SATISFIED", "VIOLATED"),
+            shapiro_test_bile$p.value))
+cat(sprintf("      - Equal variances: %s (Levene's p = %.6f)\n",
+            ifelse(levene_test_bile$p > 0.05, "SATISFIED", "VIOLATED"),
+            levene_test_bile$p))
+cat(sprintf("      - Recommendation: Use %s method\n",
+            ifelse(shapiro_test_bile$p.value > 0.05 & levene_test_bile$p > 0.05,
+                   "PARAMETRIC", "NONPARAMETRIC")))
+cat("\n")
+
+# Pancreatic pH
+cat("   b) Pancreatic pH Post-Treatment:\n")
+cat(sprintf("      - Normality: %s (Shapiro-Wilk p = %.6f)\n",
+            ifelse(shapiro_test_ph$p.value > 0.05, "SATISFIED", "VIOLATED"),
+            shapiro_test_ph$p.value))
+cat(sprintf("      - Equal variances: %s (Levene's p = %.6f)\n",
+            ifelse(levene_test_ph$p > 0.05, "SATISFIED", "VIOLATED"),
+            levene_test_ph$p))
+cat(sprintf("      - Recommendation: Use %s method\n",
+            ifelse(shapiro_test_ph$p.value > 0.05 & levene_test_ph$p > 0.05,
+                   "PARAMETRIC", "NONPARAMETRIC")))
+cat("\n")
+
+# Change in bile secretion
+cat("   c) Change in Bile Secretion:\n")
+cat(sprintf("      - Normality: %s (Shapiro-Wilk p = %.6f)\n",
+            ifelse(shapiro_test_change$p.value > 0.05, "SATISFIED", "VIOLATED"),
+            shapiro_test_change$p.value))
+cat(sprintf("      - Equal variances: %s (Levene's p = %.6f)\n",
+            ifelse(levene_test_change$p > 0.05, "SATISFIED", "VIOLATED"),
+            levene_test_change$p))
+cat(sprintf("      - Recommendation: Use %s method\n",
+            ifelse(shapiro_test_change$p.value > 0.05 & levene_test_change$p > 0.05,
+                   "PARAMETRIC", "NONPARAMETRIC")))
+cat("\n")
+
+cat("3. AGREEMENT BETWEEN METHODS:\n\n")
+
+# Check agreement for each problem
+agreement_count <- sum(comparison_table$Agreement)
+cat(sprintf("   - Methods agree on significance for %d out of 3 comparisons\n",
+            agreement_count))
+
+for (i in 1:3) {
+  cat(sprintf("   - %s: %s\n",
+              comparison_table$Problem[i],
+              ifelse(comparison_table$Agreement[i],
+                     "BOTH methods reach same conclusion",
+                     "DIFFERENT conclusions - use nonparametric")))
+}
+
+cat("\n4. WHEN TO USE NONPARAMETRIC METHODS:\n\n")
+cat("   Nonparametric methods (Kruskal-Wallis) are preferred when:\n")
+cat("   a) Data are not normally distributed\n")
+cat("   b) Variances are unequal across groups\n")
+cat("   c) Sample sizes are small\n")
+cat("   d) Data contain outliers\n")
+cat("   e) Data are ordinal or ranked\n")
+cat("   f) You want results robust to distributional assumptions\n\n")
+
+cat("5. PRACTICAL RECOMMENDATIONS:\n\n")
+cat("   For this hormone study:\n")
+cat("   - Secretion data often have many zeros (undetectable levels)\n")
+cat("   - This creates highly skewed distributions\n")
+cat("   - Nonparametric methods are more appropriate\n")
+cat("   - Results are more trustworthy and generalizable\n")
+cat("   - Conclusions are robust to distributional assumptions\n\n")
+
+cat("6. FINAL CONCLUSION:\n\n")
+if (agreement_count == 3) {
+  cat("   Both methods reach identical conclusions for all comparisons.\n")
+  cat("   However, given the nature of the data (secretion levels with many zeros),\n")
+  cat("   the nonparametric results are more trustworthy and should be reported.\n")
+} else {
+  cat("   Methods disagree for some comparisons.\n")
+  cat("   When ANOVA assumptions are violated, nonparametric results are preferred.\n")
+  cat("   Report nonparametric results as primary findings.\n")
+}
+```
+
+---
+
+# Summary and Conclusions
+
+## Key Findings
+
+```{r final-summary}
+cat("=== FINAL SUMMARY OF ANALYSES ===\n\n")
+
+cat("PROBLEM 9.34 (Bile Secretion Post-Treatment):\n")
+cat(sprintf("  Kruskal-Wallis χ² = %.4f, p = %.6f\n",
+            kruskal_result$statistic, kruskal_result$p.value))
+cat(sprintf("  Conclusion: %s\n\n",
+            ifelse(kruskal_result$p.value < 0.05,
+                   "Significant differences exist among hormone types",
+                   "No significant differences among hormone types")))
+
+cat("PROBLEM 9.35 (Pancreatic pH Post-Treatment):\n")
+cat(sprintf("  Kruskal-Wallis χ² = %.4f, p = %.6f\n",
+            kruskal_result_ph$statistic, kruskal_result_ph$p.value))
+cat(sprintf("  Conclusion: %s\n\n",
+            ifelse(kruskal_result_ph$p.value < 0.05,
+                   "Significant differences exist among hormone types",
+                   "No significant differences among hormone types")))
+
+cat("PROBLEM 9.36 (Change in Bile Secretion):\n")
+cat(sprintf("  Kruskal-Wallis χ² = %.4f, p = %.6f\n",
+            kruskal_result_change$statistic, kruskal_result_change$p.value))
+cat(sprintf("  Conclusion: %s\n\n",
+            ifelse(kruskal_result_change$p.value < 0.05,
+                   "Significant differences exist among hormone types",
+                   "No significant differences among hormone types")))
+
+cat("PROBLEM 9.37 (Comparison of Methods):\n")
+cat(sprintf("  Agreement rate: %d/3 (%.1f%%)\n",
+            agreement_count, agreement_count/3*100))
+cat("  Recommendation: Use nonparametric methods due to:\n")
+cat("    - Skewed distributions (many zero values)\n")
+cat("    - Violation of normality assumptions\n")
+cat("    - Robustness to outliers\n")
+cat("    - More appropriate for this type of biomedical data\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

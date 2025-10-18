@@ -1,0 +1,773 @@
+---
+title: "Endocrinology - Bone Density in Twins (Problems 9.41-9.42)"
+subtitle: "Nonparametric Methods for Paired Data Analysis"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: united
+    highlight: tango
+    fig_width: 10
+    fig_height: 6
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = 'center'
+)
+```
+
+# Introduction
+
+This document analyzes bone mineral density (BMD) data from a twin study examining the effects of smoking on bone health. The analysis uses **nonparametric methods** (Wilcoxon signed-rank test) for Problems 9.41-9.42 to answer the same research questions originally addressed with parametric methods (paired t-tests) in Problems 7.73-7.74.
+
+## Dataset Description
+
+**File**: BONEDEN.DAT
+
+**Study Design**: Matched pairs design using twin pairs (monozygotic and dizygotic)
+
+**Variables**:
+
+- `ID`: Twin pair identifier
+- `zyg`: Zygosity (1 = monozygotic, 2 = dizygotic)
+- Visit 1 measurements (suffix `1`):
+  - `fn1`: Femoral neck BMD (g/cm²)
+  - `fs1`: Femoral shaft BMD (g/cm²)
+  - `pyr1`: Pack-years of smoking
+- Visit 2 measurements (suffix `2`):
+  - `fn2`: Femoral neck BMD (g/cm²)
+  - `fs2`: Femoral shaft BMD (g/cm²)
+  - `pyr2`: Pack-years of smoking
+
+**Research Questions**:
+
+- **Problem 9.41 (7.73)**: Do heavier-smoking twins have significantly different femoral neck BMD compared to lighter-smoking twins?
+- **Problem 9.42 (7.74)**: Do heavier-smoking twins have significantly different femoral shaft BMD compared to lighter-smoking twins?
+
+---
+
+# Data Preparation
+
+```{r load-libraries}
+# Load required libraries
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(knitr)
+```
+
+```{r load-data}
+# Read the BONEDEN.DAT file
+boneden_data <- read_csv(
+  "Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/BONEDEN.DAT.txt",
+  show_col_types = FALSE,
+  name_repair = "minimal"
+)
+
+# Clean column names (remove quotes if present)
+names(boneden_data) <- gsub("'", "", names(boneden_data))
+names(boneden_data) <- trimws(names(boneden_data))
+
+cat("Column names in dataset:\n")
+cat(paste(names(boneden_data), collapse = ", "), "\n\n")
+
+# Data cleaning for twin pair analysis
+# Identify heavier and lighter smoking twin within each pair
+twin_data <- boneden_data %>%
+  filter(!is.na(.data$pyr1) & !is.na(.data$pyr2)) %>%
+  mutate(
+    # Average pack-years across two visits
+    pyr_twin1 = as.numeric(.data$pyr1),
+    pyr_twin2 = as.numeric(.data$pyr2),
+
+    # BMD measurements (use visit 1 as primary)
+    fn_twin1 = as.numeric(.data$fn1),
+    fn_twin2 = as.numeric(.data$fn2),
+    fs_twin1 = as.numeric(.data$fs1),
+    fs_twin2 = as.numeric(.data$fs2)
+  ) %>%
+  filter(!is.na(fn_twin1) & !is.na(fn_twin2) &
+         !is.na(fs_twin1) & !is.na(fs_twin2)) %>%
+  # Determine which twin smokes more
+  mutate(
+    # Heavier smoker and lighter smoker BMD values
+    fn_heavier = ifelse(pyr_twin1 > pyr_twin2, fn_twin1, fn_twin2),
+    fn_lighter = ifelse(pyr_twin1 > pyr_twin2, fn_twin2, fn_twin1),
+    fs_heavier = ifelse(pyr_twin1 > pyr_twin2, fs_twin1, fs_twin2),
+    fs_lighter = ifelse(pyr_twin1 > pyr_twin2, fs_twin2, fs_twin1),
+
+    # Pack-years for heavier and lighter smoker
+    pyr_heavier = pmax(pyr_twin1, pyr_twin2),
+    pyr_lighter = pmin(pyr_twin1, pyr_twin2),
+
+    # Calculate differences (lighter - heavier)
+    fn_diff = fn_lighter - fn_heavier,
+    fs_diff = fs_lighter - fs_heavier
+  ) %>%
+  # Only keep pairs where there's a smoking difference
+  filter(pyr_heavier != pyr_lighter) %>%
+  select(ID, zyg, pyr_heavier, pyr_lighter,
+         fn_heavier, fn_lighter, fn_diff,
+         fs_heavier, fs_lighter, fs_diff)
+
+cat("Number of twin pairs with different smoking levels:", nrow(twin_data), "\n\n")
+
+# Display first few rows
+cat("First few twin pairs:\n")
+print(head(twin_data, 5))
+```
+
+---
+
+# Problem 9.41: Femoral Neck BMD (Nonparametric)
+
+**Problem 9.41**: Use nonparametric methods to assess whether there are significant differences in mean BMD for the femoral neck between heavier- and lighter-smoking twins (analogous to Problem 7.73).
+
+## Descriptive Statistics
+
+```{r descriptives-941}
+# Descriptive statistics for femoral neck BMD
+fn_summary <- data.frame(
+  Group = c("Heavier Smoker", "Lighter Smoker", "Difference (L - H)"),
+  N = c(nrow(twin_data), nrow(twin_data), nrow(twin_data)),
+  Mean = c(
+    mean(twin_data$fn_heavier, na.rm = TRUE),
+    mean(twin_data$fn_lighter, na.rm = TRUE),
+    mean(twin_data$fn_diff, na.rm = TRUE)
+  ),
+  SD = c(
+    sd(twin_data$fn_heavier, na.rm = TRUE),
+    sd(twin_data$fn_lighter, na.rm = TRUE),
+    sd(twin_data$fn_diff, na.rm = TRUE)
+  ),
+  Median = c(
+    median(twin_data$fn_heavier, na.rm = TRUE),
+    median(twin_data$fn_lighter, na.rm = TRUE),
+    median(twin_data$fn_diff, na.rm = TRUE)
+  ),
+  Q1 = c(
+    quantile(twin_data$fn_heavier, 0.25, na.rm = TRUE),
+    quantile(twin_data$fn_lighter, 0.25, na.rm = TRUE),
+    quantile(twin_data$fn_diff, 0.25, na.rm = TRUE)
+  ),
+  Q3 = c(
+    quantile(twin_data$fn_heavier, 0.75, na.rm = TRUE),
+    quantile(twin_data$fn_lighter, 0.75, na.rm = TRUE),
+    quantile(twin_data$fn_diff, 0.75, na.rm = TRUE)
+  ),
+  Min = c(
+    min(twin_data$fn_heavier, na.rm = TRUE),
+    min(twin_data$fn_lighter, na.rm = TRUE),
+    min(twin_data$fn_diff, na.rm = TRUE)
+  ),
+  Max = c(
+    max(twin_data$fn_heavier, na.rm = TRUE),
+    max(twin_data$fn_lighter, na.rm = TRUE),
+    max(twin_data$fn_diff, na.rm = TRUE)
+  )
+)
+
+kable(fn_summary,
+      caption = "Descriptive Statistics: Femoral Neck BMD (g/cm²)",
+      digits = 4)
+```
+
+## Visualization
+
+```{r plots-941, fig.width=12, fig.height=8}
+# Prepare data for plotting
+fn_plot_data <- twin_data %>%
+  select(ID, fn_heavier, fn_lighter) %>%
+  pivot_longer(cols = c(fn_heavier, fn_lighter),
+               names_to = "Smoker_Type",
+               values_to = "BMD") %>%
+  mutate(Smoker_Type = factor(Smoker_Type,
+                              levels = c("fn_heavier", "fn_lighter"),
+                              labels = c("Heavier Smoker", "Lighter Smoker")))
+
+# Box plot comparison
+p1 <- ggplot(fn_plot_data, aes(x = Smoker_Type, y = BMD, fill = Smoker_Type)) +
+  geom_boxplot(alpha = 0.7, outlier.color = "red") +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 1.5) +
+  labs(
+    title = "Femoral Neck BMD: Heavier vs Lighter Smoking Twins",
+    x = "Twin Group",
+    y = "BMD (g/cm²)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5, face = "bold")) +
+  scale_fill_manual(values = c("Heavier Smoker" = "#E74C3C",
+                                "Lighter Smoker" = "#3498DB"))
+
+# Paired differences plot
+p2 <- ggplot(twin_data, aes(x = fn_diff)) +
+  geom_histogram(bins = 20, fill = "#3498DB", alpha = 0.7, color = "black") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red", linewidth = 1) +
+  geom_vline(xintercept = median(twin_data$fn_diff),
+             linetype = "solid", color = "blue", linewidth = 1) +
+  labs(
+    title = "Distribution of Paired Differences (Lighter - Heavier)",
+    subtitle = "Red dashed = 0, Blue solid = Median",
+    x = "BMD Difference (g/cm²)",
+    y = "Frequency"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5))
+
+# Paired scatterplot
+p3 <- ggplot(twin_data, aes(x = fn_heavier, y = fn_lighter)) +
+  geom_point(alpha = 0.6, size = 3, color = "#2C3E50") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red", linewidth = 1) +
+  labs(
+    title = "Paired Comparison: Femoral Neck BMD",
+    x = "Heavier Smoker BMD (g/cm²)",
+    y = "Lighter Smoker BMD (g/cm²)",
+    subtitle = "Red line = equality (lighter = heavier)"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5)) +
+  coord_equal()
+
+# Q-Q plot to check normality of differences
+p4 <- ggplot(twin_data, aes(sample = fn_diff)) +
+  stat_qq() +
+  stat_qq_line(color = "red", linewidth = 1) +
+  labs(
+    title = "Q-Q Plot: Normality Check for Differences",
+    x = "Theoretical Quantiles",
+    y = "Sample Quantiles"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+gridExtra::grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+## Wilcoxon Signed-Rank Test
+
+The **Wilcoxon signed-rank test** is the nonparametric alternative to the paired t-test for matched pairs data.
+
+```{r wilcoxon-941}
+cat("=== WILCOXON SIGNED-RANK TEST: FEMORAL NECK BMD ===\n\n")
+
+# Perform Wilcoxon signed-rank test
+wilcox_fn <- wilcox.test(twin_data$fn_lighter, twin_data$fn_heavier,
+                         paired = TRUE,
+                         alternative = "two.sided",
+                         exact = FALSE,
+                         correct = TRUE,
+                         conf.int = TRUE)
+
+cat("Null Hypothesis: The median difference in femoral neck BMD is zero\n")
+cat("Alternative Hypothesis: The median difference is not zero\n")
+cat("(Positive difference means lighter smoker has higher BMD)\n\n")
+
+cat(sprintf("Test Statistic (V) = %.1f\n", wilcox_fn$statistic))
+cat(sprintf("p-value = %.6f\n\n", wilcox_fn$p.value))
+cat(sprintf("Pseudomedian difference = %.4f g/cm²\n", wilcox_fn$estimate))
+cat(sprintf("95%% CI for pseudomedian: [%.4f, %.4f]\n\n",
+            wilcox_fn$conf.int[1], wilcox_fn$conf.int[2]))
+
+if (wilcox_fn$p.value < 0.05) {
+  cat("CONCLUSION: At α = 0.05, we REJECT the null hypothesis.\n")
+  cat("There is significant evidence that femoral neck BMD differs between\n")
+  cat("heavier-smoking and lighter-smoking twins.\n\n")
+  if (wilcox_fn$estimate > 0) {
+    cat("DIRECTION: Lighter-smoking twins have HIGHER femoral neck BMD.\n")
+  } else {
+    cat("DIRECTION: Heavier-smoking twins have HIGHER femoral neck BMD.\n")
+  }
+} else {
+  cat("CONCLUSION: At α = 0.05, we FAIL TO REJECT the null hypothesis.\n")
+  cat("There is insufficient evidence that femoral neck BMD differs between\n")
+  cat("heavier-smoking and lighter-smoking twins.\n")
+}
+
+# Additional statistics
+cat("\n--- Additional Statistics ---\n\n")
+cat(sprintf("Number of positive differences: %d\n", sum(twin_data$fn_diff > 0)))
+cat(sprintf("Number of negative differences: %d\n", sum(twin_data$fn_diff < 0)))
+cat(sprintf("Number of zero differences: %d\n", sum(twin_data$fn_diff == 0)))
+cat(sprintf("Median of differences: %.4f g/cm²\n", median(twin_data$fn_diff)))
+cat(sprintf("Mean of differences: %.4f g/cm²\n", mean(twin_data$fn_diff)))
+```
+
+---
+
+# Problem 9.42: Femoral Shaft BMD (Nonparametric)
+
+**Problem 9.42**: Use nonparametric methods to assess whether there are significant differences in mean BMD for the femoral shaft between heavier- and lighter-smoking twins (analogous to Problem 7.74).
+
+## Descriptive Statistics
+
+```{r descriptives-942}
+# Descriptive statistics for femoral shaft BMD
+fs_summary <- data.frame(
+  Group = c("Heavier Smoker", "Lighter Smoker", "Difference (L - H)"),
+  N = c(nrow(twin_data), nrow(twin_data), nrow(twin_data)),
+  Mean = c(
+    mean(twin_data$fs_heavier, na.rm = TRUE),
+    mean(twin_data$fs_lighter, na.rm = TRUE),
+    mean(twin_data$fs_diff, na.rm = TRUE)
+  ),
+  SD = c(
+    sd(twin_data$fs_heavier, na.rm = TRUE),
+    sd(twin_data$fs_lighter, na.rm = TRUE),
+    sd(twin_data$fs_diff, na.rm = TRUE)
+  ),
+  Median = c(
+    median(twin_data$fs_heavier, na.rm = TRUE),
+    median(twin_data$fs_lighter, na.rm = TRUE),
+    median(twin_data$fs_diff, na.rm = TRUE)
+  ),
+  Q1 = c(
+    quantile(twin_data$fs_heavier, 0.25, na.rm = TRUE),
+    quantile(twin_data$fs_lighter, 0.25, na.rm = TRUE),
+    quantile(twin_data$fs_diff, 0.25, na.rm = TRUE)
+  ),
+  Q3 = c(
+    quantile(twin_data$fs_heavier, 0.75, na.rm = TRUE),
+    quantile(twin_data$fs_lighter, 0.75, na.rm = TRUE),
+    quantile(twin_data$fs_diff, 0.75, na.rm = TRUE)
+  ),
+  Min = c(
+    min(twin_data$fs_heavier, na.rm = TRUE),
+    min(twin_data$fs_lighter, na.rm = TRUE),
+    min(twin_data$fs_diff, na.rm = TRUE)
+  ),
+  Max = c(
+    max(twin_data$fs_heavier, na.rm = TRUE),
+    max(twin_data$fs_lighter, na.rm = TRUE),
+    max(twin_data$fs_diff, na.rm = TRUE)
+  )
+)
+
+kable(fs_summary,
+      caption = "Descriptive Statistics: Femoral Shaft BMD (g/cm²)",
+      digits = 4)
+```
+
+## Visualization
+
+```{r plots-942, fig.width=12, fig.height=8}
+# Prepare data for plotting
+fs_plot_data <- twin_data %>%
+  select(ID, fs_heavier, fs_lighter) %>%
+  pivot_longer(cols = c(fs_heavier, fs_lighter),
+               names_to = "Smoker_Type",
+               values_to = "BMD") %>%
+  mutate(Smoker_Type = factor(Smoker_Type,
+                              levels = c("fs_heavier", "fs_lighter"),
+                              labels = c("Heavier Smoker", "Lighter Smoker")))
+
+# Box plot comparison
+p5 <- ggplot(fs_plot_data, aes(x = Smoker_Type, y = BMD, fill = Smoker_Type)) +
+  geom_boxplot(alpha = 0.7, outlier.color = "red") +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 1.5) +
+  labs(
+    title = "Femoral Shaft BMD: Heavier vs Lighter Smoking Twins",
+    x = "Twin Group",
+    y = "BMD (g/cm²)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5, face = "bold")) +
+  scale_fill_manual(values = c("Heavier Smoker" = "#E74C3C",
+                                "Lighter Smoker" = "#3498DB"))
+
+# Paired differences plot
+p6 <- ggplot(twin_data, aes(x = fs_diff)) +
+  geom_histogram(bins = 20, fill = "#3498DB", alpha = 0.7, color = "black") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red", linewidth = 1) +
+  geom_vline(xintercept = median(twin_data$fs_diff),
+             linetype = "solid", color = "blue", linewidth = 1) +
+  labs(
+    title = "Distribution of Paired Differences (Lighter - Heavier)",
+    subtitle = "Red dashed = 0, Blue solid = Median",
+    x = "BMD Difference (g/cm²)",
+    y = "Frequency"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5))
+
+# Paired scatterplot
+p7 <- ggplot(twin_data, aes(x = fs_heavier, y = fs_lighter)) +
+  geom_point(alpha = 0.6, size = 3, color = "#2C3E50") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red", linewidth = 1) +
+  labs(
+    title = "Paired Comparison: Femoral Shaft BMD",
+    x = "Heavier Smoker BMD (g/cm²)",
+    y = "Lighter Smoker BMD (g/cm²)",
+    subtitle = "Red line = equality (lighter = heavier)"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5)) +
+  coord_equal()
+
+# Q-Q plot to check normality of differences
+p8 <- ggplot(twin_data, aes(sample = fs_diff)) +
+  stat_qq() +
+  stat_qq_line(color = "red", linewidth = 1) +
+  labs(
+    title = "Q-Q Plot: Normality Check for Differences",
+    x = "Theoretical Quantiles",
+    y = "Sample Quantiles"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+gridExtra::grid.arrange(p5, p6, p7, p8, ncol = 2)
+```
+
+## Wilcoxon Signed-Rank Test
+
+```{r wilcoxon-942}
+cat("\n\n=== WILCOXON SIGNED-RANK TEST: FEMORAL SHAFT BMD ===\n\n")
+
+# Perform Wilcoxon signed-rank test
+wilcox_fs <- wilcox.test(twin_data$fs_lighter, twin_data$fs_heavier,
+                         paired = TRUE,
+                         alternative = "two.sided",
+                         exact = FALSE,
+                         correct = TRUE,
+                         conf.int = TRUE)
+
+cat("Null Hypothesis: The median difference in femoral shaft BMD is zero\n")
+cat("Alternative Hypothesis: The median difference is not zero\n")
+cat("(Positive difference means lighter smoker has higher BMD)\n\n")
+
+cat(sprintf("Test Statistic (V) = %.1f\n", wilcox_fs$statistic))
+cat(sprintf("p-value = %.6f\n\n", wilcox_fs$p.value))
+cat(sprintf("Pseudomedian difference = %.4f g/cm²\n", wilcox_fs$estimate))
+cat(sprintf("95%% CI for pseudomedian: [%.4f, %.4f]\n\n",
+            wilcox_fs$conf.int[1], wilcox_fs$conf.int[2]))
+
+if (wilcox_fs$p.value < 0.05) {
+  cat("CONCLUSION: At α = 0.05, we REJECT the null hypothesis.\n")
+  cat("There is significant evidence that femoral shaft BMD differs between\n")
+  cat("heavier-smoking and lighter-smoking twins.\n\n")
+  if (wilcox_fs$estimate > 0) {
+    cat("DIRECTION: Lighter-smoking twins have HIGHER femoral shaft BMD.\n")
+  } else {
+    cat("DIRECTION: Heavier-smoking twins have HIGHER femoral shaft BMD.\n")
+  }
+} else {
+  cat("CONCLUSION: At α = 0.05, we FAIL TO REJECT the null hypothesis.\n")
+  cat("There is insufficient evidence that femoral shaft BMD differs between\n")
+  cat("heavier-smoking and lighter-smoking twins.\n")
+}
+
+# Additional statistics
+cat("\n--- Additional Statistics ---\n\n")
+cat(sprintf("Number of positive differences: %d\n", sum(twin_data$fs_diff > 0)))
+cat(sprintf("Number of negative differences: %d\n", sum(twin_data$fs_diff < 0)))
+cat(sprintf("Number of zero differences: %d\n", sum(twin_data$fs_diff == 0)))
+cat(sprintf("Median of differences: %.4f g/cm²\n", median(twin_data$fs_diff)))
+cat(sprintf("Mean of differences: %.4f g/cm²\n", mean(twin_data$fs_diff)))
+```
+
+---
+
+# Comparison with Parametric Methods
+
+Now let's perform the corresponding **parametric analyses** (paired t-tests from Problems 7.73-7.74) to compare results.
+
+## Problem 7.73 - Paired t-test: Femoral Neck BMD
+
+```{r parametric-773}
+cat("\n\n=== PARAMETRIC ANALYSIS: PAIRED T-TEST ===\n")
+cat("Problem 7.73: Femoral Neck BMD\n\n")
+
+# Paired t-test
+ttest_fn <- t.test(twin_data$fn_lighter, twin_data$fn_heavier,
+                   paired = TRUE,
+                   alternative = "two.sided")
+
+print(ttest_fn)
+
+cat(sprintf("\nt-statistic = %.4f\n", ttest_fn$statistic))
+cat(sprintf("df = %d\n", ttest_fn$parameter))
+cat(sprintf("p-value = %.6f\n", ttest_fn$p.value))
+cat(sprintf("Mean difference = %.4f g/cm²\n", ttest_fn$estimate))
+cat(sprintf("95%% CI: [%.4f, %.4f]\n", ttest_fn$conf.int[1], ttest_fn$conf.int[2]))
+cat(sprintf("Significant at α = 0.05? %s\n", ifelse(ttest_fn$p.value < 0.05, "YES", "NO")))
+
+# Check normality assumption
+cat("\n--- Assumption Check: Normality of Differences ---\n\n")
+shapiro_fn <- shapiro.test(twin_data$fn_diff)
+cat(sprintf("Shapiro-Wilk test: W = %.4f, p-value = %.6f\n",
+            shapiro_fn$statistic, shapiro_fn$p.value))
+cat(sprintf("Normality assumption satisfied? %s\n",
+            ifelse(shapiro_fn$p.value > 0.05, "YES", "NO")))
+```
+
+## Problem 7.74 - Paired t-test: Femoral Shaft BMD
+
+```{r parametric-774}
+cat("\n\n=== PARAMETRIC ANALYSIS: PAIRED T-TEST ===\n")
+cat("Problem 7.74: Femoral Shaft BMD\n\n")
+
+# Paired t-test
+ttest_fs <- t.test(twin_data$fs_lighter, twin_data$fs_heavier,
+                   paired = TRUE,
+                   alternative = "two.sided")
+
+print(ttest_fs)
+
+cat(sprintf("\nt-statistic = %.4f\n", ttest_fs$statistic))
+cat(sprintf("df = %d\n", ttest_fs$parameter))
+cat(sprintf("p-value = %.6f\n", ttest_fs$p.value))
+cat(sprintf("Mean difference = %.4f g/cm²\n", ttest_fs$estimate))
+cat(sprintf("95%% CI: [%.4f, %.4f]\n", ttest_fs$conf.int[1], ttest_fs$conf.int[2]))
+cat(sprintf("Significant at α = 0.05? %s\n", ifelse(ttest_fs$p.value < 0.05, "YES", "NO")))
+
+# Check normality assumption
+cat("\n--- Assumption Check: Normality of Differences ---\n\n")
+shapiro_fs <- shapiro.test(twin_data$fs_diff)
+cat(sprintf("Shapiro-Wilk test: W = %.4f, p-value = %.6f\n",
+            shapiro_fs$statistic, shapiro_fs$p.value))
+cat(sprintf("Normality assumption satisfied? %s\n",
+            ifelse(shapiro_fs$p.value > 0.05, "YES", "NO")))
+```
+
+## Comprehensive Comparison Table
+
+```{r comparison-table}
+# Create comprehensive comparison table
+comparison_table <- data.frame(
+  Problem = c("9.41 vs 7.73", "9.42 vs 7.74"),
+  Anatomical_Site = c("Femoral Neck", "Femoral Shaft"),
+  N_Pairs = c(nrow(twin_data), nrow(twin_data)),
+  Nonparametric_Test = rep("Wilcoxon Signed-Rank", 2),
+  Wilcoxon_V = c(
+    sprintf("%.1f", wilcox_fn$statistic),
+    sprintf("%.1f", wilcox_fs$statistic)
+  ),
+  Wilcoxon_P = c(
+    sprintf("%.6f", wilcox_fn$p.value),
+    sprintf("%.6f", wilcox_fs$p.value)
+  ),
+  Pseudomedian_Diff = c(
+    sprintf("%.4f", wilcox_fn$estimate),
+    sprintf("%.4f", wilcox_fs$estimate)
+  ),
+  Parametric_Test = rep("Paired t-test", 2),
+  T_Statistic = c(
+    sprintf("%.4f", ttest_fn$statistic),
+    sprintf("%.4f", ttest_fs$statistic)
+  ),
+  T_P_Value = c(
+    sprintf("%.6f", ttest_fn$p.value),
+    sprintf("%.6f", ttest_fs$p.value)
+  ),
+  Mean_Diff = c(
+    sprintf("%.4f", ttest_fn$estimate),
+    sprintf("%.4f", ttest_fs$estimate)
+  ),
+  Agreement = c(
+    (wilcox_fn$p.value < 0.05) == (ttest_fn$p.value < 0.05),
+    (wilcox_fs$p.value < 0.05) == (ttest_fs$p.value < 0.05)
+  )
+)
+
+kable(comparison_table,
+      caption = "Comparison of Nonparametric vs Parametric Methods",
+      col.names = c("Problem", "Site", "N", "Nonparam Test", "V", "p-value",
+                    "Pseudomedian", "Param Test", "t", "p-value", "Mean Diff", "Agreement?"))
+```
+
+## Discussion and Interpretation
+
+```{r discussion}
+cat("\n\n=== COMPARISON OF NONPARAMETRIC VS PARAMETRIC METHODS ===\n\n")
+
+cat("1. METHODOLOGICAL DIFFERENCES:\n\n")
+cat("   a) Wilcoxon Signed-Rank Test (Nonparametric):\n")
+cat("      - Tests whether median difference is zero\n")
+cat("      - Based on ranks of absolute differences\n")
+cat("      - No assumptions about distribution of differences\n")
+cat("      - Robust to outliers and skewed distributions\n")
+cat("      - Less powerful when normality holds\n")
+cat("      - Reports pseudomedian (Hodges-Lehmann estimator)\n\n")
+
+cat("   b) Paired t-test (Parametric):\n")
+cat("      - Tests whether mean difference is zero\n")
+cat("      - Based on raw difference values\n")
+cat("      - Assumes normality of differences\n")
+cat("      - More powerful when assumptions are met\n")
+cat("      - Sensitive to outliers and skewness\n")
+cat("      - Reports mean difference\n\n")
+
+cat("2. ASSUMPTION VIOLATIONS:\n\n")
+
+# Femoral Neck
+cat("   a) Femoral Neck BMD:\n")
+cat(sprintf("      - Normality of differences: %s (Shapiro-Wilk p = %.6f)\n",
+            ifelse(shapiro_fn$p.value > 0.05, "SATISFIED", "VIOLATED"),
+            shapiro_fn$p.value))
+cat(sprintf("      - Recommendation: Use %s method\n",
+            ifelse(shapiro_fn$p.value > 0.05, "PARAMETRIC", "NONPARAMETRIC")))
+cat("\n")
+
+# Femoral Shaft
+cat("   b) Femoral Shaft BMD:\n")
+cat(sprintf("      - Normality of differences: %s (Shapiro-Wilk p = %.6f)\n",
+            ifelse(shapiro_fs$p.value > 0.05, "SATISFIED", "VIOLATED"),
+            shapiro_fs$p.value))
+cat(sprintf("      - Recommendation: Use %s method\n",
+            ifelse(shapiro_fs$p.value > 0.05, "PARAMETRIC", "NONPARAMETRIC")))
+cat("\n")
+
+cat("3. AGREEMENT BETWEEN METHODS:\n\n")
+
+agreement_count <- sum(comparison_table$Agreement)
+cat(sprintf("   - Methods agree on significance for %d out of 2 comparisons\n\n",
+            agreement_count))
+
+for (i in 1:2) {
+  cat(sprintf("   - %s (%s):\n",
+              comparison_table$Problem[i],
+              comparison_table$Anatomical_Site[i]))
+  if (comparison_table$Agreement[i]) {
+    cat("     Both methods reach SAME conclusion\n")
+  } else {
+    cat("     Methods reach DIFFERENT conclusions\n")
+    cat("     Use nonparametric if normality violated\n")
+  }
+  cat("\n")
+}
+
+cat("4. EFFECT SIZE COMPARISON:\n\n")
+
+cat("   Femoral Neck:\n")
+cat(sprintf("     - Mean difference (t-test): %.4f g/cm²\n", ttest_fn$estimate))
+cat(sprintf("     - Pseudomedian (Wilcoxon): %.4f g/cm²\n", wilcox_fn$estimate))
+cat(sprintf("     - Difference between estimates: %.4f g/cm²\n\n",
+            abs(ttest_fn$estimate - wilcox_fn$estimate)))
+
+cat("   Femoral Shaft:\n")
+cat(sprintf("     - Mean difference (t-test): %.4f g/cm²\n", ttest_fs$estimate))
+cat(sprintf("     - Pseudomedian (Wilcoxon): %.4f g/cm²\n", wilcox_fs$estimate))
+cat(sprintf("     - Difference between estimates: %.4f g/cm²\n\n",
+            abs(ttest_fs$estimate - wilcox_fs$estimate)))
+
+cat("5. WHEN TO USE NONPARAMETRIC METHODS:\n\n")
+cat("   Nonparametric methods (Wilcoxon signed-rank) are preferred when:\n")
+cat("   a) Differences are not normally distributed\n")
+cat("   b) Sample size is small (< 30 pairs)\n")
+cat("   c) Data contain outliers\n")
+cat("   d) Distribution is skewed\n")
+cat("   e) You want results robust to distributional assumptions\n\n")
+
+cat("6. ADVANTAGES OF MATCHED PAIRS DESIGN:\n\n")
+cat("   Twin studies provide natural matched pairs:\n")
+cat("   a) Controls for genetic factors\n")
+cat("   b) Controls for shared environmental exposures\n")
+cat("   c) Increases statistical power\n")
+cat("   d) Reduces between-subject variability\n")
+cat("   e) Isolates effect of smoking on BMD\n\n")
+
+cat("7. CLINICAL INTERPRETATION:\n\n")
+
+if (wilcox_fn$p.value < 0.05 && wilcox_fn$estimate > 0) {
+  cat("   Femoral Neck: Lighter-smoking twins have significantly HIGHER BMD\n")
+  cat(sprintf("                 Pseudomedian difference: %.4f g/cm²\n", wilcox_fn$estimate))
+  cat("                 CLINICAL SIGNIFICANCE: Heavier smoking associated with lower bone density\n\n")
+} else {
+  cat("   Femoral Neck: No significant difference detected\n\n")
+}
+
+if (wilcox_fs$p.value < 0.05 && wilcox_fs$estimate > 0) {
+  cat("   Femoral Shaft: Lighter-smoking twins have significantly HIGHER BMD\n")
+  cat(sprintf("                  Pseudomedian difference: %.4f g/cm²\n", wilcox_fs$estimate))
+  cat("                  CLINICAL SIGNIFICANCE: Heavier smoking associated with lower bone density\n\n")
+} else {
+  cat("   Femoral Shaft: No significant difference detected\n\n")
+}
+
+cat("8. FINAL CONCLUSION:\n\n")
+if (agreement_count == 2) {
+  cat("   Both methods reach identical conclusions for all anatomical sites.\n")
+  if (shapiro_fn$p.value > 0.05 && shapiro_fs$p.value > 0.05) {
+    cat("   Normality assumptions are satisfied; parametric results are valid.\n")
+    cat("   However, nonparametric results provide additional robustness.\n")
+  } else {
+    cat("   Normality assumptions are violated for some sites.\n")
+    cat("   Nonparametric results are more trustworthy and should be reported.\n")
+  }
+} else {
+  cat("   Methods disagree for some anatomical sites.\n")
+  cat("   When normality is violated, nonparametric results are preferred.\n")
+  cat("   Report nonparametric results as primary findings.\n")
+}
+```
+
+---
+
+# Summary and Conclusions
+
+## Key Findings
+
+```{r final-summary}
+cat("\n\n=== FINAL SUMMARY OF ANALYSES ===\n\n")
+
+cat("PROBLEM 9.41 (Femoral Neck BMD):\n")
+cat(sprintf("  Wilcoxon V = %.1f, p = %.6f\n", wilcox_fn$statistic, wilcox_fn$p.value))
+cat(sprintf("  Pseudomedian difference = %.4f g/cm² (95%% CI: [%.4f, %.4f])\n",
+            wilcox_fn$estimate, wilcox_fn$conf.int[1], wilcox_fn$conf.int[2]))
+cat(sprintf("  Conclusion: %s\n\n",
+            ifelse(wilcox_fn$p.value < 0.05,
+                   "Significant difference - lighter smokers have higher BMD",
+                   "No significant difference detected")))
+
+cat("PROBLEM 9.42 (Femoral Shaft BMD):\n")
+cat(sprintf("  Wilcoxon V = %.1f, p = %.6f\n", wilcox_fs$statistic, wilcox_fs$p.value))
+cat(sprintf("  Pseudomedian difference = %.4f g/cm² (95%% CI: [%.4f, %.4f])\n",
+            wilcox_fs$estimate, wilcox_fs$conf.int[1], wilcox_fs$conf.int[2]))
+cat(sprintf("  Conclusion: %s\n\n",
+            ifelse(wilcox_fs$p.value < 0.05,
+                   "Significant difference - lighter smokers have higher BMD",
+                   "No significant difference detected")))
+
+cat("COMPARISON WITH PARAMETRIC METHODS:\n")
+cat(sprintf("  Agreement rate: %d/2 (%.0f%%)\n", agreement_count, agreement_count/2*100))
+cat("  Recommendation: ")
+if (shapiro_fn$p.value < 0.05 || shapiro_fs$p.value < 0.05) {
+  cat("Use nonparametric methods due to:\n")
+  cat("    - Violation of normality assumptions\n")
+  cat("    - Robustness to outliers\n")
+  cat("    - More appropriate for this data\n")
+} else {
+  cat("Both methods are valid; results agree\n")
+  cat("    - Normality assumptions satisfied\n")
+  cat("    - Parametric methods have slightly more power\n")
+  cat("    - Nonparametric methods provide robustness\n")
+}
+
+cat("\n\nOVERALL CONCLUSION:\n")
+cat("This twin study provides strong evidence for the relationship between\n")
+cat("smoking and bone mineral density. The matched pairs design effectively\n")
+cat("controls for genetic and shared environmental factors, allowing for\n")
+cat("clearer inference about the causal effect of smoking on bone health.\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

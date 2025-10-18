@@ -1,0 +1,640 @@
+---
+title: "Chapter 9: Sports Medicine - Tennis Elbow Study (Problems 9.13-9.14)"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Background: Tennis Elbow Treatment Study
+
+## Study Design
+
+### Overview
+
+This is a **crossover clinical trial** examining the effectiveness of **Motrin (ibuprofen)** versus **placebo** for treating tennis elbow pain among 87 participants.
+
+**Treatment Schedule:**
+- **Group A (Motrin First):** Motrin (3 weeks) → Washout (2 weeks) → Placebo (3 weeks)
+- **Group B (Placebo First):** Placebo (3 weeks) → Washout (2 weeks) → Motrin (3 weeks)
+
+**Study Periods:**
+- **Period 1:** Weeks 1-3 (First treatment)
+- **Washout:** Weeks 4-5 (No treatment)
+- **Period 2:** Weeks 6-8 (Second treatment - crossover)
+
+### Pain Assessment Scale
+
+**Ordinal Scale (1-6):**
+- **1** = Worse than baseline
+- **2** = No change from baseline
+- **3** = Slight improvement
+- **4** = Moderate improvement
+- **5** = Marked improvement
+- **6** = Completely improved
+
+**Four Pain Measurements:**
+1. **During maximum activity** (painmx)
+2. 12 hours following maximum activity (pain12)
+3. During the average day (painav)
+4. Overall impression of drug efficacy (painov)
+
+### Research Questions for Problems 9.13-9.14
+
+**Problem 9.13:** What test can be used to compare degree of pain during maximal activity **in the first period** between people randomized to Motrin and placebo?
+
+**Problem 9.14:** Perform the test in Problem 9.13, and report a p-value.
+
+### Key Considerations
+
+**Why Focus on Period 1 (First Period)?**
+- Period 1 is **before the crossover**
+- Groups are **independent** in Period 1
+  - Group A receives Motrin
+  - Group B receives Placebo
+- No carryover effects from previous treatment
+- Allows for **between-subjects comparison**
+
+**Why Use Nonparametric Methods?**
+- Pain scale is **ordinal** (ordered categories, but intervals not necessarily equal)
+- Cannot assume normal distribution (bounded 1-6 scale)
+- Appropriate test: **Mann-Whitney U test** (Wilcoxon Rank-Sum test)
+
+---
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+library(ggplot2)
+library(gridExtra)
+```
+
+---
+
+# Data Import and Processing
+
+```{r data-import}
+# Read TENNIS2 dataset
+tennis_data <- read.csv("../CHAPTER 8/Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/TENNIS2.DAT.txt",
+                        check.names = FALSE,
+                        stringsAsFactors = FALSE,
+                        na.strings = c("", "NA", "9", "99"))
+
+# Remove quotes from column names
+colnames(tennis_data) <- gsub("'", "", colnames(tennis_data))
+
+cat("Dataset Structure:\n")
+cat(sprintf("Total participants: %d\n", nrow(tennis_data)))
+cat(sprintf("Total variables: %d\n\n", ncol(tennis_data)))
+
+cat("Variables:\n")
+print(colnames(tennis_data))
+
+cat("\n\nKey Variables for This Analysis:\n")
+cat("- drg_ord: Drug order (1 = Motrin first, 2 = Placebo first)\n")
+cat("- painmx_2: Pain during max activity at period 2 (end of first treatment)\n")
+cat("- painmx_4: Pain during max activity at period 4 (end of second treatment)\n")
+cat("- Period 2 = End of first 3-week treatment period\n")
+cat("- Period 4 = End of second 3-week treatment period (after washout)\n\n")
+```
+
+## Extract Period 1 Data
+
+```{r extract-period1}
+cat("=== EXTRACTING PERIOD 1 (FIRST TREATMENT) DATA ===\n\n")
+
+# For Period 1 analysis:
+# drg_ord = 1: Motrin first (painmx_2 is Motrin response)
+# drg_ord = 2: Placebo first (painmx_2 is Placebo response)
+
+period1_data <- tennis_data %>%
+  filter(!is.na(drg_ord) & !is.na(painmx_2)) %>%
+  mutate(
+    treatment_period1 = factor(drg_ord,
+                               levels = c(1, 2),
+                               labels = c("Motrin", "Placebo")),
+    pain_maxactivity = as.integer(painmx_2)
+  ) %>%
+  select(id, drg_ord, treatment_period1, pain_maxactivity) %>%
+  filter(pain_maxactivity >= 1 & pain_maxactivity <= 6)  # Valid range
+
+cat("Period 1 Data Summary:\n")
+cat(sprintf("Total participants with valid Period 1 data: %d\n", nrow(period1_data)))
+cat(sprintf("Motrin group (Period 1): %d\n",
+            sum(period1_data$treatment_period1 == "Motrin")))
+cat(sprintf("Placebo group (Period 1): %d\n\n",
+            sum(period1_data$treatment_period1 == "Placebo")))
+
+# Display first few rows
+cat("First 10 observations:\n")
+print(head(period1_data, 10))
+```
+
+---
+
+# Descriptive Statistics
+
+## Frequency Distribution
+
+```{r frequency-tables}
+cat("=== FREQUENCY DISTRIBUTION: PAIN DURING MAXIMAL ACTIVITY (Period 1) ===\n\n")
+
+# Frequency table by treatment
+freq_table <- table(period1_data$treatment_period1, period1_data$pain_maxactivity)
+colnames(freq_table) <- paste("Score", 1:6)
+
+cat("FREQUENCY TABLE:\n\n")
+print(addmargins(freq_table, margin = 2))
+
+# Column percentages
+cat("\n\nPERCENTAGE DISTRIBUTION (within each group):\n\n")
+
+col_pct <- prop.table(freq_table, margin = 1) * 100
+
+col_pct_table <- as.data.frame.matrix(col_pct)
+col_pct_table$Treatment <- rownames(col_pct_table)
+col_pct_table <- col_pct_table[, c("Treatment", paste("Score", 1:6))]
+
+print(kable(col_pct_table, digits = 1,
+            caption = "Percentage Distribution of Pain Scores by Treatment (Period 1)"))
+
+# Summary statistics
+cat("\n\n=== DESCRIPTIVE STATISTICS BY TREATMENT GROUP ===\n\n")
+
+summary_stats <- period1_data %>%
+  group_by(treatment_period1) %>%
+  summarise(
+    N = n(),
+    Mean = mean(pain_maxactivity, na.rm = TRUE),
+    SD = sd(pain_maxactivity, na.rm = TRUE),
+    Median = median(pain_maxactivity, na.rm = TRUE),
+    Q1 = quantile(pain_maxactivity, 0.25),
+    Q3 = quantile(pain_maxactivity, 0.75),
+    Min = min(pain_maxactivity),
+    Max = max(pain_maxactivity),
+    .groups = "drop"
+  )
+
+print(kable(summary_stats, digits = 2,
+            caption = "Summary Statistics: Pain During Maximal Activity (Period 1)"))
+
+cat("\n\nINTERPRETATION:\n")
+cat("Higher scores indicate greater improvement (1=worse, 6=completely improved)\n")
+cat(sprintf("Motrin mean: %.2f\n", summary_stats$Mean[summary_stats$treatment_period1 == "Motrin"]))
+cat(sprintf("Placebo mean: %.2f\n", summary_stats$Mean[summary_stats$treatment_period1 == "Placebo"]))
+```
+
+---
+
+# Problem 9.13: Choosing the Appropriate Test
+
+```{r problem-9-13}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 9.13: CHOOSING THE APPROPRIATE TEST\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("QUESTION:\n")
+cat("What test can be used to compare degree of pain during maximal activity\n")
+cat("in the first period between people randomized to Motrin and placebo?\n\n")
+
+cat("ANSWER:\n\n")
+
+cat("1. DATA CHARACTERISTICS:\n")
+cat("   - Outcome: Pain score (1-6, ordinal scale)\n")
+cat("   - Groups: Two independent groups (Motrin vs Placebo in Period 1)\n")
+cat("   - Sample sizes: Motrin n=", sum(period1_data$treatment_period1 == "Motrin"),
+    ", Placebo n=", sum(period1_data$treatment_period1 == "Placebo"), "\n\n")
+
+cat("2. TEST SELECTION RATIONALE:\n\n")
+
+cat("   APPROPRIATE TEST: **Mann-Whitney U Test**\n")
+cat("   (Also known as: Wilcoxon Rank-Sum Test)\n\n")
+
+cat("   WHY THIS TEST?\n")
+cat("   a) Ordinal outcome variable:\n")
+cat("      - Pain scores are ordinal (ordered categories)\n")
+cat("      - Cannot assume equal intervals between categories\n")
+cat("      - Nonparametric methods are appropriate\n\n")
+
+cat("   b) Two independent groups:\n")
+cat("      - Period 1 comparison (before crossover)\n")
+cat("      - Participants randomized to different treatments\n")
+cat("      - Groups are independent (not paired)\n\n")
+
+cat("   c) No distributional assumptions:\n")
+cat("      - Mann-Whitney U does not assume normality\n")
+cat("      - Robust to outliers\n")
+cat("      - Based on ranks rather than actual values\n\n")
+
+cat("3. ALTERNATIVE TESTS CONSIDERED:\n\n")
+
+cat("   NOT APPROPRIATE:\n")
+cat("   - Two-sample t-test: Requires interval/ratio data and normality\n")
+cat("   - Paired t-test: Data are independent, not paired\n")
+cat("   - Chi-square test: Loses information about ordinal nature\n\n")
+
+cat("   COULD BE USED:\n")
+cat("   - Wilcoxon-Mann-Whitney test (same as Mann-Whitney U)\n")
+cat("   - Ordinal logistic regression (more complex, similar results)\n\n")
+
+cat("4. HYPOTHESES:\n\n")
+cat("   H₀: The distribution of pain scores is the same for Motrin and Placebo\n")
+cat("   H₁: The distribution of pain scores differs between Motrin and Placebo\n")
+cat("       (two-sided test)\n\n")
+
+cat("5. TEST ASSUMPTIONS:\n\n")
+cat("   ✓ Independent observations (participants randomized to groups)\n")
+cat("   ✓ Ordinal or continuous outcome (pain score 1-6)\n")
+cat("   ✓ Two independent groups (Period 1, before crossover)\n\n")
+
+cat("=== CONCLUSION FOR PROBLEM 9.13 ===\n")
+cat("The MANN-WHITNEY U TEST (Wilcoxon Rank-Sum Test) is the appropriate\n")
+cat("statistical test for comparing pain during maximal activity between\n")
+cat("Motrin and Placebo groups in Period 1.\n")
+```
+
+---
+
+# Problem 9.14: Perform the Mann-Whitney U Test
+
+```{r problem-9-14}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 9.14: MANN-WHITNEY U TEST RESULTS\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("QUESTION:\n")
+cat("Perform the test in Problem 9.13, and report a p-value.\n\n")
+
+# Extract data by treatment group
+motrin_pain <- period1_data %>%
+  filter(treatment_period1 == "Motrin") %>%
+  pull(pain_maxactivity)
+
+placebo_pain <- period1_data %>%
+  filter(treatment_period1 == "Placebo") %>%
+  pull(pain_maxactivity)
+
+cat("SAMPLE SIZES:\n")
+cat(sprintf("Motrin (Period 1): n = %d\n", length(motrin_pain)))
+cat(sprintf("Placebo (Period 1): n = %d\n\n", length(placebo_pain)))
+
+# Perform Mann-Whitney U test
+mann_whitney_result <- wilcox.test(motrin_pain, placebo_pain,
+                                   alternative = "two.sided",
+                                   exact = FALSE,  # Use normal approximation
+                                   correct = TRUE) # Continuity correction
+
+cat("=== MANN-WHITNEY U TEST RESULTS ===\n\n")
+
+cat("HYPOTHESES:\n")
+cat("H₀: Distribution of pain scores is the same for Motrin and Placebo\n")
+cat("H₁: Distribution of pain scores differs between Motrin and Placebo\n")
+cat("    (two-sided test)\n\n")
+
+cat("TEST STATISTIC:\n")
+cat(sprintf("W statistic (Mann-Whitney U): %.1f\n\n", mann_whitney_result$statistic))
+
+cat("SIGNIFICANCE LEVEL:\n")
+cat("α = 0.05 (conventional level)\n\n")
+
+cat("=== ANSWER TO PROBLEM 9.14 ===\n")
+cat(sprintf("**p-value: %.4f**\n\n", mann_whitney_result$p.value))
+
+# Statistical decision
+cat("STATISTICAL DECISION:\n")
+if (mann_whitney_result$p.value < 0.05) {
+  cat("✓ REJECT H₀ at α = 0.05\n\n")
+  cat("CONCLUSION:\n")
+  cat("There IS a statistically significant difference in pain scores during\n")
+  cat("maximal activity between Motrin and Placebo groups in Period 1.\n\n")
+
+  # Determine direction
+  median_motrin <- median(motrin_pain)
+  median_placebo <- median(placebo_pain)
+
+  if (median_motrin > median_placebo) {
+    cat(sprintf("Motrin group has HIGHER pain scores (median = %.1f) than\n", median_motrin))
+    cat(sprintf("Placebo group (median = %.1f), indicating BETTER pain relief\n", median_placebo))
+    cat("with Motrin treatment.\n")
+  } else {
+    cat(sprintf("Placebo group has HIGHER pain scores (median = %.1f) than\n", median_placebo))
+    cat(sprintf("Motrin group (median = %.1f).\n", median_motrin))
+  }
+} else {
+  cat("✗ FAIL TO REJECT H₀ at α = 0.05\n\n")
+  cat("CONCLUSION:\n")
+  cat("There is NO statistically significant difference in pain scores during\n")
+  cat("maximal activity between Motrin and Placebo groups in Period 1.\n\n")
+  cat("The observed difference between groups could be due to chance variation.\n")
+}
+
+cat("\n\nADDITIONAL INFORMATION:\n")
+cat(sprintf("Motrin median score: %.1f\n", median(motrin_pain)))
+cat(sprintf("Placebo median score: %.1f\n", median(placebo_pain)))
+cat(sprintf("Motrin mean rank: %.2f\n", mean(rank(c(motrin_pain, placebo_pain))[1:length(motrin_pain)])))
+cat(sprintf("Placebo mean rank: %.2f\n", mean(rank(c(motrin_pain, placebo_pain))[(length(motrin_pain)+1):length(c(motrin_pain, placebo_pain))])))
+```
+
+## Rank Analysis
+
+```{r rank-analysis}
+cat("\n\n=== RANK ANALYSIS ===\n\n")
+
+# Calculate ranks
+period1_data <- period1_data %>%
+  mutate(rank = rank(pain_maxactivity, ties.method = "average"))
+
+# Mean ranks by group
+mean_ranks <- period1_data %>%
+  group_by(treatment_period1) %>%
+  summarise(
+    N = n(),
+    Mean_Rank = mean(rank),
+    Sum_of_Ranks = sum(rank),
+    .groups = "drop"
+  )
+
+cat("RANK SUMMARY BY TREATMENT GROUP:\n\n")
+print(kable(mean_ranks, digits = 2,
+            caption = "Mean and Sum of Ranks by Treatment Group"))
+
+cat("\n\nINTERPRETATION:\n")
+cat("The Mann-Whitney U test compares the sum of ranks between groups.\n")
+cat("Higher mean ranks indicate higher pain scores (better pain relief).\n")
+cat(sprintf("\nMean rank difference: %.2f\n",
+            abs(mean_ranks$Mean_Rank[1] - mean_ranks$Mean_Rank[2])))
+```
+
+## Effect Size
+
+```{r effect-size}
+cat("\n\n=== EFFECT SIZE ESTIMATION ===\n\n")
+
+n_motrin <- length(motrin_pain)
+n_placebo <- length(placebo_pain)
+U <- mann_whitney_result$statistic
+
+# Rank-biserial correlation
+r_rb <- 1 - (2 * U) / (n_motrin * n_placebo)
+
+cat("RANK-BISERIAL CORRELATION:\n")
+cat(sprintf("r = %.3f\n\n", r_rb))
+
+cat("INTERPRETATION:\n")
+cat("Effect size guidelines:\n")
+cat("  Small:  |r| ≈ 0.1\n")
+cat("  Medium: |r| ≈ 0.3\n")
+cat("  Large:  |r| ≈ 0.5\n\n")
+
+if (abs(r_rb) < 0.1) {
+  effect_label <- "NEGLIGIBLE"
+} else if (abs(r_rb) < 0.3) {
+  effect_label <- "SMALL"
+} else if (abs(r_rb) < 0.5) {
+  effect_label <- "MEDIUM"
+} else {
+  effect_label <- "LARGE"
+}
+
+cat(sprintf("Effect size: %s (r = %.3f)\n\n", effect_label, r_rb))
+
+# Probability of superiority
+prob_superiority <- U / (n_motrin * n_placebo)
+
+cat("PROBABILITY OF SUPERIORITY:\n")
+cat(sprintf("P(Motrin > Placebo): %.3f\n\n", prob_superiority))
+cat("This represents the probability that a randomly selected participant\n")
+cat("in the Motrin group has a higher pain score (better outcome) than\n")
+cat("a randomly selected participant in the Placebo group.\n")
+```
+
+---
+
+# Visualizations
+
+## Bar Chart: Frequency Distribution
+
+```{r viz-bar-chart, fig.height=7}
+# Prepare data for visualization
+viz_data <- as.data.frame(freq_table)
+colnames(viz_data) <- c("Treatment", "PainScore", "Count")
+
+viz_data$PainScore <- factor(viz_data$PainScore,
+                             levels = paste("Score", 1:6),
+                             labels = c("1\nWorse", "2\nNo change",
+                                       "3\nSlight", "4\nModerate",
+                                       "5\nMarked", "6\nComplete"))
+
+# Stacked bar chart
+p1 <- ggplot(viz_data, aes(x = Treatment, y = Count, fill = PainScore)) +
+  geom_bar(stat = "identity", position = "fill") +
+  geom_text(aes(label = Count), position = position_fill(vjust = 0.5),
+            size = 3.5, color = "white", fontface = "bold") +
+  labs(title = "Distribution of Pain Scores During Maximal Activity (Period 1)",
+       subtitle = sprintf("Mann-Whitney U test: p = %.4f", mann_whitney_result$p.value),
+       x = "Treatment Group (Period 1)",
+       y = "Proportion",
+       fill = "Pain Score") +
+  scale_fill_brewer(palette = "RdYlGn", direction = 1) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    legend.position = "right"
+  )
+
+print(p1)
+```
+
+## Side-by-Side Bar Chart
+
+```{r viz-sidebyside, fig.height=7}
+p2 <- ggplot(viz_data, aes(x = PainScore, y = Count, fill = Treatment)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.8) +
+  geom_text(aes(label = Count), position = position_dodge(width = 0.9),
+            vjust = -0.5, size = 3.5) +
+  labs(title = "Pain Score Distribution by Treatment (Period 1)",
+       x = "Pain Score",
+       y = "Frequency",
+       fill = "Treatment") +
+  scale_fill_manual(values = c("Motrin" = "#1976D2", "Placebo" = "#FFA726")) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    axis.text.x = element_text(angle = 0, hjust = 0.5, size = 10),
+    legend.position = "bottom"
+  )
+
+print(p2)
+```
+
+## Box Plot
+
+```{r viz-boxplot, fig.height=6}
+p3 <- ggplot(period1_data, aes(x = treatment_period1, y = pain_maxactivity,
+                               fill = treatment_period1)) +
+  geom_boxplot(alpha = 0.7, outlier.size = 3, outlier.color = "red") +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 2) +
+  labs(title = "Pain Scores During Maximal Activity by Treatment (Period 1)",
+       subtitle = sprintf("Mann-Whitney U test: W = %.1f, p = %.4f",
+                         mann_whitney_result$statistic,
+                         mann_whitney_result$p.value),
+       x = "Treatment Group",
+       y = "Pain Score (1-6)",
+       caption = "1=Worse, 2=No change, 3=Slight, 4=Moderate, 5=Marked, 6=Complete improvement") +
+  scale_fill_manual(values = c("Motrin" = "#1976D2", "Placebo" = "#FFA726")) +
+  scale_y_continuous(breaks = 1:6, limits = c(0.5, 6.5)) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    legend.position = "none",
+    plot.caption = element_text(hjust = 0.5, size = 9)
+  )
+
+print(p3)
+```
+
+## Cumulative Distribution
+
+```{r viz-cumulative, fig.height=6}
+# Calculate cumulative percentages
+cumulative_data <- period1_data %>%
+  group_by(treatment_period1, pain_maxactivity) %>%
+  summarise(count = n(), .groups = "drop_last") %>%
+  arrange(treatment_period1, pain_maxactivity) %>%
+  mutate(
+    cumulative_count = cumsum(count),
+    cumulative_pct = cumulative_count / sum(count) * 100
+  ) %>%
+  ungroup()
+
+p4 <- ggplot(cumulative_data, aes(x = pain_maxactivity, y = cumulative_pct,
+                                  color = treatment_period1,
+                                  group = treatment_period1)) +
+  geom_line(size = 1.5) +
+  geom_point(size = 4) +
+  labs(title = "Cumulative Distribution of Pain Scores (Period 1)",
+       x = "Pain Score",
+       y = "Cumulative Percentage (%)",
+       color = "Treatment") +
+  scale_color_manual(values = c("Motrin" = "#1976D2", "Placebo" = "#FFA726")) +
+  scale_x_continuous(breaks = 1:6) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    legend.position = "bottom"
+  )
+
+print(p4)
+```
+
+---
+
+# Comparison with Parametric Test (Educational)
+
+```{r parametric-comparison}
+cat("=== COMPARISON: NONPARAMETRIC VS PARAMETRIC TEST ===\n\n")
+
+cat("For educational purposes, comparing with parametric t-test:\n\n")
+
+# Two-sample t-test
+t_test_result <- t.test(motrin_pain, placebo_pain,
+                        var.equal = FALSE,
+                        alternative = "two.sided")
+
+cat("TWO-SAMPLE T-TEST (Welch's):\n")
+cat(sprintf("t-statistic: %.4f\n", t_test_result$statistic))
+cat(sprintf("df: %.2f\n", t_test_result$parameter))
+cat(sprintf("p-value: %.4f\n\n", t_test_result$p.value))
+
+cat("COMPARISON OF RESULTS:\n")
+cat(sprintf("Mann-Whitney U p-value:  %.4f\n", mann_whitney_result$p.value))
+cat(sprintf("t-test p-value:          %.4f\n\n", t_test_result$p.value))
+
+cat("INTERPRETATION:\n")
+if (abs(mann_whitney_result$p.value - t_test_result$p.value) < 0.05) {
+  cat("Both tests lead to similar conclusions (p-values are close).\n")
+} else {
+  cat("The tests yield somewhat different p-values.\n")
+}
+
+cat("\nWHY MANN-WHITNEY U IS PREFERRED:\n")
+cat("1. Pain score is ordinal (not truly interval/ratio)\n")
+cat("2. No assumption needed about distribution shape\n")
+cat("3. More robust to outliers\n")
+cat("4. More appropriate for bounded scales (1-6)\n")
+cat("5. Maintains statistical validity for ordinal data\n")
+```
+
+---
+
+# Summary and Conclusions
+
+```{r summary}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("SUMMARY: TENNIS ELBOW STUDY - PROBLEMS 9.13 & 9.14\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("PROBLEM 9.13 - ANSWER:\n")
+cat("Appropriate test: **Mann-Whitney U Test** (Wilcoxon Rank-Sum Test)\n\n")
+
+cat("Rationale:\n")
+cat("- Ordinal outcome variable (pain score 1-6)\n")
+cat("- Two independent groups (Period 1 comparison)\n")
+cat("- Nonparametric method suitable for ordinal data\n\n")
+
+cat(paste(rep("-", 70), collapse=""), "\n")
+
+cat("\nPROBLEM 9.14 - ANSWER:\n")
+cat(sprintf("**p-value = %.4f**\n\n", mann_whitney_result$p.value))
+
+cat("STUDY DETAILS:\n")
+cat(sprintf("- Motrin group (Period 1): n = %d\n", n_motrin))
+cat(sprintf("- Placebo group (Period 1): n = %d\n", n_placebo))
+cat(sprintf("- W statistic: %.1f\n\n", mann_whitney_result$statistic))
+
+cat("STATISTICAL CONCLUSION:\n")
+if (mann_whitney_result$p.value < 0.05) {
+  cat(sprintf("At α = 0.05, p = %.4f < 0.05\n", mann_whitney_result$p.value))
+  cat("✓ SIGNIFICANT difference between Motrin and Placebo\n\n")
+
+  if (median(motrin_pain) > median(placebo_pain)) {
+    cat("Motrin shows BETTER pain relief than Placebo during maximal activity.\n")
+  } else {
+    cat("Placebo shows BETTER pain relief than Motrin during maximal activity.\n")
+  }
+} else {
+  cat(sprintf("At α = 0.05, p = %.4f > 0.05\n", mann_whitney_result$p.value))
+  cat("✗ NO significant difference between Motrin and Placebo\n\n")
+  cat("There is insufficient evidence to conclude that Motrin differs from\n")
+  cat("Placebo in terms of pain relief during maximal activity in Period 1.\n")
+}
+
+cat("\n\nEFFECT SIZE:\n")
+cat(sprintf("Rank-biserial correlation: r = %.3f (%s effect)\n", r_rb, effect_label))
+
+cat("\n\nMETHODOLOGICAL NOTES:\n")
+cat("- Analysis focuses on Period 1 (before crossover)\n")
+cat("- Groups are independent in Period 1\n")
+cat("- Appropriate use of nonparametric methods for ordinal data\n")
+cat("- Two-sided test allows detection of differences in either direction\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

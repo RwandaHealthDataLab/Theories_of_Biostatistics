@@ -1,0 +1,865 @@
+---
+title: "Chapter 9: Health Promotion - Smoking Cessation Study (Problems 9.28-9.32)"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Background: Smoking Cessation Study
+
+## Study Overview
+
+This study examines **risk factors associated with successful smoking cessation**. Participants enrolled in a smoking cessation program are followed to determine how long they remain abstinent from smoking.
+
+### Study Variables
+
+**Outcome Variable:**
+- **Day_abs:** Number of days abstinent from smoking (primary outcome)
+
+**Predictor Variables:**
+- **Gender:** Sex (1 = Male, 2 = Female)
+- **Age:** Age in years
+- **Cig_day:** Average number of cigarettes smoked per day (before cessation)
+- **CO:** Carbon monoxide level (ppm)
+- **Min_last:** Minutes since last cigarette
+- **LogCOadj:** Adjusted carbon monoxide level (log-transformed)
+
+### Research Questions (Problems 9.28-9.32)
+
+**Problem 9.28:** Is there a difference in days abstinent between **males vs. females**?
+
+**Problem 9.29:** Is the number of days abstinent related to **age** (above/below median)?
+
+**Problem 9.30:** Is the amount **previously smoked** related to days abstinent?
+
+**Problem 9.31:** Is the **adjusted CO level** related to days abstinent?
+
+**Problem 9.32:** Why are **nonparametric methods** well suited to this study?
+
+### Why Nonparametric Methods?
+
+Nonparametric methods are particularly appropriate for this study because:
+1. **Skewed outcome:** Days abstinent may be highly skewed (many may quit quickly, few stay abstinent long)
+2. **Censoring:** Some participants may remain abstinent through end of study (right-censored)
+3. **Outliers:** Extreme values in abstinence duration
+4. **No normality assumption:** Distribution of days abstinent likely non-normal
+5. **Small to moderate sample size:** Nonparametric tests more robust
+
+---
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+library(ggplot2)
+library(gridExtra)
+```
+
+---
+
+# Data Import and Processing
+
+```{r data-import}
+# Read SMOKE dataset
+smoke_data <- read.csv("../CHAPTER 8/Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/SMOKE.DAT.txt",
+                       check.names = FALSE,
+                       stringsAsFactors = FALSE,
+                       na.strings = c("", "NA", ".", "99", "999"))
+
+# Remove quotes from column names
+colnames(smoke_data) <- gsub("'", "", colnames(smoke_data))
+
+cat("Dataset Structure:\n")
+cat(sprintf("Total participants: %d\n", nrow(smoke_data)))
+cat(sprintf("Total variables: %d\n\n", ncol(smoke_data)))
+
+cat("Variables:\n")
+print(colnames(smoke_data))
+
+cat("\n\nVariable Descriptions:\n")
+cat("- Id: Participant identifier\n")
+cat("- Age: Age in years\n")
+cat("- Gender: 1 = Male, 2 = Female\n")
+cat("- Cig_day: Cigarettes per day before cessation\n")
+cat("- CO: Carbon monoxide level (ppm)\n")
+cat("- Min_last: Minutes since last cigarette\n")
+cat("- LogCOadj: Log-adjusted carbon monoxide level\n")
+cat("- Day_abs: Days abstinent from smoking (OUTCOME)\n\n")
+
+# Display first rows
+cat("First 10 rows:\n")
+print(head(smoke_data, 10))
+```
+
+## Data Cleaning and Preparation
+
+```{r data-cleaning}
+# Clean and prepare data
+smoke_clean <- smoke_data %>%
+  mutate(
+    Id = as.integer(Id),
+    Age = as.numeric(Age),
+    Gender = as.integer(Gender),
+    Cig_day = as.numeric(Cig_day),
+    CO = as.numeric(CO),
+    Min_last = as.numeric(Min_last),
+    LogCOadj = as.numeric(LogCOadj),
+    Day_abs = as.numeric(Day_abs)
+  ) %>%
+  # Create gender labels
+  mutate(
+    gender_label = factor(Gender, levels = c(1, 2), labels = c("Male", "Female"))
+  ) %>%
+  # Remove rows with missing outcome
+  filter(!is.na(Day_abs))
+
+cat("Cleaned Dataset:\n")
+cat(sprintf("Valid observations: %d\n\n", nrow(smoke_clean)))
+
+# Summary statistics
+cat("=== SUMMARY STATISTICS ===\n\n")
+
+summary_all <- smoke_clean %>%
+  summarise(
+    N = n(),
+    Mean_Age = mean(Age, na.rm = TRUE),
+    SD_Age = sd(Age, na.rm = TRUE),
+    Mean_Cig_day = mean(Cig_day, na.rm = TRUE),
+    SD_Cig_day = sd(Cig_day, na.rm = TRUE),
+    Mean_CO = mean(CO, na.rm = TRUE),
+    SD_CO = sd(CO, na.rm = TRUE),
+    Mean_LogCOadj = mean(LogCOadj, na.rm = TRUE),
+    SD_LogCOadj = sd(LogCOadj, na.rm = TRUE),
+    Mean_Day_abs = mean(Day_abs, na.rm = TRUE),
+    Median_Day_abs = median(Day_abs, na.rm = TRUE),
+    SD_Day_abs = sd(Day_abs, na.rm = TRUE)
+  )
+
+print(kable(summary_all, digits = 2,
+            caption = "Overall Summary Statistics"))
+
+cat("\n\nDistribution of Days Abstinent:\n")
+summary(smoke_clean$Day_abs) %>% print()
+
+cat("\n\nGender Distribution:\n")
+table(smoke_clean$gender_label) %>% print()
+```
+
+---
+
+# Problem 9.28: Days Abstinent by Gender
+
+```{r problem-9-28}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 9.28: DAYS ABSTINENT BY GENDER\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("RESEARCH QUESTION:\n")
+cat("Use nonparametric methods to test whether there is a difference\n")
+cat("between the number of days abstinent from smoking for males vs. females.\n\n")
+
+# Extract data by gender
+male_abs <- smoke_clean %>%
+  filter(gender_label == "Male") %>%
+  pull(Day_abs)
+
+female_abs <- smoke_clean %>%
+  filter(gender_label == "Female") %>%
+  pull(Day_abs)
+
+# Remove NAs
+male_abs <- male_abs[!is.na(male_abs)]
+female_abs <- female_abs[!is.na(female_abs)]
+
+cat("SAMPLE SIZES:\n")
+cat(sprintf("Males: n = %d\n", length(male_abs)))
+cat(sprintf("Females: n = %d\n\n", length(female_abs)))
+
+# Descriptive statistics by gender
+desc_gender <- smoke_clean %>%
+  group_by(gender_label) %>%
+  summarise(
+    N = n(),
+    Mean = mean(Day_abs, na.rm = TRUE),
+    SD = sd(Day_abs, na.rm = TRUE),
+    Median = median(Day_abs, na.rm = TRUE),
+    Q1 = quantile(Day_abs, 0.25, na.rm = TRUE),
+    Q3 = quantile(Day_abs, 0.75, na.rm = TRUE),
+    Min = min(Day_abs, na.rm = TRUE),
+    Max = max(Day_abs, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cat("DESCRIPTIVE STATISTICS BY GENDER:\n\n")
+print(kable(desc_gender, digits = 2,
+            caption = "Days Abstinent by Gender"))
+
+# Mann-Whitney U test
+cat("\n\nSTATISTICAL TEST: Mann-Whitney U Test\n\n")
+
+cat("HYPOTHESES:\n")
+cat("H₀: Distribution of days abstinent is the same for males and females\n")
+cat("H₁: Distribution of days abstinent differs between males and females\n")
+cat("    (two-sided test)\n\n")
+
+mann_whitney_gender <- wilcox.test(male_abs, female_abs,
+                                   alternative = "two.sided",
+                                   exact = FALSE,
+                                   correct = TRUE)
+
+cat("RESULTS:\n")
+cat(sprintf("W statistic: %.1f\n", mann_whitney_gender$statistic))
+cat(sprintf("p-value: %.4f\n\n", mann_whitney_gender$p.value))
+
+# Statistical decision
+cat("=== ANSWER TO PROBLEM 9.28 ===\n\n")
+cat(sprintf("p-value = %.4f\n\n", mann_whitney_gender$p.value))
+
+if (mann_whitney_gender$p.value < 0.05) {
+  cat("✓ REJECT H₀ at α = 0.05\n\n")
+  cat("CONCLUSION: There IS a significant difference in days abstinent\n")
+  cat("between males and females.\n\n")
+
+  if (median(male_abs) > median(female_abs)) {
+    cat(sprintf("Males have longer abstinence (median = %.1f days) than\n", median(male_abs)))
+    cat(sprintf("females (median = %.1f days).\n", median(female_abs)))
+  } else {
+    cat(sprintf("Females have longer abstinence (median = %.1f days) than\n", median(female_abs)))
+    cat(sprintf("males (median = %.1f days).\n", median(male_abs)))
+  }
+} else {
+  cat("✗ FAIL TO REJECT H₀ at α = 0.05\n\n")
+  cat("CONCLUSION: There is NO significant difference in days abstinent\n")
+  cat("between males and females.\n\n")
+  cat(sprintf("Males median: %.1f days\n", median(male_abs)))
+  cat(sprintf("Females median: %.1f days\n", median(female_abs)))
+}
+
+# Effect size
+n_male <- length(male_abs)
+n_female <- length(female_abs)
+r_rb_gender <- 1 - (2 * mann_whitney_gender$statistic) / (n_male * n_female)
+
+cat(sprintf("\nEffect size (rank-biserial): r = %.3f\n", r_rb_gender))
+```
+
+---
+
+# Problem 9.29: Days Abstinent by Age Group
+
+```{r problem-9-29}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 9.29: DAYS ABSTINENT BY AGE GROUP\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("RESEARCH QUESTION:\n")
+cat("Divide the data set into age groups (above/below the median), and use\n")
+cat("nonparametric methods to test whether the number of days abstinent\n")
+cat("from smoking is related to age.\n\n")
+
+# Calculate median age
+median_age <- median(smoke_clean$Age, na.rm = TRUE)
+
+cat(sprintf("Median age: %.1f years\n\n", median_age))
+
+# Create age groups
+smoke_clean <- smoke_clean %>%
+  mutate(
+    age_group = ifelse(Age < median_age, "Below Median", "Above Median"),
+    age_group = factor(age_group, levels = c("Below Median", "Above Median"))
+  )
+
+# Extract data by age group
+below_median_abs <- smoke_clean %>%
+  filter(age_group == "Below Median") %>%
+  pull(Day_abs)
+
+above_median_abs <- smoke_clean %>%
+  filter(age_group == "Above Median") %>%
+  pull(Day_abs)
+
+# Remove NAs
+below_median_abs <- below_median_abs[!is.na(below_median_abs)]
+above_median_abs <- above_median_abs[!is.na(above_median_abs)]
+
+cat("AGE GROUP CLASSIFICATION:\n")
+cat(sprintf("Below median (Age < %.1f): n = %d\n", median_age, length(below_median_abs)))
+cat(sprintf("Above median (Age ≥ %.1f): n = %d\n\n", median_age, length(above_median_abs)))
+
+# Descriptive statistics by age group
+desc_age <- smoke_clean %>%
+  group_by(age_group) %>%
+  summarise(
+    N = n(),
+    Mean_Age = mean(Age, na.rm = TRUE),
+    Mean_Days = mean(Day_abs, na.rm = TRUE),
+    SD_Days = sd(Day_abs, na.rm = TRUE),
+    Median_Days = median(Day_abs, na.rm = TRUE),
+    Q1 = quantile(Day_abs, 0.25, na.rm = TRUE),
+    Q3 = quantile(Day_abs, 0.75, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cat("DESCRIPTIVE STATISTICS BY AGE GROUP:\n\n")
+print(kable(desc_age, digits = 2,
+            caption = "Days Abstinent by Age Group"))
+
+# Mann-Whitney U test
+cat("\n\nSTATISTICAL TEST: Mann-Whitney U Test\n\n")
+
+cat("HYPOTHESES:\n")
+cat("H₀: Distribution of days abstinent is the same for both age groups\n")
+cat("H₁: Distribution of days abstinent differs between age groups\n")
+cat("    (two-sided test)\n\n")
+
+mann_whitney_age <- wilcox.test(below_median_abs, above_median_abs,
+                                alternative = "two.sided",
+                                exact = FALSE,
+                                correct = TRUE)
+
+cat("RESULTS:\n")
+cat(sprintf("W statistic: %.1f\n", mann_whitney_age$statistic))
+cat(sprintf("p-value: %.4f\n\n", mann_whitney_age$p.value))
+
+# Statistical decision
+cat("=== ANSWER TO PROBLEM 9.29 ===\n\n")
+cat(sprintf("p-value = %.4f\n\n", mann_whitney_age$p.value))
+
+if (mann_whitney_age$p.value < 0.05) {
+  cat("✓ REJECT H₀ at α = 0.05\n\n")
+  cat("CONCLUSION: Days abstinent IS significantly related to age.\n\n")
+
+  if (median(above_median_abs) > median(below_median_abs)) {
+    cat("Older participants (above median age) have longer abstinence.\n")
+  } else {
+    cat("Younger participants (below median age) have longer abstinence.\n")
+  }
+} else {
+  cat("✗ FAIL TO REJECT H₀ at α = 0.05\n\n")
+  cat("CONCLUSION: Days abstinent is NOT significantly related to age.\n")
+}
+
+cat(sprintf("\nBelow median age group: Median = %.1f days\n", median(below_median_abs)))
+cat(sprintf("Above median age group: Median = %.1f days\n", median(above_median_abs)))
+
+# Effect size
+r_rb_age <- 1 - (2 * mann_whitney_age$statistic) / (length(below_median_abs) * length(above_median_abs))
+cat(sprintf("\nEffect size (rank-biserial): r = %.3f\n", r_rb_age))
+```
+
+---
+
+# Problem 9.30: Days Abstinent by Amount Previously Smoked
+
+```{r problem-9-30}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 9.30: DAYS ABSTINENT BY AMOUNT PREVIOUSLY SMOKED\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("RESEARCH QUESTION:\n")
+cat("Use the same approach as in Problem 9.29 to test whether the amount\n")
+cat("previously smoked is related to the number of days abstinent from smoking.\n\n")
+
+# Calculate median cigarettes per day
+median_cig <- median(smoke_clean$Cig_day, na.rm = TRUE)
+
+cat(sprintf("Median cigarettes per day: %.1f\n\n", median_cig))
+
+# Create smoking amount groups
+smoke_clean <- smoke_clean %>%
+  mutate(
+    smoking_group = ifelse(Cig_day < median_cig, "Light Smoker", "Heavy Smoker"),
+    smoking_group = factor(smoking_group, levels = c("Light Smoker", "Heavy Smoker"))
+  )
+
+# Extract data by smoking group
+light_abs <- smoke_clean %>%
+  filter(smoking_group == "Light Smoker") %>%
+  pull(Day_abs)
+
+heavy_abs <- smoke_clean %>%
+  filter(smoking_group == "Heavy Smoker") %>%
+  pull(Day_abs)
+
+# Remove NAs
+light_abs <- light_abs[!is.na(light_abs)]
+heavy_abs <- heavy_abs[!is.na(heavy_abs)]
+
+cat("SMOKING GROUP CLASSIFICATION:\n")
+cat(sprintf("Light smokers (< %.1f cig/day): n = %d\n", median_cig, length(light_abs)))
+cat(sprintf("Heavy smokers (≥ %.1f cig/day): n = %d\n\n", median_cig, length(heavy_abs)))
+
+# Descriptive statistics by smoking group
+desc_smoking <- smoke_clean %>%
+  group_by(smoking_group) %>%
+  summarise(
+    N = n(),
+    Mean_Cig = mean(Cig_day, na.rm = TRUE),
+    Mean_Days = mean(Day_abs, na.rm = TRUE),
+    SD_Days = sd(Day_abs, na.rm = TRUE),
+    Median_Days = median(Day_abs, na.rm = TRUE),
+    Q1 = quantile(Day_abs, 0.25, na.rm = TRUE),
+    Q3 = quantile(Day_abs, 0.75, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cat("DESCRIPTIVE STATISTICS BY SMOKING GROUP:\n\n")
+print(kable(desc_smoking, digits = 2,
+            caption = "Days Abstinent by Amount Previously Smoked"))
+
+# Mann-Whitney U test
+cat("\n\nSTATISTICAL TEST: Mann-Whitney U Test\n\n")
+
+cat("HYPOTHESES:\n")
+cat("H₀: Distribution of days abstinent is the same for light and heavy smokers\n")
+cat("H₁: Distribution of days abstinent differs between light and heavy smokers\n")
+cat("    (two-sided test)\n\n")
+
+mann_whitney_smoking <- wilcox.test(light_abs, heavy_abs,
+                                    alternative = "two.sided",
+                                    exact = FALSE,
+                                    correct = TRUE)
+
+cat("RESULTS:\n")
+cat(sprintf("W statistic: %.1f\n", mann_whitney_smoking$statistic))
+cat(sprintf("p-value: %.4f\n\n", mann_whitney_smoking$p.value))
+
+# Statistical decision
+cat("=== ANSWER TO PROBLEM 9.30 ===\n\n")
+cat(sprintf("p-value = %.4f\n\n", mann_whitney_smoking$p.value))
+
+if (mann_whitney_smoking$p.value < 0.05) {
+  cat("✓ REJECT H₀ at α = 0.05\n\n")
+  cat("CONCLUSION: Days abstinent IS significantly related to amount previously smoked.\n\n")
+
+  if (median(light_abs) > median(heavy_abs)) {
+    cat("Light smokers have longer abstinence than heavy smokers.\n")
+  } else {
+    cat("Heavy smokers have longer abstinence than light smokers.\n")
+  }
+} else {
+  cat("✗ FAIL TO REJECT H₀ at α = 0.05\n\n")
+  cat("CONCLUSION: Days abstinent is NOT significantly related to amount previously smoked.\n")
+}
+
+cat(sprintf("\nLight smokers: Median = %.1f days\n", median(light_abs)))
+cat(sprintf("Heavy smokers: Median = %.1f days\n", median(heavy_abs)))
+
+# Effect size
+r_rb_smoking <- 1 - (2 * mann_whitney_smoking$statistic) / (length(light_abs) * length(heavy_abs))
+cat(sprintf("\nEffect size (rank-biserial): r = %.3f\n", r_rb_smoking))
+```
+
+---
+
+# Problem 9.31: Days Abstinent by Adjusted CO Level
+
+```{r problem-9-31}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 9.31: DAYS ABSTINENT BY ADJUSTED CO LEVEL\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("RESEARCH QUESTION:\n")
+cat("Use the same approach as in Problem 9.29 to test whether the adjusted\n")
+cat("carbon monoxide (CO) level is related to the number of days abstinent\n")
+cat("from smoking.\n\n")
+
+# Calculate median LogCOadj
+median_co <- median(smoke_clean$LogCOadj, na.rm = TRUE)
+
+cat(sprintf("Median adjusted CO (log scale): %.1f\n\n", median_co))
+
+# Create CO level groups
+smoke_clean <- smoke_clean %>%
+  mutate(
+    co_group = ifelse(LogCOadj < median_co, "Low CO", "High CO"),
+    co_group = factor(co_group, levels = c("Low CO", "High CO"))
+  )
+
+# Extract data by CO group
+low_co_abs <- smoke_clean %>%
+  filter(co_group == "Low CO") %>%
+  pull(Day_abs)
+
+high_co_abs <- smoke_clean %>%
+  filter(co_group == "High CO") %>%
+  pull(Day_abs)
+
+# Remove NAs
+low_co_abs <- low_co_abs[!is.na(low_co_abs)]
+high_co_abs <- high_co_abs[!is.na(high_co_abs)]
+
+cat("CO LEVEL GROUP CLASSIFICATION:\n")
+cat(sprintf("Low CO (< %.1f): n = %d\n", median_co, length(low_co_abs)))
+cat(sprintf("High CO (≥ %.1f): n = %d\n\n", median_co, length(high_co_abs)))
+
+# Descriptive statistics by CO group
+desc_co <- smoke_clean %>%
+  group_by(co_group) %>%
+  summarise(
+    N = n(),
+    Mean_CO = mean(LogCOadj, na.rm = TRUE),
+    Mean_Days = mean(Day_abs, na.rm = TRUE),
+    SD_Days = sd(Day_abs, na.rm = TRUE),
+    Median_Days = median(Day_abs, na.rm = TRUE),
+    Q1 = quantile(Day_abs, 0.25, na.rm = TRUE),
+    Q3 = quantile(Day_abs, 0.75, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cat("DESCRIPTIVE STATISTICS BY CO LEVEL:\n\n")
+print(kable(desc_co, digits = 2,
+            caption = "Days Abstinent by Adjusted CO Level"))
+
+# Mann-Whitney U test
+cat("\n\nSTATISTICAL TEST: Mann-Whitney U Test\n\n")
+
+cat("HYPOTHESES:\n")
+cat("H₀: Distribution of days abstinent is the same for low and high CO levels\n")
+cat("H₁: Distribution of days abstinent differs between CO level groups\n")
+cat("    (two-sided test)\n\n")
+
+mann_whitney_co <- wilcox.test(low_co_abs, high_co_abs,
+                               alternative = "two.sided",
+                               exact = FALSE,
+                               correct = TRUE)
+
+cat("RESULTS:\n")
+cat(sprintf("W statistic: %.1f\n", mann_whitney_co$statistic))
+cat(sprintf("p-value: %.4f\n\n", mann_whitney_co$p.value))
+
+# Statistical decision
+cat("=== ANSWER TO PROBLEM 9.31 ===\n\n")
+cat(sprintf("p-value = %.4f\n\n", mann_whitney_co$p.value))
+
+if (mann_whitney_co$p.value < 0.05) {
+  cat("✓ REJECT H₀ at α = 0.05\n\n")
+  cat("CONCLUSION: Days abstinent IS significantly related to adjusted CO level.\n\n")
+
+  if (median(low_co_abs) > median(high_co_abs)) {
+    cat("Participants with LOW CO have longer abstinence than those with HIGH CO.\n")
+  } else {
+    cat("Participants with HIGH CO have longer abstinence than those with LOW CO.\n")
+  }
+} else {
+  cat("✗ FAIL TO REJECT H₀ at α = 0.05\n\n")
+  cat("CONCLUSION: Days abstinent is NOT significantly related to adjusted CO level.\n")
+}
+
+cat(sprintf("\nLow CO group: Median = %.1f days\n", median(low_co_abs)))
+cat(sprintf("High CO group: Median = %.1f days\n", median(high_co_abs)))
+
+# Effect size
+r_rb_co <- 1 - (2 * mann_whitney_co$statistic) / (length(low_co_abs) * length(high_co_abs))
+cat(sprintf("\nEffect size (rank-biserial): r = %.3f\n", r_rb_co))
+```
+
+---
+
+# Problem 9.32: Rationale for Nonparametric Methods
+
+```{r problem-9-32}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("PROBLEM 9.32: WHY NONPARAMETRIC METHODS ARE WELL SUITED\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+cat("QUESTION:\n")
+cat("Why are nonparametric methods well suited to a study of risk factors\n")
+cat("for smoking cessation?\n\n")
+
+cat("=== ANSWER TO PROBLEM 9.32 ===\n\n")
+
+cat("Nonparametric methods are particularly well suited to this smoking\n")
+cat("cessation study for the following reasons:\n\n")
+
+cat("1. SKEWED OUTCOME DISTRIBUTION:\n")
+cat("   - Days abstinent is likely highly skewed\n")
+cat(sprintf("   - Mean = %.1f days, Median = %.1f days\n",
+            mean(smoke_clean$Day_abs, na.rm = TRUE),
+            median(smoke_clean$Day_abs, na.rm = TRUE)))
+cat(sprintf("   - Range: %.0f to %.0f days\n",
+            min(smoke_clean$Day_abs, na.rm = TRUE),
+            max(smoke_clean$Day_abs, na.rm = TRUE)))
+cat("   - Many participants may relapse quickly (short abstinence)\n")
+cat("   - Few participants maintain long-term abstinence\n")
+cat("   - Parametric tests assume normality, which is violated\n\n")
+
+# Check skewness
+skewness_days <- (mean(smoke_clean$Day_abs, na.rm = TRUE) -
+                  median(smoke_clean$Day_abs, na.rm = TRUE)) /
+                  sd(smoke_clean$Day_abs, na.rm = TRUE)
+
+cat(sprintf("   Skewness indicator: %.3f (positive = right-skewed)\n\n", skewness_days))
+
+cat("2. PRESENCE OF OUTLIERS:\n")
+cat("   - Some participants may have extremely long abstinence\n")
+cat("   - Outliers can strongly influence parametric tests (mean, t-tests)\n")
+cat("   - Nonparametric tests based on ranks are robust to outliers\n")
+
+# Count potential outliers
+Q1 <- quantile(smoke_clean$Day_abs, 0.25, na.rm = TRUE)
+Q3 <- quantile(smoke_clean$Day_abs, 0.75, na.rm = TRUE)
+IQR_days <- Q3 - Q1
+outliers <- sum(smoke_clean$Day_abs > Q3 + 1.5 * IQR_days |
+                smoke_clean$Day_abs < Q1 - 1.5 * IQR_days, na.rm = TRUE)
+
+cat(sprintf("   Potential outliers (IQR method): %d (%.1f%%)\n\n",
+            outliers, 100 * outliers / nrow(smoke_clean)))
+
+cat("3. BOUNDED OUTCOME VARIABLE:\n")
+cat("   - Days abstinent has a natural lower bound (0 days)\n")
+cat("   - Upper bound may be study duration (censored at end of study)\n")
+cat("   - Bounded variables often violate normality assumption\n")
+cat("   - Nonparametric methods make no distributional assumptions\n\n")
+
+cat("4. CENSORING ISSUES:\n")
+cat("   - Participants who remain abstinent through study end are censored\n")
+cat("   - True abstinence duration unknown for these participants\n")
+cat(sprintf("   - Participants with maximum abstinence: %d\n",
+            sum(smoke_clean$Day_abs == max(smoke_clean$Day_abs, na.rm = TRUE))))
+cat("   - Nonparametric methods handle censored data better\n\n")
+
+cat("5. SMALL TO MODERATE SAMPLE SIZE:\n")
+cat(sprintf("   - Sample size: n = %d\n", nrow(smoke_clean)))
+cat("   - Central Limit Theorem may not apply well\n")
+cat("   - Normality harder to assess with smaller samples\n")
+cat("   - Nonparametric tests maintain correct Type I error rate\n\n")
+
+cat("6. ORDINAL OR RANKED NATURE:\n")
+cat("   - Success/failure in smoking cessation is inherently ordinal\n")
+cat("   - Exact number of days may be less important than rank order\n")
+cat("   - 'Did participant A stay abstinent longer than B?'\n")
+cat("   - Mann-Whitney U test directly addresses this question\n\n")
+
+cat("7. ROBUST INFERENCE:\n")
+cat("   - Nonparametric tests provide valid inferences without assumptions\n")
+cat("   - Results are interpretable even if distribution is unknown\n")
+cat("   - Protection against model misspecification\n\n")
+
+cat("8. COMPARISON WITH PARAMETRIC TESTS:\n\n")
+
+# Run parametric test for comparison
+t_test_gender <- t.test(male_abs, female_abs, var.equal = FALSE)
+cat("   Example: Gender comparison\n")
+cat(sprintf("   - Mann-Whitney p-value: %.4f\n", mann_whitney_gender$p.value))
+cat(sprintf("   - t-test p-value:       %.4f\n\n", t_test_gender$p.value))
+
+if (abs(mann_whitney_gender$p.value - t_test_gender$p.value) > 0.05) {
+  cat("   → Tests give different results, suggesting parametric assumptions violated\n\n")
+} else {
+  cat("   → Tests give similar results, but nonparametric is still preferred\n")
+  cat("     due to distributional concerns\n\n")
+}
+
+cat("=== SUMMARY ===\n\n")
+cat("Nonparametric methods (Mann-Whitney U test) are IDEAL for this study because:\n")
+cat("✓ No normality assumption required\n")
+cat("✓ Robust to outliers and skewness\n")
+cat("✓ Valid for bounded and censored data\n")
+cat("✓ Appropriate for small-moderate sample sizes\n")
+cat("✓ Maintains correct Type I error rate\n")
+cat("✓ Interpretable results based on ranks\n")
+cat("✓ Addresses clinically relevant questions about relative outcomes\n")
+```
+
+---
+
+# Visualizations
+
+## Distribution of Days Abstinent
+
+```{r viz-distribution, fig.height=6}
+# Histogram
+p1 <- ggplot(smoke_clean, aes(x = Day_abs)) +
+  geom_histogram(bins = 30, fill = "#1976D2", color = "black", alpha = 0.7) +
+  geom_vline(aes(xintercept = mean(Day_abs, na.rm = TRUE)),
+             color = "red", linetype = "dashed", size = 1.2) +
+  geom_vline(aes(xintercept = median(Day_abs, na.rm = TRUE)),
+             color = "darkgreen", linetype = "dashed", size = 1.2) +
+  annotate("text", x = mean(smoke_clean$Day_abs, na.rm = TRUE) + 50,
+           y = Inf, vjust = 2,
+           label = paste0("Mean = ", round(mean(smoke_clean$Day_abs, na.rm = TRUE), 1)),
+           color = "red", size = 4) +
+  annotate("text", x = median(smoke_clean$Day_abs, na.rm = TRUE) + 50,
+           y = Inf, vjust = 4,
+           label = paste0("Median = ", round(median(smoke_clean$Day_abs, na.rm = TRUE), 1)),
+           color = "darkgreen", size = 4) +
+  labs(title = "Distribution of Days Abstinent from Smoking",
+       subtitle = "Note the right skew - many short abstinence periods, few long ones",
+       x = "Days Abstinent",
+       y = "Frequency") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 14))
+
+print(p1)
+```
+
+## Days Abstinent by Gender (Problem 9.28)
+
+```{r viz-gender, fig.height=6}
+p2 <- ggplot(smoke_clean, aes(x = gender_label, y = Day_abs, fill = gender_label)) +
+  geom_boxplot(alpha = 0.7, outlier.color = "red", outlier.size = 2) +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 2) +
+  labs(title = "Days Abstinent by Gender",
+       subtitle = sprintf("Mann-Whitney U: p = %.4f", mann_whitney_gender$p.value),
+       x = "Gender",
+       y = "Days Abstinent") +
+  scale_fill_manual(values = c("Male" = "#1976D2", "Female" = "#D32F2F")) +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 14),
+        legend.position = "none")
+
+print(p2)
+```
+
+## Days Abstinent by Age Group (Problem 9.29)
+
+```{r viz-age, fig.height=6}
+p3 <- ggplot(smoke_clean, aes(x = age_group, y = Day_abs, fill = age_group)) +
+  geom_boxplot(alpha = 0.7, outlier.color = "red", outlier.size = 2) +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 2) +
+  labs(title = "Days Abstinent by Age Group",
+       subtitle = sprintf("Mann-Whitney U: p = %.4f", mann_whitney_age$p.value),
+       x = sprintf("Age Group (Median = %.1f years)", median_age),
+       y = "Days Abstinent") +
+  scale_fill_manual(values = c("Below Median" = "#FFA726", "Above Median" = "#66BB6A")) +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 14),
+        legend.position = "none")
+
+print(p3)
+```
+
+## Days Abstinent by Smoking Amount (Problem 9.30)
+
+```{r viz-smoking, fig.height=6}
+p4 <- ggplot(smoke_clean, aes(x = smoking_group, y = Day_abs, fill = smoking_group)) +
+  geom_boxplot(alpha = 0.7, outlier.color = "red", outlier.size = 2) +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 2) +
+  labs(title = "Days Abstinent by Amount Previously Smoked",
+       subtitle = sprintf("Mann-Whitney U: p = %.4f", mann_whitney_smoking$p.value),
+       x = sprintf("Smoking Group (Median = %.1f cig/day)", median_cig),
+       y = "Days Abstinent") +
+  scale_fill_manual(values = c("Light Smoker" = "#26C6DA", "Heavy Smoker" = "#AB47BC")) +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 14),
+        legend.position = "none")
+
+print(p4)
+```
+
+## Days Abstinent by CO Level (Problem 9.31)
+
+```{r viz-co, fig.height=6}
+p5 <- ggplot(smoke_clean, aes(x = co_group, y = Day_abs, fill = co_group)) +
+  geom_boxplot(alpha = 0.7, outlier.color = "red", outlier.size = 2) +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 2) +
+  labs(title = "Days Abstinent by Adjusted CO Level",
+       subtitle = sprintf("Mann-Whitney U: p = %.4f", mann_whitney_co$p.value),
+       x = sprintf("CO Level (Median = %.1f)", median_co),
+       y = "Days Abstinent") +
+  scale_fill_manual(values = c("Low CO" = "#66BB6A", "High CO" = "#EF5350")) +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 14),
+        legend.position = "none")
+
+print(p5)
+```
+
+## Summary Panel
+
+```{r viz-summary-panel, fig.height=10}
+grid.arrange(p2, p3, p4, p5, ncol = 2)
+```
+
+---
+
+# Summary of All Tests
+
+```{r summary-table}
+cat("\n\n", paste(rep("=", 70), collapse=""), "\n")
+cat("COMPREHENSIVE SUMMARY: PROBLEMS 9.28-9.32\n")
+cat(paste(rep("=", 70), collapse=""), "\n\n")
+
+# Create summary table
+summary_table <- data.frame(
+  Problem = c("9.28", "9.29", "9.30", "9.31"),
+  Factor = c("Gender (M vs F)",
+             "Age (Below vs Above median)",
+             "Smoking Amount (Light vs Heavy)",
+             "CO Level (Low vs High)"),
+  Group1_Median = c(median(male_abs), median(below_median_abs),
+                    median(light_abs), median(low_co_abs)),
+  Group2_Median = c(median(female_abs), median(above_median_abs),
+                    median(heavy_abs), median(high_co_abs)),
+  W_statistic = c(mann_whitney_gender$statistic,
+                  mann_whitney_age$statistic,
+                  mann_whitney_smoking$statistic,
+                  mann_whitney_co$statistic),
+  p_value = c(mann_whitney_gender$p.value,
+              mann_whitney_age$p.value,
+              mann_whitney_smoking$p.value,
+              mann_whitney_co$p.value),
+  Effect_size = c(r_rb_gender, r_rb_age, r_rb_smoking, r_rb_co),
+  Significant = c(
+    ifelse(mann_whitney_gender$p.value < 0.05, "Yes", "No"),
+    ifelse(mann_whitney_age$p.value < 0.05, "Yes", "No"),
+    ifelse(mann_whitney_smoking$p.value < 0.05, "Yes", "No"),
+    ifelse(mann_whitney_co$p.value < 0.05, "Yes", "No")
+  )
+)
+
+print(kable(summary_table, digits = 4,
+            col.names = c("Problem", "Risk Factor", "Group 1 Median",
+                         "Group 2 Median", "W Statistic", "p-value",
+                         "Effect Size (r)", "Significant?"),
+            caption = "Summary of Mann-Whitney U Tests for All Risk Factors"))
+
+cat("\n\nKEY FINDINGS:\n\n")
+
+n_sig <- sum(summary_table$p_value < 0.05)
+cat(sprintf("Number of significant associations (α = 0.05): %d out of 4\n\n", n_sig))
+
+if (n_sig == 0) {
+  cat("None of the tested risk factors showed significant association with\n")
+  cat("days abstinent from smoking.\n\n")
+} else {
+  cat("Significant risk factors for smoking cessation:\n")
+  for (i in 1:nrow(summary_table)) {
+    if (summary_table$Significant[i] == "Yes") {
+      cat(sprintf("  ✓ %s (p = %.4f)\n",
+                  summary_table$Factor[i],
+                  summary_table$p_value[i]))
+    }
+  }
+  cat("\n")
+}
+
+cat("PROBLEM 9.32 ANSWER:\n")
+cat("Nonparametric methods are well suited because:\n")
+cat("  1. Outcome (days abstinent) is highly skewed\n")
+cat("  2. Presence of outliers and extreme values\n")
+cat("  3. Bounded variable with potential censoring\n")
+cat("  4. No normality assumption required\n")
+cat("  5. Robust and valid inference for small-moderate samples\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

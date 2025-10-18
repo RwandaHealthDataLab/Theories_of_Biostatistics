@@ -1,0 +1,960 @@
+---
+title: "Ophthalmology - Tear Break-Up Time (TBUT) Analysis (Problems 9.55-9.60)"
+subtitle: "Nonparametric Analysis of Placebo Eye Drop Effects"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: united
+    highlight: tango
+    fig_width: 12
+    fig_height: 8
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = 'center'
+)
+```
+
+# Introduction
+
+This document analyzes tear break-up time (TBUT) data from an ophthalmology study examining the effects of placebo eye drop instillation on tear film stability over time.
+
+## Study Background
+
+**Tear Break-Up Time (TBUT)**:
+- Measure of tear film stability
+- Time (in seconds) from eye opening to first break in tear film
+- Important indicator of dry eye disease
+- Shorter TBUT indicates unstable tear film
+
+**Clinical Relevance**:
+- Normal TBUT: > 10 seconds
+- Borderline: 5-10 seconds
+- Dry eye disease: < 5 seconds
+
+## Study Design
+
+**Participants**: Patients receiving placebo eye drops
+
+**Measurements**:
+- **Eyes**: Both eyes (OD = right eye, OS = left eye)
+- **Replicates**: Two measurements per eye at each time point
+- **Blink period**: Analysis restricted to **6-second blink period** data
+- **Time points**:
+  1. **Baseline**: Before eye drop instillation
+  2. **Immediate**: Immediately after instillation
+  3. **5 minutes**: 5 minutes post-instillation
+  4. **10 minutes**: 10 minutes post-instillation
+  5. **15 minutes**: 15 minutes post-instillation
+
+**Summary Score**: Average TBUT over:
+- Both eyes (OD and OS)
+- Two replicates per eye
+- **Total**: Average of 4 values per subject per time point
+
+## Research Questions
+
+**Problems 9.55-9.60**:
+
+- **9.55**: What nonparametric test is appropriate?
+- **9.56**: Compare TBUT immediately after vs before instillation
+- **9.57**: Compare TBUT 5 minutes after vs before instillation
+- **9.58**: Compare TBUT 10 minutes after vs before instillation
+- **9.59**: Compare TBUT 15 minutes after vs before instillation
+- **9.60**: Is the placebo response short-lasting or long-lasting?
+
+---
+
+# Data Preparation
+
+```{r load-libraries}
+# Load required libraries
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(knitr)
+```
+
+```{r load-data}
+# Read the TEAR.DAT file
+tear_data <- read_csv(
+  "Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/TEAR.DAT.txt",
+  show_col_types = FALSE,
+  name_repair = "minimal"
+)
+
+# Clean column names
+names(tear_data) <- gsub("'", "", names(tear_data))
+names(tear_data) <- trimws(names(tear_data))
+
+cat("Dataset dimensions:", nrow(tear_data), "subjects x", ncol(tear_data), "variables\n\n")
+
+# Variable naming convention:
+# od/os = right/left eye
+# 3/6/10 = blink period (seconds)
+# bas = baseline
+# im = immediate
+# pst5 or ps5 = post 5 minutes
+# pt10 or p10 = post 10 minutes
+# pt15 or p15 = post 15 minutes
+# 1/2 = replicate number
+
+# Extract data for 6-second blink period
+# For each subject, calculate average TBUT across both eyes and both replicates
+
+tbut_analysis <- tear_data %>%
+  mutate(
+    # Baseline (before instillation)
+    tbut_baseline = rowMeans(
+      select(., od6bas1, od6bas2, os6bas1, os6bas2),
+      na.rm = TRUE
+    ),
+
+    # Immediate (after instillation)
+    tbut_immediate = rowMeans(
+      select(., od6im1, od6im2, os6im1, os6im2),
+      na.rm = TRUE
+    ),
+
+    # 5 minutes post-instillation
+    tbut_5min = rowMeans(
+      select(., od6pst51, od6pst52, os6pst51, os6pst52),
+      na.rm = TRUE
+    ),
+
+    # 10 minutes post-instillation
+    tbut_10min = rowMeans(
+      select(., od6pt101, od6pt102, os6pt101, os6pt102),
+      na.rm = TRUE
+    ),
+
+    # 15 minutes post-instillation
+    tbut_15min = rowMeans(
+      select(., od6pt151, od6pt152, os6pt151, os6pt152),
+      na.rm = TRUE
+    )
+  ) %>%
+  select(ID, tbut_baseline, tbut_immediate, tbut_5min, tbut_10min, tbut_15min) %>%
+  # Remove subjects with missing data
+  filter(!is.na(tbut_baseline) &
+         !is.na(tbut_immediate) &
+         !is.na(tbut_5min) &
+         !is.na(tbut_10min) &
+         !is.na(tbut_15min))
+
+cat("Number of subjects with complete data:", nrow(tbut_analysis), "\n\n")
+
+# Display first few subjects
+cat("First 5 subjects:\n")
+print(kable(head(tbut_analysis, 5), digits = 2,
+            caption = "Average TBUT (seconds) by Time Point"))
+```
+
+## Descriptive Statistics
+
+```{r descriptive-stats}
+# Calculate descriptive statistics for each time point
+desc_stats <- data.frame(
+  Time_Point = c("Baseline", "Immediate", "5 Minutes", "10 Minutes", "15 Minutes"),
+  N = nrow(tbut_analysis),
+  Mean = c(
+    mean(tbut_analysis$tbut_baseline, na.rm = TRUE),
+    mean(tbut_analysis$tbut_immediate, na.rm = TRUE),
+    mean(tbut_analysis$tbut_5min, na.rm = TRUE),
+    mean(tbut_analysis$tbut_10min, na.rm = TRUE),
+    mean(tbut_analysis$tbut_15min, na.rm = TRUE)
+  ),
+  SD = c(
+    sd(tbut_analysis$tbut_baseline, na.rm = TRUE),
+    sd(tbut_analysis$tbut_immediate, na.rm = TRUE),
+    sd(tbut_analysis$tbut_5min, na.rm = TRUE),
+    sd(tbut_analysis$tbut_10min, na.rm = TRUE),
+    sd(tbut_analysis$tbut_15min, na.rm = TRUE)
+  ),
+  Median = c(
+    median(tbut_analysis$tbut_baseline, na.rm = TRUE),
+    median(tbut_analysis$tbut_immediate, na.rm = TRUE),
+    median(tbut_analysis$tbut_5min, na.rm = TRUE),
+    median(tbut_analysis$tbut_10min, na.rm = TRUE),
+    median(tbut_analysis$tbut_15min, na.rm = TRUE)
+  ),
+  Q1 = c(
+    quantile(tbut_analysis$tbut_baseline, 0.25, na.rm = TRUE),
+    quantile(tbut_analysis$tbut_immediate, 0.25, na.rm = TRUE),
+    quantile(tbut_analysis$tbut_5min, 0.25, na.rm = TRUE),
+    quantile(tbut_analysis$tbut_10min, 0.25, na.rm = TRUE),
+    quantile(tbut_analysis$tbut_15min, 0.25, na.rm = TRUE)
+  ),
+  Q3 = c(
+    quantile(tbut_analysis$tbut_baseline, 0.75, na.rm = TRUE),
+    quantile(tbut_analysis$tbut_immediate, 0.75, na.rm = TRUE),
+    quantile(tbut_analysis$tbut_5min, 0.75, na.rm = TRUE),
+    quantile(tbut_analysis$tbut_10min, 0.75, na.rm = TRUE),
+    quantile(tbut_analysis$tbut_15min, 0.75, na.rm = TRUE)
+  ),
+  Min = c(
+    min(tbut_analysis$tbut_baseline, na.rm = TRUE),
+    min(tbut_analysis$tbut_immediate, na.rm = TRUE),
+    min(tbut_analysis$tbut_5min, na.rm = TRUE),
+    min(tbut_analysis$tbut_10min, na.rm = TRUE),
+    min(tbut_analysis$tbut_15min, na.rm = TRUE)
+  ),
+  Max = c(
+    max(tbut_analysis$tbut_baseline, na.rm = TRUE),
+    max(tbut_analysis$tbut_immediate, na.rm = TRUE),
+    max(tbut_analysis$tbut_5min, na.rm = TRUE),
+    max(tbut_analysis$tbut_10min, na.rm = TRUE),
+    max(tbut_analysis$tbut_15min, na.rm = TRUE)
+  )
+)
+
+kable(desc_stats,
+      caption = "Descriptive Statistics: TBUT by Time Point (seconds)",
+      digits = 2)
+```
+
+## Visualization of TBUT Over Time
+
+```{r visualization-time-series, fig.width=12, fig.height=10}
+# Prepare data for plotting
+tbut_long <- tbut_analysis %>%
+  pivot_longer(cols = starts_with("tbut_"),
+               names_to = "Time_Point",
+               values_to = "TBUT") %>%
+  mutate(
+    Time_Point = factor(Time_Point,
+                       levels = c("tbut_baseline", "tbut_immediate",
+                                 "tbut_5min", "tbut_10min", "tbut_15min"),
+                       labels = c("Baseline", "Immediate",
+                                 "5 Min", "10 Min", "15 Min")),
+    Time_Numeric = as.numeric(factor(Time_Point,
+                                    levels = c("Baseline", "Immediate",
+                                              "5 Min", "10 Min", "15 Min")))
+  )
+
+# Box plot over time
+p1 <- ggplot(tbut_long, aes(x = Time_Point, y = TBUT, fill = Time_Point)) +
+  geom_boxplot(alpha = 0.7, outlier.color = "red") +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 1.5) +
+  labs(
+    title = "TBUT Distribution by Time Point",
+    subtitle = "Blink period = 6 seconds",
+    x = "Time Point",
+    y = "TBUT (seconds)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5))
+
+# Individual trajectories (spaghetti plot)
+p2 <- ggplot(tbut_long, aes(x = Time_Numeric, y = TBUT, group = ID)) +
+  geom_line(alpha = 0.3, color = "gray60") +
+  geom_point(alpha = 0.3, size = 1) +
+  stat_summary(aes(group = 1), fun = mean, geom = "line",
+               color = "red", linewidth = 1.5) +
+  stat_summary(aes(group = 1), fun = median, geom = "line",
+               color = "blue", linewidth = 1.5, linetype = "dashed") +
+  scale_x_continuous(breaks = 1:5,
+                    labels = c("Baseline", "Immediate", "5 Min", "10 Min", "15 Min")) +
+  labs(
+    title = "Individual TBUT Trajectories Over Time",
+    subtitle = "Red = Mean, Blue = Median",
+    x = "Time Point",
+    y = "TBUT (seconds)"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5))
+
+# Mean ± SE plot
+summary_data <- tbut_long %>%
+  group_by(Time_Point, Time_Numeric) %>%
+  summarise(
+    Mean = mean(TBUT, na.rm = TRUE),
+    SE = sd(TBUT, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"
+  )
+
+p3 <- ggplot(summary_data, aes(x = Time_Numeric, y = Mean)) +
+  geom_ribbon(aes(ymin = Mean - SE, ymax = Mean + SE),
+              fill = "#3498DB", alpha = 0.3) +
+  geom_line(color = "#2C3E50", linewidth = 1.5) +
+  geom_point(color = "#2C3E50", size = 4) +
+  scale_x_continuous(breaks = 1:5,
+                    labels = c("Baseline", "Immediate", "5 Min", "10 Min", "15 Min")) +
+  labs(
+    title = "Mean TBUT Over Time (± SE)",
+    x = "Time Point",
+    y = "Mean TBUT (seconds)"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+# Violin plot
+p4 <- ggplot(tbut_long, aes(x = Time_Point, y = TBUT, fill = Time_Point)) +
+  geom_violin(alpha = 0.7, trim = FALSE) +
+  geom_boxplot(width = 0.2, alpha = 0.5, outlier.shape = NA) +
+  labs(
+    title = "TBUT Distribution by Time Point (Violin Plot)",
+    x = "Time Point",
+    y = "TBUT (seconds)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5, face = "bold"))
+
+gridExtra::grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+---
+
+# Problem 9.55: Selection of Statistical Test
+
+**Problem 9.55**: What test can we use to perform the analysis if we don't want to assume that TBUT is normally distributed?
+
+```{r problem-955}
+cat("=== PROBLEM 9.55: TEST SELECTION ===\n\n")
+
+cat("RESEARCH QUESTION:\n")
+cat("Compare TBUT at different time points after placebo eye drop instillation\n")
+cat("vs TBUT before instillation (baseline).\n\n")
+
+cat("STUDY DESIGN:\n")
+cat("- Repeated measures on same subjects\n")
+cat("- Paired data (each subject measured at multiple time points)\n")
+cat("- Same subjects serve as their own controls\n\n")
+
+cat("APPROPRIATE TEST:\n")
+cat("**WILCOXON SIGNED-RANK TEST**\n\n")
+
+cat("RATIONALE:\n")
+cat("1. PAIRED DATA:\n")
+cat("   - Each subject has TBUT measured at baseline and post-instillation\n")
+cat("   - Natural pairing within subjects\n")
+cat("   - Eliminates between-subject variability\n\n")
+
+cat("2. NONPARAMETRIC REQUIREMENT:\n")
+cat("   - No assumption of normality\n")
+cat("   - Appropriate when distribution is unknown or non-normal\n")
+cat("   - Robust to outliers and skewed distributions\n\n")
+
+cat("3. ADVANTAGES OVER ALTERNATIVES:\n")
+cat("   a) vs Sign Test:\n")
+cat("      - Uses magnitude of differences (more powerful)\n")
+cat("      - Not just direction (sign)\n\n")
+
+cat("   b) vs Paired t-test:\n")
+cat("      - No normality assumption required\n")
+cat("      - More robust to violations of assumptions\n\n")
+
+cat("   c) vs Independent samples tests:\n")
+cat("      - Properly accounts for pairing\n")
+cat("      - Increases statistical power\n\n")
+
+cat("HYPOTHESES:\n")
+cat("H₀: The median difference (post-instillation - baseline) = 0\n")
+cat("Hₐ: The median difference ≠ 0 (two-tailed)\n\n")
+
+cat("ANSWER TO PROBLEM 9.55:\n")
+cat("Use the WILCOXON SIGNED-RANK TEST for paired data.\n")
+```
+
+---
+
+# Problem 9.56: Immediate vs Baseline
+
+**Problem 9.56**: Implement the test in Problem 9.55, and report a p-value (two-tailed) comparing TBUT immediately after drop instillation vs TBUT before instillation.
+
+```{r problem-956}
+cat("\n\n=== PROBLEM 9.56: IMMEDIATE vs BASELINE ===\n\n")
+
+# Calculate differences
+diff_immediate <- tbut_analysis$tbut_immediate - tbut_analysis$tbut_baseline
+
+# Perform Wilcoxon signed-rank test
+wilcox_immediate <- wilcox.test(
+  tbut_analysis$tbut_immediate,
+  tbut_analysis$tbut_baseline,
+  paired = TRUE,
+  alternative = "two.sided",
+  exact = FALSE,
+  correct = TRUE,
+  conf.int = TRUE
+)
+
+cat("COMPARISON: Immediate vs Baseline\n\n")
+cat("Descriptive Statistics:\n")
+cat(sprintf("  Baseline:   Mean = %.2f, Median = %.2f seconds\n",
+            mean(tbut_analysis$tbut_baseline),
+            median(tbut_analysis$tbut_baseline)))
+cat(sprintf("  Immediate:  Mean = %.2f, Median = %.2f seconds\n",
+            mean(tbut_analysis$tbut_immediate),
+            median(tbut_analysis$tbut_immediate)))
+cat(sprintf("  Difference: Mean = %.2f, Median = %.2f seconds\n\n",
+            mean(diff_immediate),
+            median(diff_immediate)))
+
+cat("Wilcoxon Signed-Rank Test Results:\n")
+cat(sprintf("  Test Statistic (V): %.1f\n", wilcox_immediate$statistic))
+cat(sprintf("  p-value (two-tailed): %.6f\n\n", wilcox_immediate$p.value))
+cat(sprintf("  Pseudomedian difference: %.4f seconds\n", wilcox_immediate$estimate))
+cat(sprintf("  95%% CI: [%.4f, %.4f] seconds\n\n",
+            wilcox_immediate$conf.int[1], wilcox_immediate$conf.int[2]))
+
+cat("Direction of Changes:\n")
+cat(sprintf("  Increased TBUT: %d subjects (%.1f%%)\n",
+            sum(diff_immediate > 0),
+            100 * sum(diff_immediate > 0) / length(diff_immediate)))
+cat(sprintf("  Decreased TBUT: %d subjects (%.1f%%)\n",
+            sum(diff_immediate < 0),
+            100 * sum(diff_immediate < 0) / length(diff_immediate)))
+cat(sprintf("  No change: %d subjects (%.1f%%)\n\n",
+            sum(diff_immediate == 0),
+            100 * sum(diff_immediate == 0) / length(diff_immediate)))
+
+cat("CONCLUSION:\n")
+if (wilcox_immediate$p.value < 0.05) {
+  cat("At α = 0.05, we REJECT the null hypothesis.\n")
+  cat("There is significant evidence that TBUT changes immediately after\n")
+  cat("placebo eye drop instillation.\n\n")
+  if (wilcox_immediate$estimate > 0) {
+    cat(sprintf("DIRECTION: TBUT INCREASES by approximately %.2f seconds immediately\n",
+                wilcox_immediate$estimate))
+    cat("after placebo instillation (improvement in tear film stability).\n")
+  } else {
+    cat(sprintf("DIRECTION: TBUT DECREASES by approximately %.2f seconds immediately\n",
+                abs(wilcox_immediate$estimate)))
+    cat("after placebo instillation (worsening of tear film stability).\n")
+  }
+} else {
+  cat("At α = 0.05, we FAIL TO REJECT the null hypothesis.\n")
+  cat("There is insufficient evidence of a change in TBUT immediately\n")
+  cat("after placebo eye drop instillation.\n")
+}
+```
+
+---
+
+# Problem 9.57: 5 Minutes vs Baseline
+
+**Problem 9.57**: Answer the question in Problem 9.56 comparing TBUT time 5 minutes after drop instillation vs TBUT before instillation.
+
+```{r problem-957}
+cat("\n\n=== PROBLEM 9.57: 5 MINUTES vs BASELINE ===\n\n")
+
+# Calculate differences
+diff_5min <- tbut_analysis$tbut_5min - tbut_analysis$tbut_baseline
+
+# Perform Wilcoxon signed-rank test
+wilcox_5min <- wilcox.test(
+  tbut_analysis$tbut_5min,
+  tbut_analysis$tbut_baseline,
+  paired = TRUE,
+  alternative = "two.sided",
+  exact = FALSE,
+  correct = TRUE,
+  conf.int = TRUE
+)
+
+cat("COMPARISON: 5 Minutes vs Baseline\n\n")
+cat("Descriptive Statistics:\n")
+cat(sprintf("  Baseline:   Mean = %.2f, Median = %.2f seconds\n",
+            mean(tbut_analysis$tbut_baseline),
+            median(tbut_analysis$tbut_baseline)))
+cat(sprintf("  5 Minutes:  Mean = %.2f, Median = %.2f seconds\n",
+            mean(tbut_analysis$tbut_5min),
+            median(tbut_analysis$tbut_5min)))
+cat(sprintf("  Difference: Mean = %.2f, Median = %.2f seconds\n\n",
+            mean(diff_5min),
+            median(diff_5min)))
+
+cat("Wilcoxon Signed-Rank Test Results:\n")
+cat(sprintf("  Test Statistic (V): %.1f\n", wilcox_5min$statistic))
+cat(sprintf("  p-value (two-tailed): %.6f\n\n", wilcox_5min$p.value))
+cat(sprintf("  Pseudomedian difference: %.4f seconds\n", wilcox_5min$estimate))
+cat(sprintf("  95%% CI: [%.4f, %.4f] seconds\n\n",
+            wilcox_5min$conf.int[1], wilcox_5min$conf.int[2]))
+
+cat("Direction of Changes:\n")
+cat(sprintf("  Increased TBUT: %d subjects (%.1f%%)\n",
+            sum(diff_5min > 0),
+            100 * sum(diff_5min > 0) / length(diff_5min)))
+cat(sprintf("  Decreased TBUT: %d subjects (%.1f%%)\n",
+            sum(diff_5min < 0),
+            100 * sum(diff_5min < 0) / length(diff_5min)))
+cat(sprintf("  No change: %d subjects (%.1f%%)\n\n",
+            sum(diff_5min == 0),
+            100 * sum(diff_5min == 0) / length(diff_5min)))
+
+cat("CONCLUSION:\n")
+if (wilcox_5min$p.value < 0.05) {
+  cat("At α = 0.05, we REJECT the null hypothesis.\n")
+  cat("There is significant evidence that TBUT remains different from baseline\n")
+  cat("at 5 minutes post-instillation.\n\n")
+  if (wilcox_5min$estimate > 0) {
+    cat(sprintf("DIRECTION: TBUT is still INCREASED by approximately %.2f seconds\n",
+                wilcox_5min$estimate))
+    cat("at 5 minutes (sustained improvement).\n")
+  } else {
+    cat(sprintf("DIRECTION: TBUT is DECREASED by approximately %.2f seconds\n",
+                abs(wilcox_5min$estimate)))
+    cat("at 5 minutes.\n")
+  }
+} else {
+  cat("At α = 0.05, we FAIL TO REJECT the null hypothesis.\n")
+  cat("There is insufficient evidence that TBUT differs from baseline\n")
+  cat("at 5 minutes post-instillation.\n")
+}
+```
+
+---
+
+# Problem 9.58: 10 Minutes vs Baseline
+
+**Problem 9.58**: Answer the question in Problem 9.56 comparing TBUT 10 minutes after drop instillation vs TBUT before instillation.
+
+```{r problem-958}
+cat("\n\n=== PROBLEM 9.58: 10 MINUTES vs BASELINE ===\n\n")
+
+# Calculate differences
+diff_10min <- tbut_analysis$tbut_10min - tbut_analysis$tbut_baseline
+
+# Perform Wilcoxon signed-rank test
+wilcox_10min <- wilcox.test(
+  tbut_analysis$tbut_10min,
+  tbut_analysis$tbut_baseline,
+  paired = TRUE,
+  alternative = "two.sided",
+  exact = FALSE,
+  correct = TRUE,
+  conf.int = TRUE
+)
+
+cat("COMPARISON: 10 Minutes vs Baseline\n\n")
+cat("Descriptive Statistics:\n")
+cat(sprintf("  Baseline:   Mean = %.2f, Median = %.2f seconds\n",
+            mean(tbut_analysis$tbut_baseline),
+            median(tbut_analysis$tbut_baseline)))
+cat(sprintf("  10 Minutes: Mean = %.2f, Median = %.2f seconds\n",
+            mean(tbut_analysis$tbut_10min),
+            median(tbut_analysis$tbut_10min)))
+cat(sprintf("  Difference: Mean = %.2f, Median = %.2f seconds\n\n",
+            mean(diff_10min),
+            median(diff_10min)))
+
+cat("Wilcoxon Signed-Rank Test Results:\n")
+cat(sprintf("  Test Statistic (V): %.1f\n", wilcox_10min$statistic))
+cat(sprintf("  p-value (two-tailed): %.6f\n\n", wilcox_10min$p.value))
+cat(sprintf("  Pseudomedian difference: %.4f seconds\n", wilcox_10min$estimate))
+cat(sprintf("  95%% CI: [%.4f, %.4f] seconds\n\n",
+            wilcox_10min$conf.int[1], wilcox_10min$conf.int[2]))
+
+cat("Direction of Changes:\n")
+cat(sprintf("  Increased TBUT: %d subjects (%.1f%%)\n",
+            sum(diff_10min > 0),
+            100 * sum(diff_10min > 0) / length(diff_10min)))
+cat(sprintf("  Decreased TBUT: %d subjects (%.1f%%)\n",
+            sum(diff_10min < 0),
+            100 * sum(diff_10min < 0) / length(diff_10min)))
+cat(sprintf("  No change: %d subjects (%.1f%%)\n\n",
+            sum(diff_10min == 0),
+            100 * sum(diff_10min == 0) / length(diff_10min)))
+
+cat("CONCLUSION:\n")
+if (wilcox_10min$p.value < 0.05) {
+  cat("At α = 0.05, we REJECT the null hypothesis.\n")
+  cat("There is significant evidence that TBUT remains different from baseline\n")
+  cat("at 10 minutes post-instillation.\n\n")
+  if (wilcox_10min$estimate > 0) {
+    cat(sprintf("DIRECTION: TBUT is still INCREASED by approximately %.2f seconds\n",
+                wilcox_10min$estimate))
+    cat("at 10 minutes (sustained improvement).\n")
+  } else {
+    cat(sprintf("DIRECTION: TBUT is DECREASED by approximately %.2f seconds\n",
+                abs(wilcox_10min$estimate)))
+    cat("at 10 minutes.\n")
+  }
+} else {
+  cat("At α = 0.05, we FAIL TO REJECT the null hypothesis.\n")
+  cat("There is insufficient evidence that TBUT differs from baseline\n")
+  cat("at 10 minutes post-instillation.\n")
+}
+```
+
+---
+
+# Problem 9.59: 15 Minutes vs Baseline
+
+**Problem 9.59**: Answer the question in Problem 9.56 comparing TBUT 15 minutes after drop instillation vs TBUT before instillation.
+
+```{r problem-959}
+cat("\n\n=== PROBLEM 9.59: 15 MINUTES vs BASELINE ===\n\n")
+
+# Calculate differences
+diff_15min <- tbut_analysis$tbut_15min - tbut_analysis$tbut_baseline
+
+# Perform Wilcoxon signed-rank test
+wilcox_15min <- wilcox.test(
+  tbut_analysis$tbut_15min,
+  tbut_analysis$tbut_baseline,
+  paired = TRUE,
+  alternative = "two.sided",
+  exact = FALSE,
+  correct = TRUE,
+  conf.int = TRUE
+)
+
+cat("COMPARISON: 15 Minutes vs Baseline\n\n")
+cat("Descriptive Statistics:\n")
+cat(sprintf("  Baseline:   Mean = %.2f, Median = %.2f seconds\n",
+            mean(tbut_analysis$tbut_baseline),
+            median(tbut_analysis$tbut_baseline)))
+cat(sprintf("  15 Minutes: Mean = %.2f, Median = %.2f seconds\n",
+            mean(tbut_analysis$tbut_15min),
+            median(tbut_analysis$tbut_15min)))
+cat(sprintf("  Difference: Mean = %.2f, Median = %.2f seconds\n\n",
+            mean(diff_15min),
+            median(diff_15min)))
+
+cat("Wilcoxon Signed-Rank Test Results:\n")
+cat(sprintf("  Test Statistic (V): %.1f\n", wilcox_15min$statistic))
+cat(sprintf("  p-value (two-tailed): %.6f\n\n", wilcox_15min$p.value))
+cat(sprintf("  Pseudomedian difference: %.4f seconds\n", wilcox_15min$estimate))
+cat(sprintf("  95%% CI: [%.4f, %.4f] seconds\n\n",
+            wilcox_15min$conf.int[1], wilcox_15min$conf.int[2]))
+
+cat("Direction of Changes:\n")
+cat(sprintf("  Increased TBUT: %d subjects (%.1f%%)\n",
+            sum(diff_15min > 0),
+            100 * sum(diff_15min > 0) / length(diff_15min)))
+cat(sprintf("  Decreased TBUT: %d subjects (%.1f%%)\n",
+            sum(diff_15min < 0),
+            100 * sum(diff_15min < 0) / length(diff_15min)))
+cat(sprintf("  No change: %d subjects (%.1f%%)\n\n",
+            sum(diff_15min == 0),
+            100 * sum(diff_15min == 0) / length(diff_15min)))
+
+cat("CONCLUSION:\n")
+if (wilcox_15min$p.value < 0.05) {
+  cat("At α = 0.05, we REJECT the null hypothesis.\n")
+  cat("There is significant evidence that TBUT remains different from baseline\n")
+  cat("at 15 minutes post-instillation.\n\n")
+  if (wilcox_15min$estimate > 0) {
+    cat(sprintf("DIRECTION: TBUT is still INCREASED by approximately %.2f seconds\n",
+                wilcox_15min$estimate))
+    cat("at 15 minutes (sustained improvement).\n")
+  } else {
+    cat(sprintf("DIRECTION: TBUT is DECREASED by approximately %.2f seconds\n",
+                abs(wilcox_15min$estimate)))
+    cat("at 15 minutes.\n")
+  }
+} else {
+  cat("At α = 0.05, we FAIL TO REJECT the null hypothesis.\n")
+  cat("There is insufficient evidence that TBUT differs from baseline\n")
+  cat("at 15 minutes post-instillation.\n")
+}
+```
+
+---
+
+# Problem 9.60: Duration of Placebo Response
+
+**Problem 9.60**: Based on your results from Problems 9.55-9.59, do you think the response to the placebo eye drop is short-lasting or long-lasting?
+
+```{r problem-960}
+cat("\n\n=== PROBLEM 9.60: DURATION OF PLACEBO RESPONSE ===\n\n")
+
+# Create comprehensive summary table
+summary_table <- data.frame(
+  Time_Point = c("Immediate", "5 Minutes", "10 Minutes", "15 Minutes"),
+  Minutes_Post = c(0, 5, 10, 15),
+  Mean_Diff = c(
+    mean(diff_immediate),
+    mean(diff_5min),
+    mean(diff_10min),
+    mean(diff_15min)
+  ),
+  Median_Diff = c(
+    median(diff_immediate),
+    median(diff_5min),
+    median(diff_10min),
+    median(diff_15min)
+  ),
+  Pseudomedian = c(
+    wilcox_immediate$estimate,
+    wilcox_5min$estimate,
+    wilcox_10min$estimate,
+    wilcox_15min$estimate
+  ),
+  P_Value = c(
+    wilcox_immediate$p.value,
+    wilcox_5min$p.value,
+    wilcox_10min$p.value,
+    wilcox_15min$p.value
+  ),
+  Significant = c(
+    wilcox_immediate$p.value < 0.05,
+    wilcox_5min$p.value < 0.05,
+    wilcox_10min$p.value < 0.05,
+    wilcox_15min$p.value < 0.05
+  )
+)
+
+cat("=== COMPREHENSIVE SUMMARY OF RESULTS ===\n\n")
+kable(summary_table,
+      caption = "Summary of Wilcoxon Signed-Rank Tests: All Time Points vs Baseline",
+      digits = 4,
+      col.names = c("Time Point", "Minutes", "Mean Diff", "Median Diff",
+                    "Pseudomedian", "p-value", "Significant?"))
+
+cat("\n\n--- Pattern of Response Over Time ---\n\n")
+
+# Determine pattern
+sig_count <- sum(summary_table$Significant)
+cat(sprintf("Number of time points with significant difference: %d out of 4\n\n",
+            sig_count))
+
+# Check if effect diminishes over time
+effect_diminishes <- FALSE
+if (sig_count >= 2) {
+  # Check if pseudomedian decreases over time
+  pseudo_values <- summary_table$Pseudomedian
+  if (all(diff(pseudo_values) <= 0)) {
+    effect_diminishes <- TRUE
+  }
+}
+
+cat("Time Course Analysis:\n\n")
+for (i in 1:4) {
+  cat(sprintf("%d. %s (%d minutes):\n",
+              i, summary_table$Time_Point[i], summary_table$Minutes_Post[i]))
+  cat(sprintf("   - Pseudomedian difference: %.3f seconds\n",
+              summary_table$Pseudomedian[i]))
+  cat(sprintf("   - p-value: %.6f (%s)\n",
+              summary_table$P_Value[i],
+              ifelse(summary_table$Significant[i], "SIGNIFICANT", "NOT significant")))
+  cat("\n")
+}
+
+cat("\n--- ANSWER TO PROBLEM 9.60 ---\n\n")
+
+# Determine if short-lasting or long-lasting
+if (sig_count == 0) {
+  cat("CONCLUSION: NO SIGNIFICANT PLACEBO EFFECT\n\n")
+  cat("There is no significant change in TBUT at any time point after\n")
+  cat("placebo eye drop instillation.\n")
+
+} else if (summary_table$Significant[1] && !any(summary_table$Significant[2:4])) {
+  cat("CONCLUSION: SHORT-LASTING PLACEBO RESPONSE\n\n")
+  cat("The placebo eye drop has a SHORT-LASTING effect:\n\n")
+  cat("Evidence:\n")
+  cat("1. Significant effect immediately after instillation\n")
+  cat("2. Effect disappears by 5 minutes post-instillation\n")
+  cat("3. No significant difference at 10 or 15 minutes\n\n")
+  cat("INTERPRETATION:\n")
+  cat("The physical presence of the liquid on the eye provides temporary\n")
+  cat("lubrication and tear film stabilization, but this effect is transient\n")
+  cat("and dissipates within 5 minutes as the liquid drains or evaporates.\n")
+
+} else if (all(summary_table$Significant)) {
+  cat("CONCLUSION: LONG-LASTING PLACEBO RESPONSE\n\n")
+  cat("The placebo eye drop has a LONG-LASTING effect:\n\n")
+  cat("Evidence:\n")
+  cat("1. Significant effect immediately after instillation\n")
+  cat("2. Effect persists at 5 minutes\n")
+  cat("3. Effect still present at 10 minutes\n")
+  cat("4. Effect continues at 15 minutes\n\n")
+  cat("INTERPRETATION:\n")
+  cat("The placebo eye drop produces sustained improvement in tear film\n")
+  cat("stability that lasts at least 15 minutes. This could be due to:\n")
+  cat("- Sustained lubrication from the carrier solution\n")
+  cat("- Stimulation of natural tear production\n")
+  cat("- Psychological placebo effect\n")
+
+} else {
+  # Intermediate pattern
+  cat("CONCLUSION: INTERMEDIATE DURATION PLACEBO RESPONSE\n\n")
+  cat("The placebo eye drop has an effect of MODERATE duration:\n\n")
+  cat("Evidence:\n")
+
+  # Find last significant time point
+  last_sig <- max(which(summary_table$Significant))
+  cat(sprintf("- Effect significant through %d minutes\n",
+              summary_table$Minutes_Post[last_sig]))
+  cat(sprintf("- Effect no longer significant at later time points\n\n"))
+
+  cat("INTERPRETATION:\n")
+  cat(sprintf("The placebo effect lasts approximately %d-",
+              summary_table$Minutes_Post[last_sig]))
+  if (last_sig < 4) {
+    cat(sprintf("%d minutes.\n", summary_table$Minutes_Post[last_sig + 1]))
+  } else {
+    cat(">15 minutes.\n")
+  }
+  cat("This represents a moderate duration of action, longer than immediate\n")
+  cat("mechanical lubrication alone but not sustained throughout the\n")
+  cat("entire observation period.\n")
+}
+
+cat("\n\n--- Clinical Significance ---\n\n")
+
+cat("Magnitude of Effect:\n")
+mean_effect <- mean(summary_table$Pseudomedian[summary_table$Significant])
+if (sig_count > 0) {
+  cat(sprintf("- Average pseudomedian difference (significant time points): %.2f seconds\n\n",
+              mean_effect))
+
+  if (abs(mean_effect) >= 2) {
+    cat("This represents a CLINICALLY MEANINGFUL change:\n")
+    cat("- 2+ second change in TBUT is generally considered clinically relevant\n")
+    cat("- Patients may experience subjective improvement in symptoms\n")
+  } else if (abs(mean_effect) >= 1) {
+    cat("This represents a MODERATE change:\n")
+    cat("- 1-2 second change may be detectable but of uncertain clinical importance\n")
+  } else {
+    cat("This represents a SMALL change:\n")
+    cat("- < 1 second change unlikely to be clinically meaningful\n")
+    cat("- Statistical significance does not imply clinical significance\n")
+  }
+}
+
+cat("\n\n--- Study Implications ---\n\n")
+
+cat("1. For Placebo-Controlled Trials:\n")
+if (sig_count >= 2) {
+  cat("   - Placebo eye drops have a measurable effect on TBUT\n")
+  cat("   - Must account for placebo response when testing active treatments\n")
+  cat("   - Timing of outcome measurement is critical\n")
+} else {
+  cat("   - Minimal placebo effect observed\n")
+  cat("   - Active treatments can be tested against this baseline\n")
+}
+
+cat("\n2. For Clinical Practice:\n")
+if (sig_count > 0 && mean_effect > 0) {
+  cat("   - Even preservative-free saline/carriers may provide symptomatic relief\n")
+  cat("   - Patient education about natural tear dynamics important\n")
+  cat("   - Artificial tears work through multiple mechanisms\n")
+} else {
+  cat("   - Placebo drops unlikely to provide lasting benefit\n")
+  cat("   - Active ingredients necessary for therapeutic effect\n")
+}
+```
+
+## Visualization of Results Summary
+
+```{r visualization-summary, fig.width=12, fig.height=6}
+# Plot p-values over time
+p5 <- ggplot(summary_table, aes(x = Minutes_Post, y = P_Value)) +
+  geom_hline(yintercept = 0.05, linetype = "dashed", color = "red", linewidth = 1) +
+  geom_line(color = "#2C3E50", linewidth = 1.5) +
+  geom_point(aes(color = Significant), size = 5) +
+  scale_color_manual(values = c("TRUE" = "#27AE60", "FALSE" = "#E74C3C"),
+                    labels = c("Not Significant", "Significant"),
+                    name = "Result") +
+  scale_y_continuous(trans = "log10") +
+  labs(
+    title = "P-values Over Time (log scale)",
+    subtitle = "Red dashed line = α = 0.05",
+    x = "Minutes Post-Instillation",
+    y = "p-value (log scale)"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5))
+
+# Plot effect size (pseudomedian) over time
+p6 <- ggplot(summary_table, aes(x = Minutes_Post, y = Pseudomedian)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_line(color = "#2C3E50", linewidth = 1.5) +
+  geom_point(aes(color = Significant), size = 5) +
+  scale_color_manual(values = c("TRUE" = "#27AE60", "FALSE" = "#E74C3C"),
+                    labels = c("Not Significant", "Significant"),
+                    name = "Result") +
+  labs(
+    title = "Effect Size (Pseudomedian Difference) Over Time",
+    x = "Minutes Post-Instillation",
+    y = "Pseudomedian Difference from Baseline (seconds)"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+gridExtra::grid.arrange(p5, p6, ncol = 2)
+```
+
+---
+
+# Summary and Conclusions
+
+```{r final-summary}
+cat("\n\n=== FINAL SUMMARY: PROBLEMS 9.55-9.60 ===\n\n")
+
+cat("STUDY OBJECTIVE:\n")
+cat("Evaluate the effect of placebo eye drop instillation on tear break-up time (TBUT)\n")
+cat("and determine whether the response is short-lasting or long-lasting.\n\n")
+
+cat("STATISTICAL METHOD (Problem 9.55):\n")
+cat("- Test: Wilcoxon Signed-Rank Test (paired, nonparametric)\n")
+cat("- Rationale: Paired data, no normality assumption required\n\n")
+
+cat("RESULTS SUMMARY:\n\n")
+for (i in 1:4) {
+  cat(sprintf("Problem 9.%d: %s\n",
+              55 + i, summary_table$Time_Point[i]))
+  cat(sprintf("  - p-value: %.6f\n", summary_table$P_Value[i]))
+  cat(sprintf("  - Pseudomedian: %.3f seconds\n", summary_table$Pseudomedian[i]))
+  cat(sprintf("  - Result: %s\n\n",
+              ifelse(summary_table$Significant[i],
+                     "SIGNIFICANT difference from baseline",
+                     "NO significant difference from baseline")))
+}
+
+cat("ANSWER TO PROBLEM 9.60:\n")
+cat("Duration of placebo response: ")
+if (all(summary_table$Significant)) {
+  cat("LONG-LASTING (≥15 minutes)\n")
+} else if (summary_table$Significant[1] && !any(summary_table$Significant[2:4])) {
+  cat("SHORT-LASTING (<5 minutes)\n")
+} else if (sig_count > 1) {
+  last_sig <- max(which(summary_table$Significant))
+  cat(sprintf("INTERMEDIATE (approximately %d minutes)\n",
+              summary_table$Minutes_Post[last_sig]))
+} else {
+  cat("NO SIGNIFICANT EFFECT\n")
+}
+
+cat("\n\nKEY FINDINGS:\n")
+cat(sprintf("1. Number of subjects analyzed: %d\n", nrow(tbut_analysis)))
+cat(sprintf("2. Baseline TBUT: Mean = %.2f sec, Median = %.2f sec\n",
+            mean(tbut_analysis$tbut_baseline),
+            median(tbut_analysis$tbut_baseline)))
+cat(sprintf("3. Significant time points: %d out of 4\n", sig_count))
+if (sig_count > 0) {
+  cat(sprintf("4. Maximum effect size: %.2f seconds\n",
+              max(abs(summary_table$Pseudomedian))))
+}
+
+cat("\n\nCLINICAL IMPLICATIONS:\n")
+cat("- Placebo effects in ophthalmology trials should be carefully considered\n")
+cat("- Timing of outcome assessment is critical for trial design\n")
+cat("- Even inactive carriers may have measurable effects on tear film\n")
+cat("- Results inform sample size calculations for future studies\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
