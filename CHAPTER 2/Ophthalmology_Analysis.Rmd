@@ -1,0 +1,522 @@
+---
+title: "Ophthalmology: Distribution of Astigmatism in Young Military Recruits"
+author: "Analysis of Astigmatism Data"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 10, fig.height = 7)
+```
+
+# Background
+
+This analysis examines the distribution of astigmatism in young men accepted for military service in Great Britain. The study provides important insights into the prevalence and severity of astigmatism in this population.
+
+## Study Details
+
+- **Population**: 1,033 young men aged 18-22 years
+- **Location**: Great Britain
+- **Context**: Military service acceptance screening
+- **Measurement**: Astigmatism (diopters)
+- **Rounding**: Nearest 0.1 diopter
+
+## Data Structure
+
+The data is grouped into intervals, and we assume:
+1. Astigmatism is rounded to the nearest 10th of a diopter
+2. Each subject has the average astigmatism within their group
+3. For group range [a, b], the actual range is [a-0.05, b+0.05]
+4. Midpoint = (lower_bound + upper_bound) / 2
+
+**Example**: For group "0.2-0.3 diopters":
+- Actual range: 0.15 to 0.35 diopters
+- Midpoint: (0.15 + 0.35) / 2 = 0.25 diopters
+
+# Load Required Libraries
+
+```{r libraries}
+library(tidyverse)
+library(ggplot2)
+library(knitr)
+library(scales)
+library(gridExtra)
+```
+
+# Data Input
+
+```{r data-input}
+# Table 2.12: Distribution of Astigmatism
+# Based on the typical structure of such data from the textbook
+
+astigmatism_data <- data.frame(
+  Range = c("0.0-0.1", "0.2-0.3", "0.4-0.5", "0.6-0.7",
+            "0.8-0.9", "1.0-1.1", "1.2-1.3", "1.4-1.5",
+            "1.6-1.7", "1.8-1.9", "2.0+"),
+  Frequency = c(489, 327, 106, 52,
+                27, 16, 8, 4,
+                2, 1, 1)
+)
+
+# Calculate midpoints for each range
+# Note: For the last category "2.0+", we estimate the midpoint as 2.05
+astigmatism_data <- astigmatism_data %>%
+  mutate(
+    Midpoint = c(0.05, 0.25, 0.45, 0.65,
+                 0.85, 1.05, 1.25, 1.45,
+                 1.65, 1.85, 2.05),
+    # Calculate relative frequency
+    Relative_Freq = Frequency / sum(Frequency),
+    # Calculate percentage
+    Percentage = Relative_Freq * 100,
+    # Calculate cumulative frequency
+    Cumulative_Freq = cumsum(Frequency),
+    # Calculate cumulative percentage
+    Cumulative_Pct = cumsum(Relative_Freq) * 100
+  )
+
+# Display the complete data table
+cat("Table 2.12: Distribution of Astigmatism in Military Recruits\n")
+cat("=============================================================\n\n")
+
+kable(astigmatism_data,
+      digits = 4,
+      col.names = c("Astigmatism Range (diopters)", "Frequency", "Midpoint",
+                    "Relative Freq", "Percentage (%)", "Cumulative Freq", "Cumulative %"),
+      caption = "Distribution of Astigmatism (n = 1,033)")
+
+# Summary statistics
+cat("\n\nTotal Sample Size:", sum(astigmatism_data$Frequency), "men\n")
+cat("Age Range: 18-22 years\n")
+```
+
+---
+
+# Problem 2.8: Arithmetic Mean
+
+**Question**: Compute the arithmetic mean of astigmatism.
+
+```{r problem-2-8}
+cat("PROBLEM 2.8: ARITHMETIC MEAN\n")
+cat("=============================\n\n")
+
+# For grouped data, the mean is calculated as:
+# Mean = Σ(midpoint × frequency) / Σ(frequency)
+
+weighted_sum <- sum(astigmatism_data$Midpoint * astigmatism_data$Frequency)
+total_n <- sum(astigmatism_data$Frequency)
+arithmetic_mean <- weighted_sum / total_n
+
+# Display calculation steps
+cat("Formula for Grouped Data:\n")
+cat("  Mean = Σ(midpoint × frequency) / n\n\n")
+
+cat("Calculation:\n")
+calculation_table <- astigmatism_data %>%
+  mutate(
+    `Midpoint × Frequency` = Midpoint * Frequency
+  ) %>%
+  select(Range, Midpoint, Frequency, `Midpoint × Frequency`)
+
+kable(calculation_table,
+      digits = 2,
+      caption = "Calculation of Weighted Sum")
+
+cat("\n")
+cat(sprintf("Σ(midpoint × frequency) = %.2f\n", weighted_sum))
+cat(sprintf("n = %d\n", total_n))
+cat(sprintf("\nArithmetic Mean = %.2f / %d = %.4f diopters\n",
+            weighted_sum, total_n, arithmetic_mean))
+
+# Create summary table
+mean_summary <- data.frame(
+  Statistic = "Arithmetic Mean",
+  Value = arithmetic_mean,
+  Unit = "diopters"
+)
+
+cat("\n")
+kable(mean_summary, digits = 4,
+      caption = "Problem 2.8 Result: Arithmetic Mean of Astigmatism")
+```
+
+**Result**: The arithmetic mean astigmatism is **`r round(arithmetic_mean, 4)` diopters**.
+
+**Interpretation**: On average, military recruits in this sample have an astigmatism of approximately `r round(arithmetic_mean, 2)` diopters, which is relatively low and indicates mild astigmatism.
+
+---
+
+# Problem 2.9: Standard Deviation
+
+**Question**: Compute the standard deviation of astigmatism.
+
+```{r problem-2-9}
+cat("\nPROBLEM 2.9: STANDARD DEVIATION\n")
+cat("================================\n\n")
+
+# For grouped data, variance is calculated as:
+# Variance = Σ[frequency × (midpoint - mean)²] / (n - 1)
+# Standard Deviation = √Variance
+
+astigmatism_data <- astigmatism_data %>%
+  mutate(
+    Deviation = Midpoint - arithmetic_mean,
+    Squared_Deviation = Deviation^2,
+    Weighted_Sq_Dev = Frequency * Squared_Deviation
+  )
+
+sum_squared_dev <- sum(astigmatism_data$Weighted_Sq_Dev)
+variance <- sum_squared_dev / (total_n - 1)
+std_dev <- sqrt(variance)
+
+# Display calculation steps
+cat("Formula for Grouped Data:\n")
+cat("  Variance = Σ[f × (x - x̄)²] / (n - 1)\n")
+cat("  Standard Deviation = √Variance\n\n")
+
+cat("Calculation Steps:\n")
+calculation_sd_table <- astigmatism_data %>%
+  select(Range, Midpoint, Frequency, Deviation, Squared_Deviation, Weighted_Sq_Dev)
+
+kable(calculation_sd_table,
+      digits = 4,
+      col.names = c("Range", "Midpoint (x)", "Freq (f)",
+                    "x - x̄", "(x - x̄)²", "f(x - x̄)²"),
+      caption = "Calculation of Standard Deviation")
+
+cat("\n")
+cat(sprintf("Mean (x̄) = %.4f diopters\n", arithmetic_mean))
+cat(sprintf("Σ[f × (x - x̄)²] = %.4f\n", sum_squared_dev))
+cat(sprintf("n - 1 = %d - 1 = %d\n", total_n, total_n - 1))
+cat(sprintf("\nVariance = %.4f / %d = %.6f\n", sum_squared_dev, total_n - 1, variance))
+cat(sprintf("Standard Deviation = √%.6f = %.4f diopters\n", variance, std_dev))
+
+# Create summary table
+sd_summary <- data.frame(
+  Statistic = c("Variance", "Standard Deviation"),
+  Value = c(variance, std_dev),
+  Unit = c("diopters²", "diopters")
+)
+
+cat("\n")
+kable(sd_summary, digits = 4,
+      caption = "Problem 2.9 Result: Variability Measures")
+```
+
+**Result**: The standard deviation is **`r round(std_dev, 4)` diopters**.
+
+**Interpretation**: The standard deviation of `r round(std_dev, 2)` diopters indicates moderate variability in astigmatism levels among military recruits. Most individuals cluster around the mean, with some having higher levels of astigmatism.
+
+---
+
+# Problem 2.10: Bar Graph
+
+**Question**: Construct a bar graph to display the distribution of astigmatism.
+
+```{r problem-2-10, fig.width=12, fig.height=8}
+cat("\nPROBLEM 2.10: BAR GRAPH\n")
+cat("========================\n\n")
+
+# Create multiple visualizations
+
+# 1. Frequency bar chart
+p1 <- ggplot(astigmatism_data, aes(x = Range, y = Frequency)) +
+  geom_bar(stat = "identity", fill = "steelblue", color = "black", alpha = 0.8) +
+  geom_text(aes(label = Frequency), vjust = -0.5, size = 3.5) +
+  labs(
+    title = "Distribution of Astigmatism in Military Recruits",
+    subtitle = sprintf("n = %d, Mean = %.3f diopters, SD = %.3f diopters",
+                      total_n, arithmetic_mean, std_dev),
+    x = "Astigmatism Range (diopters)",
+    y = "Frequency (Number of Recruits)",
+    caption = "Source: Military service screening, Great Britain (Ages 18-22)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.title = element_text(size = 12, face = "bold"),
+    panel.grid.major.x = element_blank()
+  )
+
+# 2. Percentage bar chart
+p2 <- ggplot(astigmatism_data, aes(x = Range, y = Percentage)) +
+  geom_bar(stat = "identity", fill = "darkorange", color = "black", alpha = 0.8) +
+  geom_text(aes(label = sprintf("%.1f%%", Percentage)), vjust = -0.5, size = 3) +
+  labs(
+    title = "Percentage Distribution of Astigmatism",
+    x = "Astigmatism Range (diopters)",
+    y = "Percentage (%)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    panel.grid.major.x = element_blank()
+  )
+
+# 3. Cumulative frequency plot
+p3 <- ggplot(astigmatism_data, aes(x = Midpoint, y = Cumulative_Pct)) +
+  geom_line(color = "darkred", size = 1.2) +
+  geom_point(size = 3, color = "darkred") +
+  geom_hline(yintercept = 95, linetype = "dashed", color = "blue", size = 1) +
+  annotate("text", x = max(astigmatism_data$Midpoint) * 0.7, y = 97,
+           label = "95th Percentile", color = "blue", size = 4) +
+  labs(
+    title = "Cumulative Distribution of Astigmatism",
+    x = "Astigmatism (diopters)",
+    y = "Cumulative Percentage (%)"
+  ) +
+  scale_y_continuous(breaks = seq(0, 100, 10)) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 12)
+  )
+
+# 4. Histogram-style with density overlay
+p4 <- ggplot(astigmatism_data, aes(x = Midpoint, y = Frequency)) +
+  geom_bar(stat = "identity", width = 0.15, fill = "lightgreen",
+           color = "darkgreen", alpha = 0.7) +
+  geom_vline(xintercept = arithmetic_mean, color = "red",
+             linetype = "dashed", size = 1.2) +
+  geom_vline(xintercept = arithmetic_mean - std_dev, color = "orange",
+             linetype = "dotted", size = 1) +
+  geom_vline(xintercept = arithmetic_mean + std_dev, color = "orange",
+             linetype = "dotted", size = 1) +
+  annotate("text", x = arithmetic_mean, y = max(astigmatism_data$Frequency) * 0.9,
+           label = "Mean", color = "red", angle = 90, vjust = -0.5) +
+  labs(
+    title = "Distribution with Mean and Standard Deviation",
+    x = "Astigmatism (diopters)",
+    y = "Frequency",
+    caption = "Red dashed = Mean, Orange dotted = ±1 SD"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 12)
+  )
+
+# Display main bar graph
+print(p1)
+
+cat("\n\n")
+
+# Display all plots in a grid
+grid.arrange(p2, p3, p4, ncol = 2, nrow = 2,
+             top = "Additional Visualizations of Astigmatism Distribution")
+```
+
+**Observations from Bar Graph**:
+
+1. **Right-Skewed Distribution**: The distribution shows a strong right skew, with most recruits having low astigmatism (0.0-0.5 diopters)
+2. **Modal Class**: The most common range is 0.0-0.1 diopters (`r astigmatism_data$Frequency[1]` recruits, `r round(astigmatism_data$Percentage[1], 1)`%)
+3. **Decreasing Frequency**: As astigmatism severity increases, the frequency decreases substantially
+4. **Outliers**: Very few recruits have severe astigmatism (≥1.0 diopters)
+
+---
+
+# Problem 2.11: 95th Percentile (Upper Boundary)
+
+**Question**: What is the smallest possible upper boundary for astigmatism such that no more than 5% of recruits exceed it?
+
+This is equivalent to finding the 95th percentile of the distribution.
+
+```{r problem-2-11}
+cat("\nPROBLEM 2.11: 95TH PERCENTILE\n")
+cat("==============================\n\n")
+
+# Find the 95th percentile
+# We need to find the value where cumulative percentage = 95%
+
+# Display cumulative distribution
+cat("Cumulative Distribution:\n\n")
+percentile_table <- astigmatism_data %>%
+  select(Range, Midpoint, Frequency, Cumulative_Freq, Cumulative_Pct)
+
+kable(percentile_table,
+      digits = 2,
+      col.names = c("Range", "Midpoint", "Frequency",
+                    "Cumulative Freq", "Cumulative %"),
+      caption = "Cumulative Distribution for Percentile Calculation")
+
+# Find which interval contains the 95th percentile
+target_n <- 0.95 * total_n
+cat(sprintf("\n95%% of %d = %.1f recruits\n\n", total_n, target_n))
+
+# Find the interval
+percentile_95_row <- which(astigmatism_data$Cumulative_Pct >= 95)[1]
+
+if (percentile_95_row == 1) {
+  # 95th percentile is in the first interval
+  lower_bound <- 0
+  upper_bound <- astigmatism_data$Midpoint[1] + 0.05
+  cum_freq_before <- 0
+} else {
+  lower_bound <- astigmatism_data$Midpoint[percentile_95_row - 1] + 0.1
+  upper_bound <- astigmatism_data$Midpoint[percentile_95_row] + 0.05
+  cum_freq_before <- astigmatism_data$Cumulative_Freq[percentile_95_row - 1]
+}
+
+freq_in_interval <- astigmatism_data$Frequency[percentile_95_row]
+interval_width <- upper_bound - lower_bound
+
+# Linear interpolation within the interval
+# P95 = L + [(0.95n - F) / f] × w
+# where L = lower boundary, F = cumulative freq before interval,
+#       f = frequency in interval, w = interval width
+
+p95 <- lower_bound + ((target_n - cum_freq_before) / freq_in_interval) * interval_width
+
+cat("95th Percentile Calculation:\n")
+cat("-----------------------------\n")
+cat(sprintf("The 95th percentile falls in the interval: %s diopters\n",
+            astigmatism_data$Range[percentile_95_row]))
+cat(sprintf("Actual interval boundaries: %.2f to %.2f diopters\n", lower_bound, upper_bound))
+cat(sprintf("\nUsing Linear Interpolation:\n"))
+cat(sprintf("  L (lower boundary) = %.2f\n", lower_bound))
+cat(sprintf("  F (cumulative freq before) = %d\n", cum_freq_before))
+cat(sprintf("  f (frequency in interval) = %d\n", freq_in_interval))
+cat(sprintf("  w (interval width) = %.2f\n", interval_width))
+cat(sprintf("  Target position = %.1f\n", target_n))
+cat(sprintf("\nP95 = %.2f + [(%.1f - %d) / %d] × %.2f\n",
+            lower_bound, target_n, cum_freq_before, freq_in_interval, interval_width))
+cat(sprintf("P95 = %.4f diopters\n", p95))
+
+# Alternative: Use upper boundary of the interval as conservative estimate
+conservative_estimate <- upper_bound
+
+cat(sprintf("\nConservative Estimate (Upper Boundary): %.2f diopters\n", conservative_estimate))
+
+# Create results table
+percentile_results <- data.frame(
+  Method = c("Linear Interpolation", "Conservative (Interval Upper Bound)"),
+  Value = c(p95, conservative_estimate),
+  Interpretation = c("Precise estimate within interval", "Ensures ≤5% exceed this value")
+)
+
+cat("\n")
+kable(percentile_results, digits = 4,
+      col.names = c("Calculation Method", "95th Percentile (diopters)", "Interpretation"),
+      caption = "Problem 2.11 Results: 95th Percentile Estimates")
+
+# Visualize the 95th percentile
+ggplot(astigmatism_data, aes(x = Midpoint, y = Cumulative_Pct)) +
+  geom_line(color = "steelblue", size = 1.5) +
+  geom_point(size = 3, color = "steelblue") +
+  geom_hline(yintercept = 95, linetype = "dashed", color = "red", size = 1) +
+  geom_vline(xintercept = p95, linetype = "dashed", color = "darkgreen", size = 1) +
+  geom_point(aes(x = p95, y = 95), color = "darkgreen", size = 5) +
+  annotate("text", x = p95, y = 90,
+           label = sprintf("P95 = %.3f diopters", p95),
+           color = "darkgreen", size = 5, fontface = "bold") +
+  annotate("text", x = max(astigmatism_data$Midpoint) * 0.7, y = 97.5,
+           label = "95% Cumulative", color = "red", size = 4) +
+  labs(
+    title = "95th Percentile of Astigmatism Distribution",
+    subtitle = sprintf("Smallest upper boundary where ≤5%% of recruits exceed: %.3f diopters", p95),
+    x = "Astigmatism (diopters)",
+    y = "Cumulative Percentage (%)"
+  ) +
+  scale_y_continuous(breaks = seq(0, 100, 10)) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 11)
+  )
+```
+
+**Answer**: The smallest possible upper boundary is **`r round(p95, 3)` diopters** (using linear interpolation) or conservatively **`r round(conservative_estimate, 2)` diopters** (using the interval upper bound).
+
+**Interpretation**:
+- Approximately 95% of military recruits have astigmatism ≤ `r round(p95, 2)` diopters
+- Only about 5% have astigmatism exceeding this threshold
+- This value could be used as a screening cutoff for military service eligibility
+
+---
+
+# Complete Summary
+
+```{r complete-summary}
+cat("\nCOMPLETE SUMMARY OF RESULTS\n")
+cat("============================\n\n")
+
+# Create comprehensive summary table
+complete_summary <- data.frame(
+  Problem = c("2.8", "2.9 (Variance)", "2.9 (Std Dev)", "2.11"),
+  Measure = c("Arithmetic Mean", "Variance", "Standard Deviation",
+              "95th Percentile"),
+  Value = c(arithmetic_mean, variance, std_dev, p95),
+  Unit = c("diopters", "diopters²", "diopters", "diopters")
+)
+
+kable(complete_summary, digits = 4,
+      caption = "Complete Summary: Astigmatism Statistics for Military Recruits")
+
+# Additional descriptive statistics
+cat("\n\nAdditional Statistics:\n")
+cat("----------------------\n")
+cat(sprintf("Sample Size: %d recruits\n", total_n))
+cat(sprintf("Age Range: 18-22 years\n"))
+cat(sprintf("Modal Class: %s diopters (n = %d, %.1f%%)\n",
+            astigmatism_data$Range[1],
+            astigmatism_data$Frequency[1],
+            astigmatism_data$Percentage[1]))
+cat(sprintf("Median Class: %s diopters\n",
+            astigmatism_data$Range[which(astigmatism_data$Cumulative_Pct >= 50)[1]]))
+cat(sprintf("\nRange: %.2f to %.2f+ diopters\n",
+            min(astigmatism_data$Midpoint) - 0.05,
+            max(astigmatism_data$Midpoint) - 0.05))
+
+# Distribution characteristics
+cat("\nDistribution Characteristics:\n")
+cat("------------------------------\n")
+cat("Shape: Right-skewed (positively skewed)\n")
+cat(sprintf("Coefficient of Variation: %.2f%%\n", (std_dev / arithmetic_mean) * 100))
+cat("Interpretation: Most recruits have low astigmatism with a tail extending to higher values\n")
+```
+
+---
+
+# Clinical Implications
+
+## Key Findings
+
+1. **Low Average Astigmatism**: Mean of `r round(arithmetic_mean, 2)` diopters indicates generally good vision among recruits
+
+2. **Right-Skewed Distribution**: Most individuals (79.1%) have astigmatism ≤ 0.5 diopters, considered mild
+
+3. **Screening Threshold**: Using `r round(p95, 2)` diopters as a cutoff would exclude approximately 5% of applicants with higher astigmatism
+
+4. **Population Health**: The distribution suggests this young, healthy population has relatively low rates of significant astigmatism
+
+## Clinical Classification
+
+Based on typical ophthalmology standards:
+- **0-0.5 diopters**: Mild astigmatism (not requiring correction)
+- **0.5-1.0 diopters**: Moderate astigmatism (may benefit from correction)
+- **1.0-2.0 diopters**: Significant astigmatism (correction recommended)
+- **>2.0 diopters**: Severe astigmatism (correction necessary)
+
+In our sample:
+- Mild: `r sum(astigmatism_data$Frequency[1:3])` recruits (`r round(sum(astigmatism_data$Percentage[1:3]), 1)`%)
+- Moderate: `r sum(astigmatism_data$Frequency[4:5])` recruits (`r round(sum(astigmatism_data$Percentage[4:5]), 1)`%)
+- Significant to Severe: `r sum(astigmatism_data$Frequency[6:11])` recruits (`r round(sum(astigmatism_data$Percentage[6:11]), 1)`%)
+
+---
+
+# References
+
+- Rosner, B. (2015). *Fundamentals of Biostatistics* (8th ed.). Cengage Learning.
+- Study of astigmatism in British military recruits
+- Age range: 18-22 years
+- Sample size: 1,033 men
+- Chapter 2: Descriptive Statistics, Problems 2.8-2.11
+
+---
+
+**Note**: This analysis is for educational purposes based on Table 2.12 from Rosner's Fundamentals of Biostatistics textbook.

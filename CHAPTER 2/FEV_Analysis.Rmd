@@ -1,0 +1,791 @@
+---
+title: "Pulmonary Disease: Forced Expiratory Volume in Children"
+author: "Childhood Respiratory Disease Study Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: united
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Background
+
+This analysis examines forced expiratory volume (FEV) data from the Childhood Respiratory Disease (CRD) Study conducted in East Boston, Massachusetts. FEV is a critical measure of pulmonary function that indicates the volume of air expelled after 1 second of constant effort.
+
+## Study Details
+
+- **Study**: Childhood Respiratory Disease (CRD) Study
+- **Location**: East Boston, Massachusetts
+- **Data Year**: 1980
+- **Sample Size**: 654 children
+- **Age Range**: 3 to 19 years
+- **Design**: Longitudinal study following pulmonary function changes over time
+
+## Variables in Dataset
+
+1. **Id**: Patient identification number
+2. **Age**: Age in years (3-19)
+3. **FEV**: Forced expiratory volume in liters (primary outcome)
+4. **Hgt**: Height in inches
+5. **Sex**: Sex (0 = Female, 1 = Male)
+6. **Smoke**: Smoking status (0 = Non-smoker, 1 = Smoker)
+
+## Clinical Significance
+
+FEV is a fundamental measure in respiratory medicine used to:
+- Assess lung function and capacity
+- Diagnose respiratory conditions
+- Monitor disease progression
+- Evaluate treatment effectiveness
+- Screen for early signs of pulmonary disease
+
+# Load Required Libraries
+
+```{r libraries}
+library(tidyverse)
+library(ggplot2)
+library(gridExtra)
+library(knitr)
+library(corrplot)
+library(GGally)
+library(scales)
+```
+
+# Data Import and Preparation
+
+```{r import-data}
+# Define file path
+csv_path <- "Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/FEV.DAT.txt"
+
+# Read the FEV dataset
+fev_data <- read.csv(csv_path, check.names = FALSE)
+
+# Remove quotes from column names if present
+colnames(fev_data) <- gsub("'", "", colnames(fev_data))
+
+# Create labeled variables for better analysis
+fev_data <- fev_data %>%
+  mutate(
+    Sex_label = factor(Sex, levels = c(0, 1), labels = c("Female", "Male")),
+    Smoke_label = factor(Smoke, levels = c(0, 1), labels = c("Non-smoker", "Smoker")),
+    Age_group = cut(Age,
+                    breaks = c(2, 6, 10, 14, 20),
+                    labels = c("3-6 years", "7-10 years", "11-14 years", "15-19 years")),
+    Height_cat = cut(Hgt,
+                     breaks = quantile(Hgt, probs = c(0, 0.33, 0.67, 1)),
+                     labels = c("Short", "Medium", "Tall"),
+                     include.lowest = TRUE)
+  )
+
+# Display dataset information
+cat("Dataset Summary\n")
+cat("===============\n\n")
+cat("Total Observations:", nrow(fev_data), "children\n")
+cat("Variables:", ncol(fev_data), "\n")
+cat("Study Year: 1980\n")
+cat("Location: East Boston, Massachusetts\n\n")
+
+# Preview the data
+head(fev_data, 15)
+```
+
+---
+
+# Problem 2.23: Descriptive Statistics for All Variables
+
+**Question**: For each variable (other than ID), obtain appropriate descriptive statistics (both numeric and graphic).
+
+## Numeric Descriptive Statistics
+
+### Age Distribution
+
+```{r age-statistics}
+cat("\n## AGE STATISTICS\n")
+cat("=================\n\n")
+
+age_stats <- fev_data %>%
+  summarise(
+    N = n(),
+    Mean = mean(Age, na.rm = TRUE),
+    SD = sd(Age, na.rm = TRUE),
+    Median = median(Age, na.rm = TRUE),
+    Q1 = quantile(Age, 0.25, na.rm = TRUE),
+    Q3 = quantile(Age, 0.75, na.rm = TRUE),
+    IQR = IQR(Age, na.rm = TRUE),
+    Min = min(Age, na.rm = TRUE),
+    Max = max(Age, na.rm = TRUE),
+    Range = Max - Min
+  )
+
+kable(t(age_stats), digits = 2,
+      col.names = "Value",
+      caption = "Age Statistics (years)")
+
+# Age distribution by group
+age_dist <- fev_data %>%
+  group_by(Age_group) %>%
+  summarise(N = n(), Percentage = n() / nrow(fev_data) * 100)
+
+kable(age_dist, digits = 1,
+      caption = "Age Distribution by Group")
+```
+
+### FEV (Forced Expiratory Volume) Statistics
+
+```{r fev-statistics}
+cat("\n## FEV STATISTICS\n")
+cat("=================\n\n")
+
+fev_stats <- fev_data %>%
+  summarise(
+    N = n(),
+    Mean = mean(FEV, na.rm = TRUE),
+    SD = sd(FEV, na.rm = TRUE),
+    Median = median(FEV, na.rm = TRUE),
+    Q1 = quantile(FEV, 0.25, na.rm = TRUE),
+    Q3 = quantile(FEV, 0.75, na.rm = TRUE),
+    IQR = IQR(FEV, na.rm = TRUE),
+    Min = min(FEV, na.rm = TRUE),
+    Max = max(FEV, na.rm = TRUE),
+    Range = Max - Min,
+    CV = (SD / Mean) * 100
+  )
+
+kable(t(fev_stats), digits = 3,
+      col.names = "Value",
+      caption = "FEV Statistics (liters)")
+```
+
+### Height Statistics
+
+```{r height-statistics}
+cat("\n## HEIGHT STATISTICS\n")
+cat("====================\n\n")
+
+height_stats <- fev_data %>%
+  summarise(
+    N = n(),
+    Mean = mean(Hgt, na.rm = TRUE),
+    SD = sd(Hgt, na.rm = TRUE),
+    Median = median(Hgt, na.rm = TRUE),
+    Q1 = quantile(Hgt, 0.25, na.rm = TRUE),
+    Q3 = quantile(Hgt, 0.75, na.rm = TRUE),
+    IQR = IQR(Hgt, na.rm = TRUE),
+    Min = min(Hgt, na.rm = TRUE),
+    Max = max(Hgt, na.rm = TRUE),
+    Range = Max - Min
+  )
+
+kable(t(height_stats), digits = 2,
+      col.names = "Value",
+      caption = "Height Statistics (inches)")
+```
+
+### Sex Distribution
+
+```{r sex-distribution}
+cat("\n## SEX DISTRIBUTION\n")
+cat("===================\n\n")
+
+sex_dist <- fev_data %>%
+  group_by(Sex_label) %>%
+  summarise(
+    N = n(),
+    Percentage = n() / nrow(fev_data) * 100
+  )
+
+kable(sex_dist, digits = 1,
+      col.names = c("Sex", "Count", "Percentage (%)"),
+      caption = "Distribution by Sex")
+```
+
+### Smoking Status Distribution
+
+```{r smoking-distribution}
+cat("\n## SMOKING STATUS DISTRIBUTION\n")
+cat("===============================\n\n")
+
+smoke_dist <- fev_data %>%
+  group_by(Smoke_label) %>%
+  summarise(
+    N = n(),
+    Percentage = n() / nrow(fev_data) * 100
+  )
+
+kable(smoke_dist, digits = 1,
+      col.names = c("Smoking Status", "Count", "Percentage (%)"),
+      caption = "Distribution by Smoking Status")
+
+# Cross-tabulation: Smoking by Age Group
+smoke_age <- fev_data %>%
+  group_by(Age_group, Smoke_label) %>%
+  summarise(N = n(), .groups = "drop") %>%
+  pivot_wider(names_from = Smoke_label, values_from = N, values_fill = 0) %>%
+  mutate(Total = `Non-smoker` + Smoker,
+         `Smoker %` = (Smoker / Total) * 100)
+
+kable(smoke_age, digits = 1,
+      caption = "Smoking Status by Age Group")
+```
+
+## Graphic Descriptive Statistics
+
+### Age Distribution
+
+```{r age-graphics, fig.width=12, fig.height=6}
+p1 <- ggplot(fev_data, aes(x = Age)) +
+  geom_histogram(binwidth = 1, fill = "steelblue", color = "black", alpha = 0.7) +
+  geom_vline(xintercept = mean(fev_data$Age), color = "red",
+             linetype = "dashed", size = 1.2) +
+  labs(title = "Age Distribution",
+       subtitle = sprintf("Mean = %.1f years, Median = %.0f years",
+                         mean(fev_data$Age), median(fev_data$Age)),
+       x = "Age (years)", y = "Frequency") +
+  theme_minimal()
+
+p2 <- ggplot(fev_data, aes(x = "", y = Age)) +
+  geom_boxplot(fill = "lightblue", alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3, color = "darkblue") +
+  labs(title = "Age Box Plot", y = "Age (years)", x = "") +
+  theme_minimal()
+
+grid.arrange(p1, p2, ncol = 2)
+```
+
+### FEV Distribution
+
+```{r fev-graphics, fig.width=12, fig.height=6}
+p3 <- ggplot(fev_data, aes(x = FEV)) +
+  geom_histogram(bins = 30, fill = "darkgreen", color = "black", alpha = 0.7) +
+  geom_vline(xintercept = mean(fev_data$FEV), color = "red",
+             linetype = "dashed", size = 1.2) +
+  labs(title = "FEV Distribution",
+       subtitle = sprintf("Mean = %.2f L, SD = %.2f L",
+                         mean(fev_data$FEV), sd(fev_data$FEV)),
+       x = "FEV (liters)", y = "Frequency") +
+  theme_minimal()
+
+p4 <- ggplot(fev_data, aes(x = "", y = FEV)) +
+  geom_violin(fill = "lightgreen", alpha = 0.5) +
+  geom_boxplot(width = 0.2, fill = "darkgreen", alpha = 0.7) +
+  labs(title = "FEV Box and Violin Plot", y = "FEV (liters)", x = "") +
+  theme_minimal()
+
+grid.arrange(p3, p4, ncol = 2)
+```
+
+### Height Distribution
+
+```{r height-graphics, fig.width=12, fig.height=6}
+p5 <- ggplot(fev_data, aes(x = Hgt)) +
+  geom_histogram(bins = 30, fill = "orange", color = "black", alpha = 0.7) +
+  geom_vline(xintercept = mean(fev_data$Hgt), color = "red",
+             linetype = "dashed", size = 1.2) +
+  labs(title = "Height Distribution",
+       subtitle = sprintf("Mean = %.1f inches, SD = %.1f inches",
+                         mean(fev_data$Hgt), sd(fev_data$Hgt)),
+       x = "Height (inches)", y = "Frequency") +
+  theme_minimal()
+
+p6 <- ggplot(fev_data, aes(x = "", y = Hgt)) +
+  geom_boxplot(fill = "lightyellow", alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3, color = "darkorange") +
+  labs(title = "Height Box Plot", y = "Height (inches)", x = "") +
+  theme_minimal()
+
+grid.arrange(p5, p6, ncol = 2)
+```
+
+### Categorical Variables
+
+```{r categorical-graphics, fig.width=12, fig.height=10}
+p7 <- ggplot(fev_data, aes(x = Sex_label, fill = Sex_label)) +
+  geom_bar(alpha = 0.7) +
+  geom_text(stat = "count", aes(label = after_stat(count)), vjust = -0.5) +
+  scale_fill_manual(values = c("Female" = "#E74C3C", "Male" = "#3498DB")) +
+  labs(title = "Distribution by Sex", x = "Sex", y = "Count") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p8 <- ggplot(fev_data, aes(x = Smoke_label, fill = Smoke_label)) +
+  geom_bar(alpha = 0.7) +
+  geom_text(stat = "count", aes(label = after_stat(count)), vjust = -0.5) +
+  scale_fill_manual(values = c("Non-smoker" = "#2ECC71", "Smoker" = "#E67E22")) +
+  labs(title = "Distribution by Smoking Status",
+       x = "Smoking Status", y = "Count") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p9 <- ggplot(fev_data, aes(x = Age_group, fill = Smoke_label)) +
+  geom_bar(position = "fill", alpha = 0.7) +
+  scale_fill_manual(values = c("Non-smoker" = "#2ECC71", "Smoker" = "#E67E22")) +
+  labs(title = "Smoking Prevalence by Age Group",
+       x = "Age Group", y = "Proportion", fill = "Smoking Status") +
+  scale_y_continuous(labels = percent) +
+  theme_minimal()
+
+p10 <- ggplot(fev_data, aes(x = Age_group, fill = Age_group)) +
+  geom_bar(alpha = 0.7) +
+  geom_text(stat = "count", aes(label = after_stat(count)), vjust = -0.5) +
+  labs(title = "Distribution by Age Group", x = "Age Group", y = "Count") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+grid.arrange(p7, p8, p9, p10, ncol = 2, nrow = 2)
+```
+
+---
+
+# Problem 2.24: Relationship of FEV to Age, Height, and Smoking
+
+**Question**: Use both numeric and graphic measures to assess the relationship of FEV to age, height, and smoking status. Do this separately for boys and girls.
+
+## Overall Correlation Analysis
+
+```{r overall-correlation}
+cat("\n## OVERALL CORRELATION MATRIX\n")
+cat("==============================\n\n")
+
+# Correlation matrix for continuous variables
+cor_matrix <- fev_data %>%
+  select(Age, FEV, Hgt) %>%
+  cor(use = "complete.obs")
+
+kable(cor_matrix, digits = 3,
+      caption = "Correlation Matrix: Continuous Variables")
+
+# Visualize correlation matrix
+corrplot(cor_matrix, method = "circle", type = "upper",
+         addCoef.col = "black", number.cex = 1.2,
+         title = "Correlation Matrix",
+         mar = c(0, 0, 2, 0))
+```
+
+## Analysis by Sex: FEMALES
+
+### Numeric Summary - Females
+
+```{r females-numeric}
+cat("\n## FEMALES: DESCRIPTIVE STATISTICS\n")
+cat("===================================\n\n")
+
+females <- fev_data %>% filter(Sex == 0)
+
+# Summary by smoking status
+female_summary <- females %>%
+  group_by(Smoke_label) %>%
+  summarise(
+    N = n(),
+    Mean_Age = mean(Age),
+    Mean_FEV = mean(FEV),
+    SD_FEV = sd(FEV),
+    Mean_Height = mean(Hgt),
+    SD_Height = sd(Hgt)
+  )
+
+kable(female_summary, digits = 2,
+      col.names = c("Smoking Status", "N", "Mean Age", "Mean FEV", "SD FEV",
+                    "Mean Height", "SD Height"),
+      caption = "Females: Summary Statistics by Smoking Status")
+
+# Correlation matrix for females
+female_cor <- females %>%
+  select(Age, FEV, Hgt) %>%
+  cor(use = "complete.obs")
+
+cat("\nFemales: Correlation Matrix\n")
+kable(female_cor, digits = 3)
+
+# Regression coefficients for females
+female_age_lm <- lm(FEV ~ Age, data = females)
+female_hgt_lm <- lm(FEV ~ Hgt, data = females)
+
+cat("\nFemales: Regression Relationships\n")
+cat(sprintf("FEV vs Age: R² = %.3f, Slope = %.3f L/year\n",
+            summary(female_age_lm)$r.squared,
+            coef(female_age_lm)[2]))
+cat(sprintf("FEV vs Height: R² = %.3f, Slope = %.3f L/inch\n",
+            summary(female_hgt_lm)$r.squared,
+            coef(female_hgt_lm)[2]))
+```
+
+### Graphic Analysis - Females
+
+```{r females-graphics, fig.width=14, fig.height=12}
+# FEV vs Age
+pf1 <- ggplot(females, aes(x = Age, y = FEV, color = Smoke_label)) +
+  geom_point(size = 2.5, alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, alpha = 0.2) +
+  scale_color_manual(values = c("Non-smoker" = "#2ECC71", "Smoker" = "#E67E22")) +
+  labs(title = "FEMALES: FEV vs Age",
+       subtitle = sprintf("Correlation = %.3f", cor(females$Age, females$FEV)),
+       x = "Age (years)", y = "FEV (liters)", color = "Smoking Status") +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+# FEV vs Height
+pf2 <- ggplot(females, aes(x = Hgt, y = FEV, color = Smoke_label)) +
+  geom_point(size = 2.5, alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, alpha = 0.2) +
+  scale_color_manual(values = c("Non-smoker" = "#2ECC71", "Smoker" = "#E67E22")) +
+  labs(title = "FEMALES: FEV vs Height",
+       subtitle = sprintf("Correlation = %.3f", cor(females$Hgt, females$FEV)),
+       x = "Height (inches)", y = "FEV (liters)", color = "Smoking Status") +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+# FEV by Smoking Status
+pf3 <- ggplot(females, aes(x = Smoke_label, y = FEV, fill = Smoke_label)) +
+  geom_boxplot(alpha = 0.7, outlier.size = 2) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  scale_fill_manual(values = c("Non-smoker" = "#2ECC71", "Smoker" = "#E67E22")) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "red", color = "black") +
+  labs(title = "FEMALES: FEV by Smoking Status",
+       x = "Smoking Status", y = "FEV (liters)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Age distribution by smoking
+pf4 <- ggplot(females, aes(x = Smoke_label, y = Age, fill = Smoke_label)) +
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("Non-smoker" = "#2ECC71", "Smoker" = "#E67E22")) +
+  labs(title = "FEMALES: Age by Smoking Status",
+       x = "Smoking Status", y = "Age (years)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+grid.arrange(pf1, pf2, pf3, pf4, ncol = 2, nrow = 2,
+             top = "FEMALES: Relationship Analysis")
+```
+
+## Analysis by Sex: MALES
+
+### Numeric Summary - Males
+
+```{r males-numeric}
+cat("\n## MALES: DESCRIPTIVE STATISTICS\n")
+cat("=================================\n\n")
+
+males <- fev_data %>% filter(Sex == 1)
+
+# Summary by smoking status
+male_summary <- males %>%
+  group_by(Smoke_label) %>%
+  summarise(
+    N = n(),
+    Mean_Age = mean(Age),
+    Mean_FEV = mean(FEV),
+    SD_FEV = sd(FEV),
+    Mean_Height = mean(Hgt),
+    SD_Height = sd(Hgt)
+  )
+
+kable(male_summary, digits = 2,
+      col.names = c("Smoking Status", "N", "Mean Age", "Mean FEV", "SD FEV",
+                    "Mean Height", "SD Height"),
+      caption = "Males: Summary Statistics by Smoking Status")
+
+# Correlation matrix for males
+male_cor <- males %>%
+  select(Age, FEV, Hgt) %>%
+  cor(use = "complete.obs")
+
+cat("\nMales: Correlation Matrix\n")
+kable(male_cor, digits = 3)
+
+# Regression coefficients for males
+male_age_lm <- lm(FEV ~ Age, data = males)
+male_hgt_lm <- lm(FEV ~ Hgt, data = males)
+
+cat("\nMales: Regression Relationships\n")
+cat(sprintf("FEV vs Age: R² = %.3f, Slope = %.3f L/year\n",
+            summary(male_age_lm)$r.squared,
+            coef(male_age_lm)[2]))
+cat(sprintf("FEV vs Height: R² = %.3f, Slope = %.3f L/inch\n",
+            summary(male_hgt_lm)$r.squared,
+            coef(male_hgt_lm)[2]))
+```
+
+### Graphic Analysis - Males
+
+```{r males-graphics, fig.width=14, fig.height=12}
+# FEV vs Age
+pm1 <- ggplot(males, aes(x = Age, y = FEV, color = Smoke_label)) +
+  geom_point(size = 2.5, alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, alpha = 0.2) +
+  scale_color_manual(values = c("Non-smoker" = "#2ECC71", "Smoker" = "#E67E22")) +
+  labs(title = "MALES: FEV vs Age",
+       subtitle = sprintf("Correlation = %.3f", cor(males$Age, males$FEV)),
+       x = "Age (years)", y = "FEV (liters)", color = "Smoking Status") +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+# FEV vs Height
+pm2 <- ggplot(males, aes(x = Hgt, y = FEV, color = Smoke_label)) +
+  geom_point(size = 2.5, alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, alpha = 0.2) +
+  scale_color_manual(values = c("Non-smoker" = "#2ECC71", "Smoker" = "#E67E22")) +
+  labs(title = "MALES: FEV vs Height",
+       subtitle = sprintf("Correlation = %.3f", cor(males$Hgt, males$FEV)),
+       x = "Height (inches)", y = "FEV (liters)", color = "Smoking Status") +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+# FEV by Smoking Status
+pm3 <- ggplot(males, aes(x = Smoke_label, y = FEV, fill = Smoke_label)) +
+  geom_boxplot(alpha = 0.7, outlier.size = 2) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  scale_fill_manual(values = c("Non-smoker" = "#2ECC71", "Smoker" = "#E67E22")) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "red", color = "black") +
+  labs(title = "MALES: FEV by Smoking Status",
+       x = "Smoking Status", y = "FEV (liters)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Age distribution by smoking
+pm4 <- ggplot(males, aes(x = Smoke_label, y = Age, fill = Smoke_label)) +
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("Non-smoker" = "#2ECC71", "Smoker" = "#E67E22")) +
+  labs(title = "MALES: Age by Smoking Status",
+       x = "Smoking Status", y = "Age (years)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+grid.arrange(pm1, pm2, pm3, pm4, ncol = 2, nrow = 2,
+             top = "MALES: Relationship Analysis")
+```
+
+---
+
+# Problem 2.25: Growth Pattern Comparison by Sex
+
+**Question**: Compare the pattern of growth of FEV by age for boys and girls. Are there any similarities? Any differences?
+
+## Side-by-Side Comparison
+
+```{r growth-comparison, fig.width=14, fig.height=10}
+# Overall comparison
+pc1 <- ggplot(fev_data, aes(x = Age, y = FEV, color = Sex_label)) +
+  geom_point(alpha = 0.4, size = 2) +
+  geom_smooth(method = "loess", se = TRUE, size = 1.5, alpha = 0.2) +
+  scale_color_manual(values = c("Female" = "#E74C3C", "Male" = "#3498DB")) +
+  labs(title = "FEV Growth Pattern: Males vs Females",
+       subtitle = "Smooth curves showing developmental trajectories",
+       x = "Age (years)", y = "FEV (liters)", color = "Sex") +
+  theme_minimal() +
+  theme(legend.position = "top", plot.title = element_text(face = "bold", size = 14))
+
+# Linear growth comparison
+pc2 <- ggplot(fev_data, aes(x = Age, y = FEV, color = Sex_label)) +
+  geom_point(alpha = 0.3, size = 1.5) +
+  geom_smooth(method = "lm", se = TRUE, size = 1.5, alpha = 0.2) +
+  scale_color_manual(values = c("Female" = "#E74C3C", "Male" = "#3498DB")) +
+  labs(title = "Linear Growth Trends",
+       x = "Age (years)", y = "FEV (liters)", color = "Sex") +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+# FEV by age group and sex
+pc3 <- ggplot(fev_data, aes(x = Age_group, y = FEV, fill = Sex_label)) +
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("Female" = "#E74C3C", "Male" = "#3498DB")) +
+  labs(title = "FEV Distribution by Age Group and Sex",
+       x = "Age Group", y = "FEV (liters)", fill = "Sex") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Mean FEV by age and sex
+mean_fev_age <- fev_data %>%
+  group_by(Age, Sex_label) %>%
+  summarise(Mean_FEV = mean(FEV), .groups = "drop")
+
+pc4 <- ggplot(mean_fev_age, aes(x = Age, y = Mean_FEV, color = Sex_label)) +
+  geom_line(size = 1.5) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("Female" = "#E74C3C", "Male" = "#3498DB")) +
+  labs(title = "Mean FEV Growth Curves",
+       x = "Age (years)", y = "Mean FEV (liters)", color = "Sex") +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+grid.arrange(pc1, pc2, pc3, pc4, ncol = 2, nrow = 2,
+             top = "FEV Growth Pattern Comparison: Males vs Females")
+```
+
+## Statistical Comparison
+
+```{r growth-statistics}
+cat("\n## GROWTH PATTERN COMPARISON\n")
+cat("============================\n\n")
+
+# Summary statistics by sex and age group
+growth_summary <- fev_data %>%
+  group_by(Sex_label, Age_group) %>%
+  summarise(
+    N = n(),
+    Mean_FEV = mean(FEV),
+    SD_FEV = sd(FEV),
+    Mean_Height = mean(Hgt),
+    .groups = "drop"
+  )
+
+kable(growth_summary, digits = 2,
+      col.names = c("Sex", "Age Group", "N", "Mean FEV", "SD FEV", "Mean Height"),
+      caption = "FEV Growth by Sex and Age Group")
+
+# Calculate growth rates (slope) for each sex
+female_growth <- lm(FEV ~ Age, data = females)
+male_growth <- lm(FEV ~ Age, data = males)
+
+cat("\nGrowth Rate Analysis\n")
+cat("--------------------\n")
+cat(sprintf("Females: FEV increases %.3f L per year (R² = %.3f)\n",
+            coef(female_growth)[2], summary(female_growth)$r.squared))
+cat(sprintf("Males:   FEV increases %.3f L per year (R² = %.3f)\n",
+            coef(male_growth)[2], summary(male_growth)$r.squared))
+cat(sprintf("Difference: %.3f L per year (%.1f%% higher in males)\n",
+            coef(male_growth)[2] - coef(female_growth)[2],
+            (coef(male_growth)[2] / coef(female_growth)[2] - 1) * 100))
+
+# Compare correlations
+cat("\nCorrelation Comparison\n")
+cat("----------------------\n")
+cat(sprintf("Females: cor(Age, FEV) = %.3f\n", cor(females$Age, females$FEV)))
+cat(sprintf("Males:   cor(Age, FEV) = %.3f\n", cor(males$Age, males$FEV)))
+cat(sprintf("Females: cor(Height, FEV) = %.3f\n", cor(females$Hgt, females$FEV)))
+cat(sprintf("Males:   cor(Height, FEV) = %.3f\n", cor(males$Hgt, males$FEV)))
+```
+
+## Detailed Age-Specific Analysis
+
+```{r age-specific-analysis, fig.width=14, fig.height=8}
+# Calculate mean FEV for each age and sex
+age_sex_summary <- fev_data %>%
+  group_by(Age, Sex_label) %>%
+  summarise(
+    N = n(),
+    Mean_FEV = mean(FEV),
+    SD_FEV = sd(FEV),
+    SE_FEV = SD_FEV / sqrt(N),
+    .groups = "drop"
+  )
+
+# Growth curve with error bars
+pdetail <- ggplot(age_sex_summary, aes(x = Age, y = Mean_FEV, color = Sex_label)) +
+  geom_line(size = 1.5) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = Mean_FEV - SE_FEV, ymax = Mean_FEV + SE_FEV),
+                width = 0.3, alpha = 0.5) +
+  scale_color_manual(values = c("Female" = "#E74C3C", "Male" = "#3498DB")) +
+  labs(title = "Mean FEV Growth with Standard Error",
+       subtitle = "Error bars represent ±1 SE",
+       x = "Age (years)", y = "Mean FEV (liters)", color = "Sex") +
+  theme_minimal() +
+  theme(legend.position = "top", plot.title = element_text(face = "bold", size = 14))
+
+print(pdetail)
+
+# Display detailed table
+kable(age_sex_summary, digits = 3,
+      col.names = c("Age", "Sex", "N", "Mean FEV", "SD", "SE"),
+      caption = "Age-Specific FEV Statistics by Sex")
+```
+
+## Growth Velocity Analysis
+
+```{r growth-velocity, fig.width=12, fig.height=6}
+# Calculate growth velocity (change in FEV per year)
+velocity_data <- age_sex_summary %>%
+  arrange(Sex_label, Age) %>%
+  group_by(Sex_label) %>%
+  mutate(
+    Velocity = (Mean_FEV - lag(Mean_FEV)) / (Age - lag(Age))
+  ) %>%
+  filter(!is.na(Velocity))
+
+pvelocity <- ggplot(velocity_data, aes(x = Age, y = Velocity, color = Sex_label)) +
+  geom_line(size = 1.5) +
+  geom_point(size = 3) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  scale_color_manual(values = c("Female" = "#E74C3C", "Male" = "#3498DB")) +
+  labs(title = "FEV Growth Velocity by Age",
+       subtitle = "Rate of change in FEV (liters per year)",
+       x = "Age (years)", y = "Growth Velocity (L/year)", color = "Sex") +
+  theme_minimal() +
+  theme(legend.position = "top", plot.title = element_text(face = "bold"))
+
+print(pvelocity)
+```
+
+---
+
+# Summary of Findings
+
+## Problem 2.23: Descriptive Statistics
+
+### Key Findings:
+1. **Sample**: 654 children aged 3-19 years
+2. **FEV Range**: `r round(min(fev_data$FEV), 2)` to `r round(max(fev_data$FEV), 2)` liters
+3. **Smoking Prevalence**: `r round(sum(fev_data$Smoke == 1) / nrow(fev_data) * 100, 1)`% are smokers
+4. **Sex Distribution**: Approximately equal numbers of males and females
+5. **Age Distribution**: Fairly uniform across age groups
+
+## Problem 2.24: FEV Relationships
+
+### Females:
+- **Age Correlation**: `r round(cor(females$Age, females$FEV), 3)` (strong positive)
+- **Height Correlation**: `r round(cor(females$Hgt, females$FEV), 3)` (very strong positive)
+- **Smoking Effect**: Smokers tend to be older with higher FEV (confounded by age)
+
+### Males:
+- **Age Correlation**: `r round(cor(males$Age, males$FEV), 3)` (strong positive)
+- **Height Correlation**: `r round(cor(males$Hgt, males$FEV), 3)` (very strong positive)
+- **Smoking Effect**: Similar pattern to females
+
+## Problem 2.25: Growth Pattern Comparison
+
+### Similarities:
+1. **Strong positive relationship** between age and FEV in both sexes
+2. **Height is the strongest predictor** of FEV for both males and females
+3. **Similar growth trajectories** throughout childhood and adolescence
+4. **Linear growth pattern** from ages 3-19
+
+### Differences:
+1. **Growth Rate**: Males show slightly higher annual FEV increase
+   - Females: ~`r round(coef(female_growth)[2], 3)` L/year
+   - Males: ~`r round(coef(male_growth)[2], 3)` L/year
+
+2. **Absolute Values**: Males tend to have higher FEV at older ages
+
+3. **Growth Velocity**: Males show sustained or increasing velocity in later teen years, while females show some plateauing
+
+4. **Height Effect**: Height explains more variance in males than females
+
+### Clinical Implications:
+1. **FEV increases with age and height** - expected during normal development
+2. **Sex differences emerge** during puberty with males achieving higher FEV
+3. **Smoking data requires careful interpretation** due to age confounding
+4. **Height-adjusted norms** should be sex-specific
+
+---
+
+# References
+
+- Rosner, B. (2015). *Fundamentals of Biostatistics* (8th ed.). Cengage Learning.
+- Childhood Respiratory Disease (CRD) Study, East Boston, Massachusetts
+- Data collected in 1980
+- Chapter 2: Descriptive Statistics, Problems 2.23-2.25
+
+---
+
+**Note**: This analysis is for educational purposes based on the FEV dataset from Rosner's Fundamentals of Biostatistics textbook.

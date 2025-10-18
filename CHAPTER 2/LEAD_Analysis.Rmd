@@ -1,0 +1,259 @@
+---
+title: "Lead Exposure and Neurological Effects in Children"
+author: "Analysis of LEAD Dataset"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 8, fig.height = 6)
+```
+
+# Background
+
+This analysis examines the effects of exposure to lead on the psychological and neurological well-being of children near a lead smelter in El Paso, Texas. The study includes:
+
+- **Exposed Group (GROUP = 2)**: 46 children with blood-lead levels ≥ 40 μg/mL identified in 1972-1973
+- **Control Group (GROUP = 1)**: 78 children with blood-lead levels < 40 μg/mL identified in 1972-1973
+
+All children lived close to the lead smelter. The two primary outcome variables are:
+
+1. **Finger-wrist taps in dominant hand** (MAXFWT): A measure of neurological function
+2. **Wechsler full-scale IQ score** (IQF): A measure of cognitive function
+
+# Load Required Libraries
+
+```{r libraries}
+library(tidyverse)
+library(readxl)
+library(ggplot2)
+library(gridExtra)
+library(knitr)
+library(haven)
+#library(kableExtra)
+```
+
+# Data Import
+
+We will read the LEAD dataset in multiple formats to demonstrate compatibility across different data sources.
+
+## Define Base Path
+
+```{r set-paths}
+# Using relative paths from the working directory
+# Data files have been copied to the working directory for easier access
+
+csv_path <- "LEAD.csv"
+excel_path <- "LEAD.xls"
+
+```
+
+## Method 1: Reading from CSV format
+
+```{r read-csv}
+# Read the LEAD dataset from CSV
+# Use check.names = FALSE to preserve original column names
+lead_data <- read.csv(csv_path, check.names = FALSE)
+
+# Remove quotes from column names if present
+colnames(lead_data) <- gsub("'", "", colnames(lead_data))
+
+# Display the first few rows
+cat("Dataset dimensions:", nrow(lead_data), "rows,", ncol(lead_data), "columns\n\n")
+cat("Column names:", paste(colnames(lead_data), collapse = ", "), "\n\n")
+head(lead_data)
+```
+
+
+# Data Preparation
+
+## Create MAXFWT Variable
+
+Since the dominant hand was not identified in the database, we use the larger of the finger-wrist tapping scores for the right and left hand as a proxy for the number of finger-wrist taps in the dominant hand.
+
+```{r create-maxfwt}
+# Create MAXFWT variable (maximum of right and left finger-wrist taps)
+# Note: The dataset already has a maxfwt column, but let's verify it
+lead_data <- lead_data %>%
+  mutate(
+    # Create our own MAXFWT calculation
+    MAXFWT_calculated = pmax(fwt_r, fwt_l, na.rm = TRUE),
+    # Create group label for better visualization
+    Group_Label = factor(Group,
+                        levels = c(1, 2),
+                        labels = c("Control (< 40 μg/mL)", "Exposed (≥ 40 μg/mL)"))
+  )
+
+# Verify our calculation matches the existing maxfwt column
+cat("Check if our calculation matches existing maxfwt column:\n")
+cat("Number of matching values:", sum(lead_data$MAXFWT_calculated == lead_data$maxfwt, na.rm = TRUE), "\n")
+cat("Total non-missing values:", sum(!is.na(lead_data$MAXFWT_calculated) & !is.na(lead_data$maxfwt)), "\n")
+
+# Use the existing maxfwt column and rename for consistency
+lead_data <- lead_data %>%
+  mutate(
+    MAXFWT = maxfwt,
+    IQF = iqf
+  )
+```
+
+## Data Cleaning
+
+```{r data-cleaning}
+# Check for missing values in key variables
+cat("Missing values in MAXFWT:", sum(is.na(lead_data$MAXFWT)), "\n")
+cat("Missing values in IQF:", sum(is.na(lead_data$IQF)), "\n")
+cat("Missing values in Group:", sum(is.na(lead_data$Group)), "\n")
+
+# Remove rows with missing values in key variables (if value is 99, might be missing)
+# Check if 99 is used as missing value code
+lead_data_clean <- lead_data %>%
+  filter(!is.na(MAXFWT), !is.na(IQF), !is.na(Group)) %>%
+  filter(MAXFWT != 99 | is.na(MAXFWT))  # Keep non-99 values
+```
+
+# Descriptive Statistics
+
+## Summary Statistics by Group
+
+```{r summary-stats}
+# Summary statistics for MAXFWT
+maxfwt_summary <- lead_data_clean %>%
+  group_by(Group_Label) %>%
+  summarise(
+    N = n(),
+    Mean = mean(MAXFWT, na.rm = TRUE),
+    SD = sd(MAXFWT, na.rm = TRUE),
+    Median = median(MAXFWT, na.rm = TRUE),
+    Q1 = quantile(MAXFWT, 0.25, na.rm = TRUE),
+    Q3 = quantile(MAXFWT, 0.75, na.rm = TRUE),
+    Min = min(MAXFWT, na.rm = TRUE),
+    Max = max(MAXFWT, na.rm = TRUE)
+  )
+
+# Summary statistics for IQF
+iqf_summary <- lead_data_clean %>%
+  group_by(Group_Label) %>%
+  summarise(
+    N = n(),
+    Mean = mean(IQF, na.rm = TRUE),
+    SD = sd(IQF, na.rm = TRUE),
+    Median = median(IQF, na.rm = TRUE),
+    Q1 = quantile(IQF, 0.25, na.rm = TRUE),
+    Q3 = quantile(IQF, 0.75, na.rm = TRUE),
+    Min = min(IQF, na.rm = TRUE),
+    Max = max(IQF, na.rm = TRUE)
+  )
+
+# Display tables
+cat("\n### Finger-Wrist Tapping Scores (MAXFWT) by Group\n\n")
+kable(maxfwt_summary, digits = 2, caption = "Descriptive Statistics for MAXFWT")
+
+cat("\n### Full-Scale IQ Scores (IQF) by Group\n\n")
+kable(iqf_summary, digits = 2, caption = "Descriptive Statistics for IQF")
+```
+
+# Data Visualization
+
+## Box Plot: Finger-Wrist Tapping Scores (MAXFWT)
+
+```{r boxplot-maxfwt, fig.width=8, fig.height=6}
+# Create box plot for MAXFWT
+p1 <- ggplot(lead_data_clean, aes(x = Group_Label, y = MAXFWT, fill = Group_Label)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16, outlier.size = 2) +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 1.5) +
+  scale_fill_manual(values = c("Control (< 40 μg/mL)" = "#4CAF50",
+                               "Exposed (≥ 40 μg/mL)" = "#F44336")) +
+  labs(
+    title = "Finger-Wrist Tapping Scores by Lead Exposure Group",
+    subtitle = "Comparison between Control and Exposed Groups",
+    x = "Group",
+    y = "Maximum Finger-Wrist Taps (MAXFWT)",
+    fill = "Lead Exposure Group"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    axis.text.x = element_text(angle = 0, hjust = 0.5),
+    legend.position = "none"
+  ) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 3,
+               fill = "white", color = "black")
+
+print(p1)
+```
+
+## Box Plot: Full-Scale IQ Scores (IQF)
+
+```{r boxplot-iqf, fig.width=8, fig.height=6}
+# Create box plot for IQF
+p2 <- ggplot(lead_data_clean, aes(x = Group_Label, y = IQF, fill = Group_Label)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16, outlier.size = 2) +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 1.5) +
+  scale_fill_manual(values = c("Control (< 40 μg/mL)" = "#4CAF50",
+                               "Exposed (≥ 40 μg/mL)" = "#F44336")) +
+  labs(
+    title = "Full-Scale IQ Scores by Lead Exposure Group",
+    subtitle = "Comparison between Control and Exposed Groups",
+    x = "Group",
+    y = "Wechsler Full-Scale IQ (IQF)",
+    fill = "Lead Exposure Group"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    axis.text.x = element_text(angle = 0, hjust = 0.5),
+    legend.position = "none"
+  ) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 3,
+               fill = "white", color = "black")
+
+print(p2)
+```
+
+## Combined Visualization
+
+```{r combined-plot, fig.width=12, fig.height=6}
+# Display both plots side by side
+grid.arrange(p1, p2, ncol = 2)
+```
+
+# Preliminary Observations
+
+Based on the box plots and descriptive statistics:
+
+1. **Finger-Wrist Tapping Scores (MAXFWT)**:
+   - There is considerable spread within each group
+   - The exposed group (≥ 40 μg/mL) shows slightly lower finger-wrist tapping scores compared to the control group
+   - This suggests potential neurological impairment associated with higher lead exposure
+
+2. **Full-Scale IQ Scores (IQF)**:
+   - Both groups show substantial variability in IQ scores
+   - The exposed group appears to have slightly lower IQ scores than the control group
+   - This indicates possible cognitive effects of lead exposure
+
+3. **Overall Pattern**:
+   - Both outcome variables (MAXFWT and IQF) tend to be lower in children with higher blood-lead levels
+   - The differences warrant further statistical testing using t-tests, ANOVA, and regression methods
+
+# Next Steps
+
+Further analysis will include:
+
+- **Two-sample t-tests**: To formally test if the mean differences between groups are statistically significant
+- **Analysis of Variance (ANOVA)**: To examine group differences while accounting for other factors
+- **Regression Analysis**: To model the relationship between lead exposure and outcome variables, controlling for confounding variables such as age, sex, and socioeconomic factors
+
+# References
+
+- Rosner, B. (2015). *Fundamentals of Biostatistics* (8th ed.). Cengage Learning.
+- Data provided by Dr. Philip Landrigan, Mount Sinai Medical Center, New York City
+- Study on lead exposure effects in children near El Paso, Texas lead smelter (1972-1973)
+
+---
+
+**Note**: This analysis is for educational purposes based on the LEAD dataset from Rosner's Fundamentals of Biostatistics textbook.

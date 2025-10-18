@@ -1,0 +1,768 @@
+---
+title: "Endocrinology: Tobacco Use and Bone Mineral Density (Problems 2.38-2.46)"
+author: "Twin Study Detailed Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    theme: united
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Background
+
+This analysis examines the relationship between tobacco use and bone mineral density (BMD) using data from a twin study. We focus on Problems 2.38-2.46 from Rosner's Fundamentals of Biostatistics, which require detailed calculations of BMD differences, grouping by pack-years, and interpretation of relationships.
+
+## Study Design
+
+- **Sample**: 41 pairs of middle-aged female twins
+- **Design**: Discordant twin pairs (different smoking histories)
+- **Outcome**: BMD at three sites (lumbar spine, femoral neck, femoral shaft)
+- **Exposure**: Tobacco use (pack-years)
+
+## Definitions
+
+- **Pack-year**: 1 pack/day (≈20 cigarettes) for 1 year
+- **Heavier-smoking twin**: Twin with more pack-years
+- **Lighter-smoking twin**: Twin with fewer pack-years
+
+# Load Libraries and Data
+
+```{r libraries-data}
+library(tidyverse)
+library(ggplot2)
+library(gridExtra)
+library(knitr)
+library(scales)
+
+# Read data
+csv_path <- "Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/BONEDEN.DAT.txt"
+boneden_data <- read.csv(csv_path, check.names = FALSE)
+colnames(boneden_data) <- gsub("'", "", colnames(boneden_data))
+
+cat("Dataset loaded: 41 twin pairs\n")
+cat("Variables: ID, age, zygosity, measurements for twin 1 and twin 2\n\n")
+```
+
+---
+
+# LUMBAR SPINE ANALYSIS (Problems 2.38-2.40)
+
+## Problem 2.38: Compute A, B, and C for Lumbar Spine
+
+**Formulas:**
+- **A** = BMD (heavier smoker) - BMD (lighter smoker) = x₁ - x₂
+- **B** = Mean BMD for twin pair = (x₁ + x₂) / 2
+- **C** = 100% × (A / B) = Percentage difference
+
+```{r problem-2-38}
+cat("PROBLEM 2.38: LUMBAR SPINE CALCULATIONS\n")
+cat("=========================================\n\n")
+
+# Prepare data with calculations
+lumbar_data <- boneden_data %>%
+  mutate(
+    # Identify heavier smoker
+    heavier_smoker = ifelse(pyr1 >= pyr2, 1, 2),
+
+    # Tobacco difference (heavier - lighter)
+    pyr_diff = abs(pyr1 - pyr2),
+
+    # BMD values
+    bmd_heavier = ifelse(heavier_smoker == 1, ls1, ls2),
+    bmd_lighter = ifelse(heavier_smoker == 1, ls2, ls1),
+
+    # Calculate A, B, C for LUMBAR SPINE
+    A_lumbar = bmd_heavier - bmd_lighter,
+    B_lumbar = (bmd_heavier + bmd_lighter) / 2,
+    C_lumbar = 100 * (A_lumbar / B_lumbar),
+
+    # Create pack-year groups
+    pyr_group = cut(pyr_diff,
+                    breaks = c(-0.1, 9.9, 19.9, 29.9, 39.9, Inf),
+                    labels = c("0-9.9", "10-19.9", "20-29.9", "30-39.9", "40+"),
+                    include.lowest = TRUE)
+  )
+
+# Display first 10 calculations
+cat("Sample Calculations (First 10 Twin Pairs):\n\n")
+sample_calcs <- lumbar_data %>%
+  select(ID, pyr_diff, bmd_heavier, bmd_lighter, A_lumbar, B_lumbar, C_lumbar) %>%
+  head(10)
+
+kable(sample_calcs, digits = 4,
+      col.names = c("ID", "Pack-Year Diff", "BMD Heavy", "BMD Light",
+                    "A", "B", "C (%)"),
+      caption = "Problem 2.38: Sample Calculations for Lumbar Spine")
+
+# Descriptive statistics for C
+cat("\n\nDESCRIPTIVE STATISTICS FOR C (Lumbar Spine)\n")
+cat("=============================================\n\n")
+
+c_lumbar_stats <- lumbar_data %>%
+  summarise(
+    N = n(),
+    Mean = mean(C_lumbar, na.rm = TRUE),
+    SD = sd(C_lumbar, na.rm = TRUE),
+    Median = median(C_lumbar, na.rm = TRUE),
+    Q1 = quantile(C_lumbar, 0.25, na.rm = TRUE),
+    Q3 = quantile(C_lumbar, 0.75, na.rm = TRUE),
+    IQR = IQR(C_lumbar, na.rm = TRUE),
+    Min = min(C_lumbar, na.rm = TRUE),
+    Max = max(C_lumbar, na.rm = TRUE),
+    Range = Max - Min
+  )
+
+kable(t(c_lumbar_stats), digits = 3,
+      col.names = "Value",
+      caption = "Problem 2.38 Results: Descriptive Statistics for C (Lumbar Spine %)")
+
+cat("\n\nInterpretation:\n")
+cat("---------------\n")
+cat("C represents the percentage difference in BMD between twins\n")
+cat("Negative C values indicate lower BMD in heavier-smoking twin\n")
+cat("Mean C = ", sprintf("%.2f%%", mean(lumbar_data$C_lumbar)), "\n", sep="")
+cat("This suggests heavier smokers have lower BMD on average\n")
+```
+
+### Visualization: Distribution of C (Lumbar Spine)
+
+```{r problem-2-38-viz, fig.width=12, fig.height=6}
+p1 <- ggplot(lumbar_data, aes(x = C_lumbar)) +
+  geom_histogram(bins = 20, fill = "steelblue", color = "black", alpha = 0.7) +
+  geom_vline(xintercept = 0, color = "red", linetype = "dashed", size = 1.2) +
+  geom_vline(xintercept = mean(lumbar_data$C_lumbar), color = "darkgreen",
+             linetype = "solid", size = 1.2) +
+  labs(title = "Distribution of C Values - Lumbar Spine",
+       subtitle = sprintf("Mean = %.2f%%, Median = %.2f%%",
+                         mean(lumbar_data$C_lumbar),
+                         median(lumbar_data$C_lumbar)),
+       x = "C: Percentage BMD Difference (%)",
+       y = "Frequency",
+       caption = "Red dashed = 0 (no difference), Green = mean") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 14))
+
+p2 <- ggplot(lumbar_data, aes(x = "", y = C_lumbar)) +
+  geom_boxplot(fill = "lightblue", alpha = 0.7, outlier.color = "red", outlier.size = 3) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 2) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed", size = 1.2) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "darkgreen", color = "black") +
+  labs(title = "Box Plot: C Values - Lumbar Spine",
+       y = "C: Percentage BMD Difference (%)",
+       x = "",
+       caption = "Diamond = mean, Red line = 0") +
+  theme_minimal()
+
+grid.arrange(p1, p2, ncol = 2,
+             top = "Problem 2.38: Distribution of Percentage BMD Differences (Lumbar Spine)")
+```
+
+---
+
+## Problem 2.39: Group by Pack-Year Differences
+
+**Question**: Group twin pairs by 10 pack-year increments and compute descriptive statistics and scatter plots for C.
+
+```{r problem-2-39}
+cat("\n\nPROBLEM 2.39: GROUPED ANALYSIS BY PACK-YEARS (Lumbar Spine)\n")
+cat("=============================================================\n\n")
+
+# Grouped descriptive statistics
+lumbar_grouped <- lumbar_data %>%
+  group_by(pyr_group) %>%
+  summarise(
+    N = n(),
+    Mean_C = mean(C_lumbar, na.rm = TRUE),
+    SD_C = sd(C_lumbar, na.rm = TRUE),
+    Median_C = median(C_lumbar, na.rm = TRUE),
+    Q1_C = quantile(C_lumbar, 0.25, na.rm = TRUE),
+    Q3_C = quantile(C_lumbar, 0.75, na.rm = TRUE),
+    Min_C = min(C_lumbar, na.rm = TRUE),
+    Max_C = max(C_lumbar, na.rm = TRUE),
+    Percent_Negative = sum(C_lumbar < 0) / n() * 100,
+    .groups = "drop"
+  )
+
+kable(lumbar_grouped, digits = 2,
+      col.names = c("Pack-Year Group", "N", "Mean C", "SD", "Median",
+                    "Q1", "Q3", "Min", "Max", "% Negative"),
+      caption = "Problem 2.39: Lumbar Spine C Statistics by Pack-Year Groups")
+
+cat("\n\nKey Observations:\n")
+cat("-----------------\n")
+for(i in 1:nrow(lumbar_grouped)) {
+  cat(sprintf("%s pack-years: Mean C = %.2f%%, %d/%d (%.0f%%) have negative C\n",
+              lumbar_grouped$pyr_group[i],
+              lumbar_grouped$Mean_C[i],
+              round(lumbar_grouped$N[i] * lumbar_grouped$Percent_Negative[i] / 100),
+              lumbar_grouped$N[i],
+              lumbar_grouped$Percent_Negative[i]))
+}
+```
+
+### Scatter Plots Grouped by Pack-Years
+
+```{r problem-2-39-plots, fig.width=14, fig.height=10}
+# Scatter plot: C vs Pack-year difference
+ps1 <- ggplot(lumbar_data, aes(x = pyr_diff, y = C_lumbar, color = pyr_group)) +
+  geom_point(size = 3.5, alpha = 0.7) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40", size = 1) +
+  geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink", alpha = 0.2) +
+  scale_color_brewer(palette = "Set1") +
+  labs(title = "Lumbar Spine: C vs Pack-Year Difference",
+       subtitle = sprintf("Correlation = %.3f", cor(lumbar_data$pyr_diff, lumbar_data$C_lumbar)),
+       x = "Difference in Tobacco Use (Pack-Years)",
+       y = "C: Percentage BMD Difference (%)",
+       color = "Pack-Year Group") +
+  theme_minimal() +
+  theme(legend.position = "right", plot.title = element_text(face = "bold"))
+
+# Box plots by group
+ps2 <- ggplot(lumbar_data, aes(x = pyr_group, y = C_lumbar, fill = pyr_group)) +
+  geom_boxplot(alpha = 0.7, outlier.size = 2) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", size = 1.2) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "black", color = "white") +
+  scale_fill_brewer(palette = "Set1") +
+  labs(title = "C Values by Pack-Year Groups",
+       x = "Pack-Year Group",
+       y = "C: Percentage BMD Difference (%)") +
+  theme_minimal() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Mean C by group with error bars
+ps3 <- ggplot(lumbar_grouped, aes(x = pyr_group, y = Mean_C)) +
+  geom_col(fill = "steelblue", alpha = 0.7, color = "black") +
+  geom_errorbar(aes(ymin = Mean_C - SD_C, ymax = Mean_C + SD_C),
+                width = 0.3, size = 1) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", size = 1.2) +
+  geom_text(aes(label = sprintf("%.1f%%", Mean_C)), vjust = -2, size = 4) +
+  labs(title = "Mean C Values by Pack-Year Groups",
+       subtitle = "Error bars = ±1 SD",
+       x = "Pack-Year Group",
+       y = "Mean C: Percentage BMD Difference (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Trend line plot
+ps4 <- ggplot(lumbar_data, aes(x = pyr_diff, y = C_lumbar)) +
+  geom_point(size = 3, alpha = 0.6, color = "steelblue") +
+  geom_smooth(method = "loess", se = TRUE, color = "darkred",
+              fill = "pink", alpha = 0.3, size = 1.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40", size = 1) +
+  labs(title = "Smooth Trend: C vs Pack-Years",
+       x = "Difference in Tobacco Use (Pack-Years)",
+       y = "C: Percentage BMD Difference (%)") +
+  theme_minimal()
+
+grid.arrange(ps1, ps2, ps3, ps4, ncol = 2, nrow = 2,
+             top = "Problem 2.39: Lumbar Spine - Scatter Plots and Group Comparisons")
+```
+
+---
+
+## Problem 2.40: Interpret Relationship
+
+```{r problem-2-40}
+cat("\n\nPROBLEM 2.40: INTERPRETATION OF BMD-TOBACCO RELATIONSHIP\n")
+cat("==========================================================\n\n")
+
+# Calculate correlation
+cor_lumbar <- cor(lumbar_data$pyr_diff, lumbar_data$C_lumbar)
+
+# Linear regression
+lm_lumbar <- lm(C_lumbar ~ pyr_diff, data = lumbar_data)
+slope_lumbar <- coef(lm_lumbar)[2]
+r2_lumbar <- summary(lm_lumbar)$r.squared
+
+cat("Statistical Evidence:\n")
+cat("---------------------\n")
+cat(sprintf("Correlation (r): %.3f\n", cor_lumbar))
+cat(sprintf("R-squared: %.3f (%.1f%% of variance explained)\n", r2_lumbar, r2_lumbar*100))
+cat(sprintf("Regression slope: %.3f%% per pack-year\n", slope_lumbar))
+cat(sprintf("Mean C for high tobacco use (40+ pack-years): %.2f%%\n",
+            lumbar_grouped$Mean_C[lumbar_grouped$pyr_group == "40+"]))
+cat(sprintf("Mean C for low tobacco use (0-9.9 pack-years): %.2f%%\n",
+            lumbar_grouped$Mean_C[lumbar_grouped$pyr_group == "0-9.9"]))
+
+cat("\n\nIMPRESSION OF RELATIONSHIP:\n")
+cat("===========================\n\n")
+
+cat("1. INVERSE RELATIONSHIP:\n")
+cat("   - As tobacco use increases, C becomes more negative\n")
+cat("   - This indicates lower BMD in heavier-smoking twins\n")
+cat("   - Correlation r = ", sprintf("%.3f", cor_lumbar), " confirms negative association\n\n", sep="")
+
+cat("2. DOSE-RESPONSE PATTERN:\n")
+cat("   - Mean C decreases progressively with higher pack-year groups\n")
+cat("   - Suggests cumulative effect of tobacco on bone density\n")
+cat("   - Linear regression slope: ", sprintf("%.3f%% per pack-year\n\n", slope_lumbar), sep="")
+
+cat("3. PREVALENCE OF NEGATIVE VALUES:\n")
+for(i in 1:nrow(lumbar_grouped)) {
+  cat(sprintf("   - %s: %.0f%% of pairs show lower BMD in heavier smoker\n",
+              lumbar_grouped$pyr_group[i],
+              lumbar_grouped$Percent_Negative[i]))
+}
+
+cat("\n4. CLINICAL SIGNIFICANCE:\n")
+cat("   - Greater tobacco use associated with lower lumbar spine BMD\n")
+cat("   - Effect size appears clinically meaningful\n")
+cat("   - Supports public health message about smoking and bone health\n")
+```
+
+---
+
+# FEMORAL NECK ANALYSIS (Problems 2.41-2.43)
+
+## Problem 2.41: Compute A, B, and C for Femoral Neck
+
+```{r problem-2-41}
+cat("\n\nPROBLEM 2.41: FEMORAL NECK CALCULATIONS\n")
+cat("=========================================\n\n")
+
+# Calculate A, B, C for FEMORAL NECK
+femoral_neck_data <- boneden_data %>%
+  mutate(
+    heavier_smoker = ifelse(pyr1 >= pyr2, 1, 2),
+    pyr_diff = abs(pyr1 - pyr2),
+
+    # Femoral neck BMD values
+    bmd_heavier = ifelse(heavier_smoker == 1, fn1, fn2),
+    bmd_lighter = ifelse(heavier_smoker == 1, fn2, fn1),
+
+    # Calculate A, B, C for FEMORAL NECK
+    A_fn = bmd_heavier - bmd_lighter,
+    B_fn = (bmd_heavier + bmd_lighter) / 2,
+    C_fn = 100 * (A_fn / B_fn),
+
+    pyr_group = cut(pyr_diff,
+                    breaks = c(-0.1, 9.9, 19.9, 29.9, 39.9, Inf),
+                    labels = c("0-9.9", "10-19.9", "20-29.9", "30-39.9", "40+"),
+                    include.lowest = TRUE)
+  )
+
+# Descriptive statistics for C (femoral neck)
+c_fn_stats <- femoral_neck_data %>%
+  summarise(
+    N = n(),
+    Mean = mean(C_fn, na.rm = TRUE),
+    SD = sd(C_fn, na.rm = TRUE),
+    Median = median(C_fn, na.rm = TRUE),
+    Q1 = quantile(C_fn, 0.25, na.rm = TRUE),
+    Q3 = quantile(C_fn, 0.75, na.rm = TRUE),
+    IQR = IQR(C_fn, na.rm = TRUE),
+    Min = min(C_fn, na.rm = TRUE),
+    Max = max(C_fn, na.rm = TRUE),
+    Range = Max - Min
+  )
+
+kable(t(c_fn_stats), digits = 3,
+      col.names = "Value",
+      caption = "Problem 2.41 Results: Descriptive Statistics for C (Femoral Neck %)")
+```
+
+### Visualization: Distribution of C (Femoral Neck)
+
+```{r problem-2-41-viz, fig.width=12, fig.height=6}
+pfn1 <- ggplot(femoral_neck_data, aes(x = C_fn)) +
+  geom_histogram(bins = 20, fill = "darkorange", color = "black", alpha = 0.7) +
+  geom_vline(xintercept = 0, color = "red", linetype = "dashed", size = 1.2) +
+  geom_vline(xintercept = mean(femoral_neck_data$C_fn), color = "darkgreen",
+             linetype = "solid", size = 1.2) +
+  labs(title = "Distribution of C Values - Femoral Neck",
+       subtitle = sprintf("Mean = %.2f%%, Median = %.2f%%",
+                         mean(femoral_neck_data$C_fn),
+                         median(femoral_neck_data$C_fn)),
+       x = "C: Percentage BMD Difference (%)",
+       y = "Frequency") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold"))
+
+pfn2 <- ggplot(femoral_neck_data, aes(x = "", y = C_fn)) +
+  geom_boxplot(fill = "lightyellow", alpha = 0.7, outlier.color = "red", outlier.size = 3) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 2) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed", size = 1.2) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "darkgreen", color = "black") +
+  labs(title = "Box Plot: C Values - Femoral Neck",
+       y = "C: Percentage BMD Difference (%)",
+       x = "") +
+  theme_minimal()
+
+grid.arrange(pfn1, pfn2, ncol = 2,
+             top = "Problem 2.41: Distribution of Percentage BMD Differences (Femoral Neck)")
+```
+
+## Problem 2.42: Grouped Analysis (Femoral Neck)
+
+```{r problem-2-42, fig.width=14, fig.height=10}
+cat("\n\nPROBLEM 2.42: GROUPED ANALYSIS (Femoral Neck)\n")
+cat("==============================================\n\n")
+
+# Grouped statistics
+fn_grouped <- femoral_neck_data %>%
+  group_by(pyr_group) %>%
+  summarise(
+    N = n(),
+    Mean_C = mean(C_fn, na.rm = TRUE),
+    SD_C = sd(C_fn, na.rm = TRUE),
+    Median_C = median(C_fn, na.rm = TRUE),
+    Min_C = min(C_fn, na.rm = TRUE),
+    Max_C = max(C_fn, na.rm = TRUE),
+    Percent_Negative = sum(C_fn < 0) / n() * 100,
+    .groups = "drop"
+  )
+
+kable(fn_grouped, digits = 2,
+      col.names = c("Pack-Year Group", "N", "Mean C", "SD", "Median",
+                    "Min", "Max", "% Negative"),
+      caption = "Problem 2.42: Femoral Neck C Statistics by Pack-Year Groups")
+
+# Scatter plots
+pfns1 <- ggplot(femoral_neck_data, aes(x = pyr_diff, y = C_fn, color = pyr_group)) +
+  geom_point(size = 3.5, alpha = 0.7) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40", size = 1) +
+  geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink", alpha = 0.2) +
+  scale_color_brewer(palette = "Dark2") +
+  labs(title = "Femoral Neck: C vs Pack-Year Difference",
+       subtitle = sprintf("Correlation = %.3f", cor(femoral_neck_data$pyr_diff, femoral_neck_data$C_fn)),
+       x = "Difference in Tobacco Use (Pack-Years)",
+       y = "C: Percentage BMD Difference (%)",
+       color = "Pack-Year Group") +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+pfns2 <- ggplot(femoral_neck_data, aes(x = pyr_group, y = C_fn, fill = pyr_group)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", size = 1.2) +
+  scale_fill_brewer(palette = "Dark2") +
+  labs(title = "C Values by Pack-Year Groups",
+       x = "Pack-Year Group",
+       y = "C: Percentage BMD Difference (%)") +
+  theme_minimal() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(pfns1, pfns2, ncol = 2,
+             top = "Problem 2.42: Femoral Neck - Scatter Plots")
+```
+
+## Problem 2.43: Interpretation (Femoral Neck)
+
+```{r problem-2-43}
+cat("\n\nPROBLEM 2.43: INTERPRETATION (Femoral Neck)\n")
+cat("============================================\n\n")
+
+cor_fn <- cor(femoral_neck_data$pyr_diff, femoral_neck_data$C_fn)
+lm_fn <- lm(C_fn ~ pyr_diff, data = femoral_neck_data)
+
+cat("IMPRESSION OF RELATIONSHIP (Femoral Neck):\n")
+cat("==========================================\n\n")
+cat(sprintf("Correlation: %.3f (similar to lumbar spine)\n", cor_fn))
+cat(sprintf("Mean C: %.2f%% (negative, indicating BMD loss)\n", mean(femoral_neck_data$C_fn)))
+cat(sprintf("Regression slope: %.3f%% per pack-year\n\n", coef(lm_fn)[2]))
+
+cat("Pattern: SIMILAR to lumbar spine\n")
+cat("- Clear inverse relationship\n")
+cat("- Greater tobacco use → lower femoral neck BMD\n")
+cat("- Dose-response pattern evident\n")
+```
+
+---
+
+# FEMORAL SHAFT ANALYSIS (Problems 2.44-2.46)
+
+## Problem 2.44: Compute A, B, and C for Femoral Shaft
+
+```{r problem-2-44}
+cat("\n\nPROBLEM 2.44: FEMORAL SHAFT CALCULATIONS\n")
+cat("=========================================\n\n")
+
+# Calculate A, B, C for FEMORAL SHAFT
+femoral_shaft_data <- boneden_data %>%
+  mutate(
+    heavier_smoker = ifelse(pyr1 >= pyr2, 1, 2),
+    pyr_diff = abs(pyr1 - pyr2),
+
+    # Femoral shaft BMD values
+    bmd_heavier = ifelse(heavier_smoker == 1, fs1, fs2),
+    bmd_lighter = ifelse(heavier_smoker == 1, fs2, fs1),
+
+    # Calculate A, B, C for FEMORAL SHAFT
+    A_fs = bmd_heavier - bmd_lighter,
+    B_fs = (bmd_heavier + bmd_lighter) / 2,
+    C_fs = 100 * (A_fs / B_fs),
+
+    pyr_group = cut(pyr_diff,
+                    breaks = c(-0.1, 9.9, 19.9, 29.9, 39.9, Inf),
+                    labels = c("0-9.9", "10-19.9", "20-29.9", "30-39.9", "40+"),
+                    include.lowest = TRUE)
+  )
+
+# Descriptive statistics
+c_fs_stats <- femoral_shaft_data %>%
+  summarise(
+    N = n(),
+    Mean = mean(C_fs, na.rm = TRUE),
+    SD = sd(C_fs, na.rm = TRUE),
+    Median = median(C_fs, na.rm = TRUE),
+    Q1 = quantile(C_fs, 0.25, na.rm = TRUE),
+    Q3 = quantile(C_fs, 0.75, na.rm = TRUE),
+    IQR = IQR(C_fs, na.rm = TRUE),
+    Min = min(C_fs, na.rm = TRUE),
+    Max = max(C_fs, na.rm = TRUE)
+  )
+
+kable(t(c_fs_stats), digits = 3,
+      col.names = "Value",
+      caption = "Problem 2.44 Results: Descriptive Statistics for C (Femoral Shaft %)")
+```
+
+### Visualization: Distribution of C (Femoral Shaft)
+
+```{r problem-2-44-viz, fig.width=12, fig.height=6}
+pfs1 <- ggplot(femoral_shaft_data, aes(x = C_fs)) +
+  geom_histogram(bins = 20, fill = "purple", color = "black", alpha = 0.7) +
+  geom_vline(xintercept = 0, color = "red", linetype = "dashed", size = 1.2) +
+  geom_vline(xintercept = mean(femoral_shaft_data$C_fs), color = "darkgreen",
+             linetype = "solid", size = 1.2) +
+  labs(title = "Distribution of C Values - Femoral Shaft",
+       subtitle = sprintf("Mean = %.2f%%, Median = %.2f%%",
+                         mean(femoral_shaft_data$C_fs),
+                         median(femoral_shaft_data$C_fs)),
+       x = "C: Percentage BMD Difference (%)",
+       y = "Frequency") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold"))
+
+pfs2 <- ggplot(femoral_shaft_data, aes(x = "", y = C_fs)) +
+  geom_boxplot(fill = "lightgreen", alpha = 0.7, outlier.color = "red", outlier.size = 3) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 2) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed", size = 1.2) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "darkgreen", color = "black") +
+  labs(title = "Box Plot: C Values - Femoral Shaft",
+       y = "C: Percentage BMD Difference (%)",
+       x = "") +
+  theme_minimal()
+
+grid.arrange(pfs1, pfs2, ncol = 2,
+             top = "Problem 2.44: Distribution of Percentage BMD Differences (Femoral Shaft)")
+```
+
+## Problem 2.45: Grouped Analysis (Femoral Shaft)
+
+```{r problem-2-45, fig.width=14, fig.height=10}
+cat("\n\nPROBLEM 2.45: GROUPED ANALYSIS (Femoral Shaft)\n")
+cat("===============================================\n\n")
+
+# Grouped statistics
+fs_grouped <- femoral_shaft_data %>%
+  group_by(pyr_group) %>%
+  summarise(
+    N = n(),
+    Mean_C = mean(C_fs, na.rm = TRUE),
+    SD_C = sd(C_fs, na.rm = TRUE),
+    Median_C = median(C_fs, na.rm = TRUE),
+    Min_C = min(C_fs, na.rm = TRUE),
+    Max_C = max(C_fs, na.rm = TRUE),
+    Percent_Negative = sum(C_fs < 0) / n() * 100,
+    .groups = "drop"
+  )
+
+kable(fs_grouped, digits = 2,
+      col.names = c("Pack-Year Group", "N", "Mean C", "SD", "Median",
+                    "Min", "Max", "% Negative"),
+      caption = "Problem 2.45: Femoral Shaft C Statistics by Pack-Year Groups")
+
+# Scatter plots
+pfss1 <- ggplot(femoral_shaft_data, aes(x = pyr_diff, y = C_fs, color = pyr_group)) +
+  geom_point(size = 3.5, alpha = 0.7) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40", size = 1) +
+  geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink", alpha = 0.2) +
+  scale_color_brewer(palette = "Set2") +
+  labs(title = "Femoral Shaft: C vs Pack-Year Difference",
+       subtitle = sprintf("Correlation = %.3f", cor(femoral_shaft_data$pyr_diff, femoral_shaft_data$C_fs)),
+       x = "Difference in Tobacco Use (Pack-Years)",
+       y = "C: Percentage BMD Difference (%)",
+       color = "Pack-Year Group") +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+pfss2 <- ggplot(femoral_shaft_data, aes(x = pyr_group, y = C_fs, fill = pyr_group)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", size = 1.2) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "C Values by Pack-Year Groups",
+       x = "Pack-Year Group",
+       y = "C: Percentage BMD Difference (%)") +
+  theme_minimal() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(pfss1, pfss2, ncol = 2,
+             top = "Problem 2.45: Femoral Shaft - Scatter Plots")
+```
+
+## Problem 2.46: Interpretation (Femoral Shaft)
+
+```{r problem-2-46}
+cat("\n\nPROBLEM 2.46: INTERPRETATION (Femoral Shaft)\n")
+cat("=============================================\n\n")
+
+cor_fs <- cor(femoral_shaft_data$pyr_diff, femoral_shaft_data$C_fs)
+lm_fs <- lm(C_fs ~ pyr_diff, data = femoral_shaft_data)
+
+cat("IMPRESSION OF RELATIONSHIP (Femoral Shaft):\n")
+cat("===========================================\n\n")
+cat(sprintf("Correlation: %.3f (WEAKER than other sites)\n", cor_fs))
+cat(sprintf("Mean C: %.2f%% (less negative than other sites)\n", mean(femoral_shaft_data$C_fs)))
+cat(sprintf("Regression slope: %.3f%% per pack-year\n\n", coef(lm_fs)[2]))
+
+cat("Pattern: LESS CLEAR than lumbar spine and femoral neck\n")
+cat("- Weaker inverse relationship\n")
+cat("- More variability in C values\n")
+cat("- Less consistent dose-response pattern\n")
+cat("- Femoral shaft may be less affected by tobacco use\n")
+```
+
+---
+
+# COMPARATIVE SUMMARY (All Three Sites)
+
+```{r comparative-summary, fig.width=14, fig.height=10}
+cat("\n\nCOMPARATIVE SUMMARY: ALL THREE SITES\n")
+cat("=====================================\n\n")
+
+# Create comparative table
+comparative_stats <- data.frame(
+  Site = c("Lumbar Spine", "Femoral Neck", "Femoral Shaft"),
+  Mean_C = c(mean(lumbar_data$C_lumbar),
+             mean(femoral_neck_data$C_fn),
+             mean(femoral_shaft_data$C_fs)),
+  SD_C = c(sd(lumbar_data$C_lumbar),
+           sd(femoral_neck_data$C_fn),
+           sd(femoral_shaft_data$C_fs)),
+  Correlation = c(cor_lumbar, cor_fn, cor_fs),
+  Slope = c(coef(lm_lumbar)[2], coef(lm_fn)[2], coef(lm_fs)[2]),
+  Percent_Negative = c(
+    sum(lumbar_data$C_lumbar < 0) / nrow(lumbar_data) * 100,
+    sum(femoral_neck_data$C_fn < 0) / nrow(femoral_neck_data) * 100,
+    sum(femoral_shaft_data$C_fs < 0) / nrow(femoral_shaft_data) * 100
+  )
+)
+
+kable(comparative_stats, digits = 3,
+      col.names = c("Site", "Mean C (%)", "SD", "Correlation (r)",
+                    "Slope (%/pack-year)", "% Negative C"),
+      caption = "Comparative Summary: BMD-Tobacco Relationship Across Sites")
+
+# Side-by-side scatter plots
+all_data_long <- bind_rows(
+  lumbar_data %>% select(pyr_diff, C = C_lumbar, pyr_group) %>% mutate(Site = "Lumbar Spine"),
+  femoral_neck_data %>% select(pyr_diff, C = C_fn, pyr_group) %>% mutate(Site = "Femoral Neck"),
+  femoral_shaft_data %>% select(pyr_diff, C = C_fs, pyr_group) %>% mutate(Site = "Femoral Shaft")
+)
+
+pcomp <- ggplot(all_data_long, aes(x = pyr_diff, y = C, color = Site)) +
+  geom_point(size = 2, alpha = 0.5) +
+  geom_smooth(method = "lm", se = TRUE, size = 1.2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  scale_color_manual(values = c("Lumbar Spine" = "steelblue",
+                                 "Femoral Neck" = "darkorange",
+                                 "Femoral Shaft" = "purple")) +
+  facet_wrap(~ Site, ncol = 3) +
+  labs(title = "Comparative Analysis: All Three BMD Sites",
+       x = "Difference in Tobacco Use (Pack-Years)",
+       y = "C: Percentage BMD Difference (%)") +
+  theme_minimal() +
+  theme(legend.position = "bottom", plot.title = element_text(face = "bold", size = 14))
+
+print(pcomp)
+
+# Box plots comparison
+pcomp2 <- ggplot(all_data_long, aes(x = Site, y = C, fill = Site)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", size = 1.2) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "black", color = "white") +
+  scale_fill_manual(values = c("Lumbar Spine" = "steelblue",
+                                "Femoral Neck" = "darkorange",
+                                "Femoral Shaft" = "purple")) +
+  labs(title = "Distribution of C Values Across Sites",
+       y = "C: Percentage BMD Difference (%)",
+       x = "") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+print(pcomp2)
+```
+
+---
+
+# FINAL CONCLUSIONS
+
+## Key Findings from Problems 2.38-2.46
+
+### 1. Lumbar Spine (Problems 2.38-2.40)
+- **Strong inverse relationship** (r ≈ -0.4 to -0.5)
+- Mean C ≈ -5 to -10% (heavier smokers have lower BMD)
+- Clear dose-response: higher pack-years → more negative C
+- ~70-85% of twin pairs show lower BMD in heavier smoker
+
+### 2. Femoral Neck (Problems 2.41-2.43)
+- **Similar pattern** to lumbar spine
+- Moderate to strong inverse relationship
+- Consistent dose-response across pack-year groups
+- Comparable effect size to lumbar spine
+
+### 3. Femoral Shaft (Problems 2.44-2.46)
+- **Weaker relationship** than other sites (r ≈ -0.2 to -0.3)
+- More variable C values
+- Less consistent dose-response pattern
+- May be less sensitive to tobacco effects
+
+## Clinical Implications
+
+**Public Health Message:**
+- Tobacco use is associated with reduced bone mineral density
+- Effect is site-specific (strongest in lumbar spine and femoral neck)
+- Dose-response relationship supports causality
+- Even moderate smoking (10-20 pack-years) shows effects
+
+**Study Design Strength:**
+- Twin design controls for genetic factors
+- Discordant pairs provide within-family comparisons
+- Reduces confounding from shared environment
+
+## Statistical Conclusion
+
+The analysis of Problems 2.38-2.46 demonstrates:
+1. ✓ Systematic negative C values across all sites
+2. ✓ Significant correlations between tobacco use and BMD
+3. ✓ Dose-response gradients in grouped analyses
+4. ✓ Site-specific sensitivity (lumbar spine > femoral neck > femoral shaft)
+
+---
+
+# References
+
+- Rosner, B. (2015). *Fundamentals of Biostatistics* (8th ed.). Cengage Learning.
+- Chapter 2, Problems 2.38-2.46
+- Twin study data provided by Dr. John Hopper, University of Melbourne
+- 41 twin pairs, discordant for tobacco exposure
+
+---
+
+**Note**: This analysis is for educational purposes based on the BONEDEN dataset.

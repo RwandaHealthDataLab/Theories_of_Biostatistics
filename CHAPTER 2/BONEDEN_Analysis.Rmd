@@ -1,0 +1,377 @@
+---
+title: "Effects of Tobacco Use on Bone-Mineral Density in Middle-Aged Women"
+author: "Twin Study Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 10, fig.height = 7)
+```
+
+# Background
+
+This analysis examines the relationship between tobacco consumption and bone-mineral density (BMD) in middle-aged women using a twin study design conducted in Victoria, Australia. The study provides valuable insights into the effects of smoking on bone health while controlling for genetic factors.
+
+## Study Design
+
+- **Study Type**: Matched-pair twin study
+- **Sample Size**: 41 pairs of middle-aged female twins
+- **Selection Criteria**: Twins discordant for tobacco consumption (different smoking histories)
+- **Location**: Victoria, Australia
+- **Data Provider**: Dr. John Hopper, University of Melbourne, School of Population Health
+
+## Key Variables
+
+### Primary Exposure Variable
+- **Pack-years**: Tobacco consumption measured in pack-years
+  - 1 pack-year = 1 pack/day (≈20 cigarettes) for 1 year
+  - Difference calculated as: Heavy smoker pack-years - Light smoker pack-years
+
+### Outcome Variables
+- **Lumbar Spine BMD (ls)**: Bone density in lower back
+- **Femoral Neck BMD (fn)**: Bone density in hip (neck region)
+- **Femoral Shaft BMD (fs)**: Bone density in hip (shaft region)
+- **BMD Difference**: (Light smoker BMD - Heavy smoker BMD) / Average BMD × 100%
+
+### Covariates
+- Age, height, weight, tea/coffee/alcohol consumption
+- Calcium intake, menopausal status, reproductive history
+- Oral contraceptives, estrogen replacement therapy, physical activity
+
+## Study Advantages
+
+Using twins provides a powerful natural experiment:
+1. **Genetic Control**: Twins share similar genetic backgrounds
+2. **Environmental Similarity**: Often share similar upbringing and environments
+3. **Matched Design**: Reduces confounding from familial factors
+
+# Load Required Libraries
+
+```{r libraries}
+library(tidyverse)
+library(readxl)
+library(ggplot2)
+library(gridExtra)
+library(knitr)
+library(scales)
+```
+
+# Data Import
+
+```{r import-data}
+# Define file path
+csv_path <- "Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/BONEDEN.DAT.txt"
+
+# Read the BONEDEN dataset
+# Use check.names = FALSE to preserve original column names
+boneden_data <- read.csv(csv_path, check.names = FALSE)
+
+# Remove quotes from column names if present
+colnames(boneden_data) <- gsub("'", "", colnames(boneden_data))
+
+# Display dataset information
+cat("Dataset dimensions:", nrow(boneden_data), "rows,", ncol(boneden_data), "columns\n\n")
+cat("Column names:\n")
+print(colnames(boneden_data))
+cat("\n")
+
+# Preview the data
+head(boneden_data, 10)
+```
+
+# Data Preparation
+
+```{r data-prep}
+# The data structure already has one row per twin pair
+# Columns with "1" suffix are for twin 1, columns with "2" suffix are for twin 2
+# We need to calculate differences for each pair
+
+twin_pairs <- boneden_data %>%
+  mutate(
+    # Add pair ID
+    pair_id = row_number(),
+
+    # Determine which twin is the heavier smoker
+    heavier_smoker = ifelse(pyr1 >= pyr2, 1, 2),
+
+    # Calculate pack-year difference (heavier - lighter)
+    pyr_diff = abs(pyr1 - pyr2),
+
+    # Calculate BMD differences (lighter - heavier) as percentage
+    # Formula: 200 * (lighter_BMD - heavier_BMD) / (lighter_BMD + heavier_BMD)
+
+    # Lumbar spine
+    ls_diff = ifelse(heavier_smoker == 1,
+                     200 * (ls2 - ls1) / (ls1 + ls2),
+                     200 * (ls1 - ls2) / (ls1 + ls2)),
+
+    # Femoral neck
+    fn_diff = ifelse(heavier_smoker == 1,
+                     200 * (fn2 - fn1) / (fn1 + fn2),
+                     200 * (fn1 - fn2) / (fn1 + fn2)),
+
+    # Femoral shaft
+    fs_diff = ifelse(heavier_smoker == 1,
+                     200 * (fs2 - fs1) / (fs1 + fs2),
+                     200 * (fs1 - fs2) / (fs1 + fs2)),
+
+    # Zygosity label
+    zyg_label = factor(zyg, levels = c(1, 2),
+                      labels = c("Monozygotic", "Dizygotic"))
+  )
+
+# Display summary of prepared data
+cat("\nTwin pair data summary:\n")
+cat("Number of twin pairs:", nrow(twin_pairs), "\n")
+cat("Pack-year difference range:", min(twin_pairs$pyr_diff), "to", max(twin_pairs$pyr_diff), "\n")
+cat("Zygosity distribution:\n")
+print(table(twin_pairs$zyg_label))
+cat("\n")
+
+# Display key variables for first 10 pairs
+twin_pairs %>%
+  select(pair_id, age, zyg_label, pyr_diff, ls_diff, fn_diff, fs_diff) %>%
+  head(10)
+```
+
+# Descriptive Statistics
+
+```{r descriptive-stats}
+# Summary statistics for pack-year differences
+pyr_summary <- twin_pairs %>%
+  summarise(
+    N = n(),
+    Mean = mean(pyr_diff, na.rm = TRUE),
+    SD = sd(pyr_diff, na.rm = TRUE),
+    Median = median(pyr_diff, na.rm = TRUE),
+    Q1 = quantile(pyr_diff, 0.25, na.rm = TRUE),
+    Q3 = quantile(pyr_diff, 0.75, na.rm = TRUE),
+    Min = min(pyr_diff, na.rm = TRUE),
+    Max = max(pyr_diff, na.rm = TRUE)
+  )
+
+# Summary statistics for BMD differences
+bmd_summary <- twin_pairs %>%
+  summarise(
+    Variable = c("Lumbar Spine", "Femoral Neck", "Femoral Shaft"),
+    N = n(),
+    Mean = c(mean(ls_diff, na.rm = TRUE),
+             mean(fn_diff, na.rm = TRUE),
+             mean(fs_diff, na.rm = TRUE)),
+    SD = c(sd(ls_diff, na.rm = TRUE),
+           sd(fn_diff, na.rm = TRUE),
+           sd(fs_diff, na.rm = TRUE)),
+    Median = c(median(ls_diff, na.rm = TRUE),
+               median(fn_diff, na.rm = TRUE),
+               median(fs_diff, na.rm = TRUE)),
+    Min = c(min(ls_diff, na.rm = TRUE),
+            min(fn_diff, na.rm = TRUE),
+            min(fs_diff, na.rm = TRUE)),
+    Max = c(max(ls_diff, na.rm = TRUE),
+            max(fn_diff, na.rm = TRUE),
+            max(fs_diff, na.rm = TRUE))
+  )
+
+# Display tables
+cat("\n## Pack-Year Difference Statistics\n\n")
+kable(pyr_summary, digits = 2,
+      caption = "Descriptive Statistics for Pack-Year Differences")
+
+cat("\n## BMD Difference Statistics (% difference)\n\n")
+kable(bmd_summary, digits = 2,
+      caption = "Descriptive Statistics for BMD Differences by Site")
+```
+
+# Data Visualization
+
+## Scatter Plot: Lumbar Spine BMD vs Tobacco Use
+
+```{r scatter-lumbar, fig.width=10, fig.height=7}
+# Create scatter plot for lumbar spine
+p1 <- ggplot(twin_pairs, aes(x = pyr_diff, y = ls_diff)) +
+  geom_point(aes(color = zyg_label), size = 3, alpha = 0.7) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50", size = 1) +
+  geom_smooth(method = "lm", se = TRUE, color = "blue", fill = "lightblue", alpha = 0.3) +
+  scale_color_manual(values = c("Monozygotic" = "#E41A1C",
+                                "Dizygotic" = "#377EB8")) +
+  labs(
+    title = "Lumbar Spine BMD Difference vs. Tobacco Use Difference",
+    subtitle = "Twin Study: 41 pairs of middle-aged female twins",
+    x = "Difference in Tobacco Use (Pack-Years)\nHeavier Smoker - Lighter Smoker",
+    y = "Difference in Lumbar Spine BMD (%)\nLighter Smoker - Heavier Smoker",
+    color = "Twin Type",
+    caption = "Negative values indicate lower BMD in heavier-smoking twin"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    legend.position = "right",
+    legend.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+print(p1)
+```
+
+## Scatter Plot: Femoral Neck BMD vs Tobacco Use
+
+```{r scatter-femoral-neck, fig.width=10, fig.height=7}
+# Create scatter plot for femoral neck
+p2 <- ggplot(twin_pairs, aes(x = pyr_diff, y = fn_diff)) +
+  geom_point(aes(color = zyg_label), size = 3, alpha = 0.7) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50", size = 1) +
+  geom_smooth(method = "lm", se = TRUE, color = "blue", fill = "lightblue", alpha = 0.3) +
+  scale_color_manual(values = c("Monozygotic" = "#E41A1C",
+                                "Dizygotic" = "#377EB8")) +
+  labs(
+    title = "Femoral Neck BMD Difference vs. Tobacco Use Difference",
+    subtitle = "Twin Study: 41 pairs of middle-aged female twins",
+    x = "Difference in Tobacco Use (Pack-Years)\nHeavier Smoker - Lighter Smoker",
+    y = "Difference in Femoral Neck BMD (%)\nLighter Smoker - Heavier Smoker",
+    color = "Twin Type",
+    caption = "Negative values indicate lower BMD in heavier-smoking twin"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    legend.position = "right",
+    legend.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+print(p2)
+```
+
+## Scatter Plot: Femoral Shaft BMD vs Tobacco Use
+
+```{r scatter-femoral-shaft, fig.width=10, fig.height=7}
+# Create scatter plot for femoral shaft
+p3 <- ggplot(twin_pairs, aes(x = pyr_diff, y = fs_diff)) +
+  geom_point(aes(color = zyg_label), size = 3, alpha = 0.7) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50", size = 1) +
+  geom_smooth(method = "lm", se = TRUE, color = "blue", fill = "lightblue", alpha = 0.3) +
+  scale_color_manual(values = c("Monozygotic" = "#E41A1C",
+                                "Dizygotic" = "#377EB8")) +
+  labs(
+    title = "Femoral Shaft BMD Difference vs. Tobacco Use Difference",
+    subtitle = "Twin Study: 41 pairs of middle-aged female twins",
+    x = "Difference in Tobacco Use (Pack-Years)\nHeavier Smoker - Lighter Smoker",
+    y = "Difference in Femoral Shaft BMD (%)\nLighter Smoker - Heavier Smoker",
+    color = "Twin Type",
+    caption = "Negative values indicate lower BMD in heavier-smoking twin"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12),
+    axis.title = element_text(size = 12, face = "bold"),
+    legend.position = "right",
+    legend.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+print(p3)
+```
+
+## Combined Visualization
+
+```{r combined-plot, fig.width=15, fig.height=12}
+# Create all three plots in a grid
+grid.arrange(p1, p2, p3, ncol = 2, nrow = 2)
+```
+
+## Stratified Analysis by Tobacco Use Category
+
+```{r stratified-analysis}
+# Create categories for pack-year differences
+twin_pairs <- twin_pairs %>%
+  mutate(
+    pyr_category = cut(pyr_diff,
+                      breaks = c(-Inf, 10, 30, Inf),
+                      labels = c("Low (0-10)", "Moderate (10-30)", "High (≥30)"))
+  )
+
+# Count observations in each category
+cat("\nDistribution of twin pairs by tobacco use difference:\n")
+table(twin_pairs$pyr_category)
+
+# Calculate proportion of negative BMD differences by category
+negative_props <- twin_pairs %>%
+  group_by(pyr_category) %>%
+  summarise(
+    N = n(),
+    `LS < 0 (%)` = sum(ls_diff < 0, na.rm = TRUE) / n() * 100,
+    `FN < 0 (%)` = sum(fn_diff < 0, na.rm = TRUE) / n() * 100,
+    `FS < 0 (%)` = sum(fs_diff < 0, na.rm = TRUE) / n() * 100
+  )
+
+cat("\n## Proportion of Twin Pairs Where Heavier Smoker Has Lower BMD\n\n")
+kable(negative_props, digits = 1,
+      caption = "Percentage of Pairs with Negative BMD Difference by Tobacco Category")
+```
+
+# Preliminary Observations
+
+Based on the scatter plots and descriptive statistics:
+
+## 1. Lumbar Spine (Lower Back)
+
+- **Clear Inverse Relationship**: A downward trend is evident, indicating that greater differences in tobacco use are associated with lower BMD in heavier-smoking twins
+- **Predominantly Negative Values**: Virtually all BMD differences are below 0, especially for twins with large differences in tobacco use (≥30 pack-years)
+- **Clinical Significance**: The heavier-smoking twin consistently shows lower bone density in the lumbar spine
+
+## 2. Femoral Neck (Hip - Neck Region)
+
+- **Similar Pattern**: Shows an inverse relationship comparable to the lumbar spine
+- **Consistent Finding**: Most BMD differences are negative, indicating lower bone density in heavier smokers
+- **Dose-Response Effect**: Larger tobacco use differences are associated with greater BMD reductions
+
+## 3. Femoral Shaft (Hip - Shaft Region)
+
+- **Less Clear Relationship**: Results are more variable and less consistent than other sites
+- **Possible Explanations**:
+  - Different mechanical loading patterns
+  - Site-specific bone remodeling responses
+  - Greater measurement variability
+  - Different sensitivity to tobacco exposure
+
+## Key Findings
+
+1. **Matched-Pair Design Strength**: By comparing twins, genetic and familial confounders are inherently controlled
+2. **Exposure-Response Gradient**: Greater tobacco use differences correlate with larger BMD reductions
+3. **Site-Specific Effects**: BMD loss appears more pronounced in lumbar spine and femoral neck compared to femoral shaft
+4. **Public Health Implications**: Clear evidence that tobacco use is associated with reduced bone density, even when controlling for genetics
+
+# Next Steps
+
+Further statistical analyses will include:
+
+1. **Paired t-tests**: To formally test if mean BMD differences are significantly different from zero
+2. **Correlation Analysis**: To quantify the strength of the relationship between pack-year differences and BMD differences
+3. **Linear Regression**: To model BMD differences as a function of tobacco use while controlling for:
+   - Age
+   - Menopausal status
+   - Alcohol and caffeine consumption
+   - Physical activity
+   - Calcium intake
+4. **Stratified Analysis**: By zygosity (monozygotic vs. dizygotic twins)
+5. **Binomial Analysis**: Comparing proportions of twins with lower BMD in heavier smokers
+
+# References
+
+- Rosner, B. (2015). *Fundamentals of Biostatistics* (8th ed.). Cengage Learning.
+- Data provided by Dr. John Hopper, University of Melbourne, School of Population Health, Australia
+- Twin study on tobacco use and bone-mineral density in middle-aged women, Victoria, Australia
+
+---
+
+**Note**: This analysis is for educational purposes based on the BONEDEN dataset from Rosner's Fundamentals of Biostatistics textbook.

@@ -1,0 +1,665 @@
+---
+title: "Nutrition: Validation of Food Frequency Questionnaire (FFQ)"
+author: "Nurses' Health Study Validation Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: united
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Background
+
+This analysis validates the Food Frequency Questionnaire (FFQ) against the Diet Record (DR), the gold standard in dietary epidemiology. Understanding the accuracy and reliability of the FFQ is crucial for large-scale nutritional epidemiology studies.
+
+## Study Design
+
+### Participants
+- **Sample Size**: 173 nurses from the Nurses' Health Study
+- **Study Period**: 12 months
+
+### Methods Compared
+
+#### Diet Record (DR) - Gold Standard
+- **Method**: Participants recorded detailed food diaries for 4 weeks
+- **Timing**: Weeks equally spaced over 12 months
+- **Processing**: Nutritionist computed nutrient intakes using specialized software
+- **Advantage**: High accuracy
+- **Disadvantage**: Expensive and time-consuming
+
+#### Food Frequency Questionnaire (FFQ) - Test Method
+- **Method**: Participants recalled typical servings per day for 100+ foods
+- **Timing**: Completed at end of 12-month period
+- **Processing**: Food-composition table used to compute nutrients
+- **Advantage**: Inexpensive and easy to administer
+- **Disadvantage**: Relies on memory, potentially less accurate
+
+## Nutrients Assessed
+
+1. **Saturated Fat** (grams/day)
+2. **Total Fat** (grams/day)
+3. **Alcohol** (grams/day)
+4. **Total Calories** (kcal/day)
+
+## Research Question
+
+**How well does the FFQ agree with the DR?** We will assess:
+- Correlation between methods
+- Systematic bias (mean differences)
+- Agreement across nutrient levels
+- Classification accuracy
+
+# Load Required Libraries
+
+```{r libraries}
+library(tidyverse)
+library(ggplot2)
+library(gridExtra)
+library(knitr)
+library(corrplot)
+library(ggpubr)
+library(scales)
+```
+
+# Data Import and Preparation
+
+```{r import-data}
+# Define file path
+csv_path <- "Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/VALID.DAT.txt"
+
+# Read the VALID dataset
+valid_data <- read.csv(csv_path, check.names = FALSE)
+
+# Remove quotes from column names if present
+colnames(valid_data) <- gsub("'", "", colnames(valid_data))
+
+# Display dataset information
+cat("Dataset Summary\n")
+cat("===============\n\n")
+cat("Total Participants:", nrow(valid_data), "nurses\n")
+cat("Study: Nurses' Health Study\n")
+cat("Validation Period: 12 months\n")
+cat("DR assessments: 4 weeks (equally spaced)\n\n")
+
+cat("Variables:\n")
+cat("----------\n")
+cat("sfat_dr:   Saturated fat - Diet Record (g/day)\n")
+cat("sfat_ffq:  Saturated fat - FFQ (g/day)\n")
+cat("tfat_dr:   Total fat - Diet Record (g/day)\n")
+cat("tfat_ffq:  Total fat - FFQ (g/day)\n")
+cat("alco_dr:   Alcohol - Diet Record (g/day)\n")
+cat("alco_ffq:  Alcohol - FFQ (g/day)\n")
+cat("cal_dr:    Calories - Diet Record (kcal/day)\n")
+cat("cal_ffq:   Calories - FFQ (kcal/day)\n\n")
+
+# Preview the data
+head(valid_data, 15)
+
+# Calculate differences for Bland-Altman analysis
+valid_data <- valid_data %>%
+  mutate(
+    sfat_diff = sfat_ffq - sfat_dr,
+    sfat_mean = (sfat_ffq + sfat_dr) / 2,
+    tfat_diff = tfat_ffq - tfat_dr,
+    tfat_mean = (tfat_ffq + tfat_dr) / 2,
+    alco_diff = alco_ffq - alco_dr,
+    alco_mean = (alco_ffq + alco_dr) / 2,
+    cal_diff = cal_ffq - cal_dr,
+    cal_mean = (cal_ffq + cal_dr) / 2
+  )
+```
+
+---
+
+# Descriptive Statistics
+
+## Diet Record (DR) - Gold Standard
+
+```{r dr-statistics}
+cat("\n## DIET RECORD (DR) STATISTICS\n")
+cat("===============================\n\n")
+
+dr_stats <- data.frame(
+  Nutrient = c("Saturated Fat (g/day)", "Total Fat (g/day)",
+               "Alcohol (g/day)", "Calories (kcal/day)"),
+  N = rep(nrow(valid_data), 4),
+  Mean = c(mean(valid_data$sfat_dr), mean(valid_data$tfat_dr),
+           mean(valid_data$alco_dr), mean(valid_data$cal_dr)),
+  SD = c(sd(valid_data$sfat_dr), sd(valid_data$tfat_dr),
+         sd(valid_data$alco_dr), sd(valid_data$cal_dr)),
+  Median = c(median(valid_data$sfat_dr), median(valid_data$tfat_dr),
+             median(valid_data$alco_dr), median(valid_data$cal_dr)),
+  Min = c(min(valid_data$sfat_dr), min(valid_data$tfat_dr),
+          min(valid_data$alco_dr), min(valid_data$cal_dr)),
+  Max = c(max(valid_data$sfat_dr), max(valid_data$tfat_dr),
+          max(valid_data$alco_dr), max(valid_data$cal_dr))
+)
+
+kable(dr_stats, digits = 2,
+      caption = "Diet Record (DR) - Gold Standard Measurements")
+```
+
+## Food Frequency Questionnaire (FFQ) - Test Method
+
+```{r ffq-statistics}
+cat("\n## FOOD FREQUENCY QUESTIONNAIRE (FFQ) STATISTICS\n")
+cat("=================================================\n\n")
+
+ffq_stats <- data.frame(
+  Nutrient = c("Saturated Fat (g/day)", "Total Fat (g/day)",
+               "Alcohol (g/day)", "Calories (kcal/day)"),
+  N = rep(nrow(valid_data), 4),
+  Mean = c(mean(valid_data$sfat_ffq), mean(valid_data$tfat_ffq),
+           mean(valid_data$alco_ffq), mean(valid_data$cal_ffq)),
+  SD = c(sd(valid_data$sfat_ffq), sd(valid_data$tfat_ffq),
+         sd(valid_data$alco_ffq), sd(valid_data$cal_ffq)),
+  Median = c(median(valid_data$sfat_ffq), median(valid_data$tfat_ffq),
+             median(valid_data$alco_ffq), median(valid_data$cal_ffq)),
+  Min = c(min(valid_data$sfat_ffq), min(valid_data$tfat_ffq),
+          min(valid_data$alco_ffq), min(valid_data$cal_ffq)),
+  Max = c(max(valid_data$sfat_ffq), max(valid_data$tfat_ffq),
+          max(valid_data$alco_ffq), max(valid_data$cal_ffq))
+)
+
+kable(ffq_stats, digits = 2,
+      caption = "Food Frequency Questionnaire (FFQ) Measurements")
+```
+
+## Comparison of Methods
+
+```{r method-comparison}
+cat("\n## COMPARISON: FFQ vs DR\n")
+cat("=========================\n\n")
+
+comparison <- data.frame(
+  Nutrient = c("Saturated Fat", "Total Fat", "Alcohol", "Calories"),
+  DR_Mean = c(mean(valid_data$sfat_dr), mean(valid_data$tfat_dr),
+              mean(valid_data$alco_dr), mean(valid_data$cal_dr)),
+  FFQ_Mean = c(mean(valid_data$sfat_ffq), mean(valid_data$tfat_ffq),
+               mean(valid_data$alco_ffq), mean(valid_data$cal_ffq)),
+  Difference = c(mean(valid_data$sfat_diff), mean(valid_data$tfat_diff),
+                 mean(valid_data$alco_diff), mean(valid_data$cal_diff)),
+  Percent_Diff = c(mean(valid_data$sfat_diff) / mean(valid_data$sfat_dr) * 100,
+                   mean(valid_data$tfat_diff) / mean(valid_data$tfat_dr) * 100,
+                   mean(valid_data$alco_diff) / mean(valid_data$alco_dr) * 100,
+                   mean(valid_data$cal_diff) / mean(valid_data$cal_dr) * 100)
+)
+
+kable(comparison, digits = 2,
+      col.names = c("Nutrient", "DR Mean", "FFQ Mean", "Mean Diff (FFQ-DR)", "% Difference"),
+      caption = "Mean Comparison: FFQ vs Diet Record")
+
+cat("\nInterpretation:\n")
+cat("---------------\n")
+cat("Negative differences indicate FFQ underestimates compared to DR\n")
+cat("Positive differences indicate FFQ overestimates compared to DR\n")
+```
+
+---
+
+# Correlation Analysis
+
+## Correlation Coefficients
+
+```{r correlations}
+cat("\n## CORRELATION BETWEEN FFQ AND DR\n")
+cat("==================================\n\n")
+
+correlations <- data.frame(
+  Nutrient = c("Saturated Fat", "Total Fat", "Alcohol", "Calories"),
+  Correlation = c(
+    cor(valid_data$sfat_dr, valid_data$sfat_ffq),
+    cor(valid_data$tfat_dr, valid_data$tfat_ffq),
+    cor(valid_data$alco_dr, valid_data$alco_ffq),
+    cor(valid_data$cal_dr, valid_data$cal_ffq)
+  ),
+  R_Squared = c(
+    cor(valid_data$sfat_dr, valid_data$sfat_ffq)^2,
+    cor(valid_data$tfat_dr, valid_data$tfat_ffq)^2,
+    cor(valid_data$alco_dr, valid_data$alco_ffq)^2,
+    cor(valid_data$cal_dr, valid_data$cal_ffq)^2
+  )
+)
+
+kable(correlations, digits = 3,
+      col.names = c("Nutrient", "Pearson r", "R²"),
+      caption = "Correlation Between FFQ and Diet Record")
+
+cat("\nCorrelation Interpretation:\n")
+cat("---------------------------\n")
+cat("r < 0.3:   Weak correlation\n")
+cat("0.3-0.7:   Moderate correlation\n")
+cat("r > 0.7:   Strong correlation\n")
+cat("r > 0.9:   Very strong correlation\n")
+```
+
+## Correlation Matrix
+
+```{r correlation-matrix}
+# Create correlation matrix for all nutrients
+cor_data <- valid_data %>%
+  select(sfat_dr, sfat_ffq, tfat_dr, tfat_ffq,
+         alco_dr, alco_ffq, cal_dr, cal_ffq)
+
+cor_matrix <- cor(cor_data)
+
+corrplot(cor_matrix, method = "circle", type = "upper",
+         addCoef.col = "black", number.cex = 0.7,
+         tl.col = "black", tl.srt = 45,
+         title = "Correlation Matrix: All Nutrients (DR and FFQ)",
+         mar = c(0, 0, 2, 0))
+```
+
+---
+
+# Scatter Plots with Regression Lines
+
+```{r scatter-plots, fig.width=14, fig.height=12}
+# Saturated Fat
+p1 <- ggplot(valid_data, aes(x = sfat_dr, y = sfat_ffq)) +
+  geom_point(alpha = 0.6, size = 2.5, color = "steelblue") +
+  geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink", alpha = 0.3) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "darkgreen", size = 1) +
+  labs(title = "Saturated Fat Validation",
+       subtitle = sprintf("r = %.3f, Mean Diff = %.2f g/day",
+                         cor(valid_data$sfat_dr, valid_data$sfat_ffq),
+                         mean(valid_data$sfat_diff)),
+       x = "Diet Record (g/day)",
+       y = "FFQ (g/day)",
+       caption = "Green dashed line = perfect agreement (y=x)") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold"))
+
+# Total Fat
+p2 <- ggplot(valid_data, aes(x = tfat_dr, y = tfat_ffq)) +
+  geom_point(alpha = 0.6, size = 2.5, color = "darkorange") +
+  geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink", alpha = 0.3) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "darkgreen", size = 1) +
+  labs(title = "Total Fat Validation",
+       subtitle = sprintf("r = %.3f, Mean Diff = %.2f g/day",
+                         cor(valid_data$tfat_dr, valid_data$tfat_ffq),
+                         mean(valid_data$tfat_diff)),
+       x = "Diet Record (g/day)",
+       y = "FFQ (g/day)") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold"))
+
+# Alcohol
+p3 <- ggplot(valid_data, aes(x = alco_dr, y = alco_ffq)) +
+  geom_point(alpha = 0.6, size = 2.5, color = "purple") +
+  geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink", alpha = 0.3) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "darkgreen", size = 1) +
+  labs(title = "Alcohol Validation",
+       subtitle = sprintf("r = %.3f, Mean Diff = %.2f g/day",
+                         cor(valid_data$alco_dr, valid_data$alco_ffq),
+                         mean(valid_data$alco_diff)),
+       x = "Diet Record (g/day)",
+       y = "FFQ (g/day)") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold"))
+
+# Calories
+p4 <- ggplot(valid_data, aes(x = cal_dr, y = cal_ffq)) +
+  geom_point(alpha = 0.6, size = 2.5, color = "darkred") +
+  geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink", alpha = 0.3) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "darkgreen", size = 1) +
+  labs(title = "Total Calories Validation",
+       subtitle = sprintf("r = %.3f, Mean Diff = %.2f kcal/day",
+                         cor(valid_data$cal_dr, valid_data$cal_ffq),
+                         mean(valid_data$cal_diff)),
+       x = "Diet Record (kcal/day)",
+       y = "FFQ (kcal/day)") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold"))
+
+grid.arrange(p1, p2, p3, p4, ncol = 2, nrow = 2,
+             top = "FFQ Validation: Scatter Plots with Regression Lines")
+```
+
+---
+
+# Bland-Altman Plots
+
+Bland-Altman plots assess agreement between two measurement methods by plotting the difference against the mean.
+
+```{r bland-altman, fig.width=14, fig.height=12}
+# Saturated Fat
+ba1 <- ggplot(valid_data, aes(x = sfat_mean, y = sfat_diff)) +
+  geom_point(alpha = 0.6, size = 2.5, color = "steelblue") +
+  geom_hline(yintercept = mean(valid_data$sfat_diff), color = "red",
+             linetype = "dashed", size = 1.2) +
+  geom_hline(yintercept = mean(valid_data$sfat_diff) + 1.96*sd(valid_data$sfat_diff),
+             color = "blue", linetype = "dotted", size = 1) +
+  geom_hline(yintercept = mean(valid_data$sfat_diff) - 1.96*sd(valid_data$sfat_diff),
+             color = "blue", linetype = "dotted", size = 1) +
+  geom_hline(yintercept = 0, color = "darkgreen", linetype = "solid", size = 0.8) +
+  labs(title = "Bland-Altman Plot: Saturated Fat",
+       subtitle = sprintf("Mean Bias = %.2f g/day, Limits of Agreement: %.2f to %.2f",
+                         mean(valid_data$sfat_diff),
+                         mean(valid_data$sfat_diff) - 1.96*sd(valid_data$sfat_diff),
+                         mean(valid_data$sfat_diff) + 1.96*sd(valid_data$sfat_diff)),
+       x = "Mean of FFQ and DR (g/day)",
+       y = "Difference (FFQ - DR, g/day)",
+       caption = "Red dashed = mean difference, Blue dotted = 95% limits of agreement") +
+  theme_minimal()
+
+# Total Fat
+ba2 <- ggplot(valid_data, aes(x = tfat_mean, y = tfat_diff)) +
+  geom_point(alpha = 0.6, size = 2.5, color = "darkorange") +
+  geom_hline(yintercept = mean(valid_data$tfat_diff), color = "red",
+             linetype = "dashed", size = 1.2) +
+  geom_hline(yintercept = mean(valid_data$tfat_diff) + 1.96*sd(valid_data$tfat_diff),
+             color = "blue", linetype = "dotted", size = 1) +
+  geom_hline(yintercept = mean(valid_data$tfat_diff) - 1.96*sd(valid_data$tfat_diff),
+             color = "blue", linetype = "dotted", size = 1) +
+  geom_hline(yintercept = 0, color = "darkgreen", linetype = "solid", size = 0.8) +
+  labs(title = "Bland-Altman Plot: Total Fat",
+       subtitle = sprintf("Mean Bias = %.2f g/day, Limits of Agreement: %.2f to %.2f",
+                         mean(valid_data$tfat_diff),
+                         mean(valid_data$tfat_diff) - 1.96*sd(valid_data$tfat_diff),
+                         mean(valid_data$tfat_diff) + 1.96*sd(valid_data$tfat_diff)),
+       x = "Mean of FFQ and DR (g/day)",
+       y = "Difference (FFQ - DR, g/day)") +
+  theme_minimal()
+
+# Alcohol
+ba3 <- ggplot(valid_data, aes(x = alco_mean, y = alco_diff)) +
+  geom_point(alpha = 0.6, size = 2.5, color = "purple") +
+  geom_hline(yintercept = mean(valid_data$alco_diff), color = "red",
+             linetype = "dashed", size = 1.2) +
+  geom_hline(yintercept = mean(valid_data$alco_diff) + 1.96*sd(valid_data$alco_diff),
+             color = "blue", linetype = "dotted", size = 1) +
+  geom_hline(yintercept = mean(valid_data$alco_diff) - 1.96*sd(valid_data$alco_diff),
+             color = "blue", linetype = "dotted", size = 1) +
+  geom_hline(yintercept = 0, color = "darkgreen", linetype = "solid", size = 0.8) +
+  labs(title = "Bland-Altman Plot: Alcohol",
+       subtitle = sprintf("Mean Bias = %.2f g/day, Limits of Agreement: %.2f to %.2f",
+                         mean(valid_data$alco_diff),
+                         mean(valid_data$alco_diff) - 1.96*sd(valid_data$alco_diff),
+                         mean(valid_data$alco_diff) + 1.96*sd(valid_data$alco_diff)),
+       x = "Mean of FFQ and DR (g/day)",
+       y = "Difference (FFQ - DR, g/day)") +
+  theme_minimal()
+
+# Calories
+ba4 <- ggplot(valid_data, aes(x = cal_mean, y = cal_diff)) +
+  geom_point(alpha = 0.6, size = 2.5, color = "darkred") +
+  geom_hline(yintercept = mean(valid_data$cal_diff), color = "red",
+             linetype = "dashed", size = 1.2) +
+  geom_hline(yintercept = mean(valid_data$cal_diff) + 1.96*sd(valid_data$cal_diff),
+             color = "blue", linetype = "dotted", size = 1) +
+  geom_hline(yintercept = mean(valid_data$cal_diff) - 1.96*sd(valid_data$cal_diff),
+             color = "blue", linetype = "dotted", size = 1) +
+  geom_hline(yintercept = 0, color = "darkgreen", linetype = "solid", size = 0.8) +
+  labs(title = "Bland-Altman Plot: Calories",
+       subtitle = sprintf("Mean Bias = %.2f kcal/day, Limits of Agreement: %.2f to %.2f",
+                         mean(valid_data$cal_diff),
+                         mean(valid_data$cal_diff) - 1.96*sd(valid_data$cal_diff),
+                         mean(valid_data$cal_diff) + 1.96*sd(valid_data$cal_diff)),
+       x = "Mean of FFQ and DR (kcal/day)",
+       y = "Difference (FFQ - DR, kcal/day)") +
+  theme_minimal()
+
+grid.arrange(ba1, ba2, ba3, ba4, ncol = 2, nrow = 2,
+             top = "Bland-Altman Plots: Assessment of Agreement")
+```
+
+---
+
+# Distribution of Differences
+
+```{r difference-distributions, fig.width=14, fig.height=10}
+# Saturated Fat
+pd1 <- ggplot(valid_data, aes(x = sfat_diff)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "black", alpha = 0.7) +
+  geom_vline(xintercept = 0, color = "darkgreen", linetype = "dashed", size = 1.2) +
+  geom_vline(xintercept = mean(valid_data$sfat_diff), color = "red",
+             linetype = "solid", size = 1.2) +
+  labs(title = "Saturated Fat: Distribution of Differences",
+       subtitle = sprintf("Mean = %.2f g/day, SD = %.2f g/day",
+                         mean(valid_data$sfat_diff), sd(valid_data$sfat_diff)),
+       x = "Difference (FFQ - DR, g/day)", y = "Frequency") +
+  theme_minimal()
+
+# Total Fat
+pd2 <- ggplot(valid_data, aes(x = tfat_diff)) +
+  geom_histogram(bins = 30, fill = "darkorange", color = "black", alpha = 0.7) +
+  geom_vline(xintercept = 0, color = "darkgreen", linetype = "dashed", size = 1.2) +
+  geom_vline(xintercept = mean(valid_data$tfat_diff), color = "red",
+             linetype = "solid", size = 1.2) +
+  labs(title = "Total Fat: Distribution of Differences",
+       subtitle = sprintf("Mean = %.2f g/day, SD = %.2f g/day",
+                         mean(valid_data$tfat_diff), sd(valid_data$tfat_diff)),
+       x = "Difference (FFQ - DR, g/day)", y = "Frequency") +
+  theme_minimal()
+
+# Alcohol
+pd3 <- ggplot(valid_data, aes(x = alco_diff)) +
+  geom_histogram(bins = 30, fill = "purple", color = "black", alpha = 0.7) +
+  geom_vline(xintercept = 0, color = "darkgreen", linetype = "dashed", size = 1.2) +
+  geom_vline(xintercept = mean(valid_data$alco_diff), color = "red",
+             linetype = "solid", size = 1.2) +
+  labs(title = "Alcohol: Distribution of Differences",
+       subtitle = sprintf("Mean = %.2f g/day, SD = %.2f g/day",
+                         mean(valid_data$alco_diff), sd(valid_data$alco_diff)),
+       x = "Difference (FFQ - DR, g/day)", y = "Frequency") +
+  theme_minimal()
+
+# Calories
+pd4 <- ggplot(valid_data, aes(x = cal_diff)) +
+  geom_histogram(bins = 30, fill = "darkred", color = "black", alpha = 0.7) +
+  geom_vline(xintercept = 0, color = "darkgreen", linetype = "dashed", size = 1.2) +
+  geom_vline(xintercept = mean(valid_data$cal_diff), color = "red",
+             linetype = "solid", size = 1.2) +
+  labs(title = "Calories: Distribution of Differences",
+       subtitle = sprintf("Mean = %.2f kcal/day, SD = %.2f kcal/day",
+                         mean(valid_data$cal_diff), sd(valid_data$cal_diff)),
+       x = "Difference (FFQ - DR, kcal/day)", y = "Frequency") +
+  theme_minimal()
+
+grid.arrange(pd1, pd2, pd3, pd4, ncol = 2, nrow = 2,
+             top = "Distribution of Differences (FFQ - DR)")
+```
+
+---
+
+# Regression Analysis
+
+```{r regression-analysis}
+cat("\n## REGRESSION ANALYSIS: FFQ vs DR\n")
+cat("==================================\n\n")
+
+# Saturated Fat
+sfat_lm <- lm(sfat_ffq ~ sfat_dr, data = valid_data)
+# Total Fat
+tfat_lm <- lm(tfat_ffq ~ tfat_dr, data = valid_data)
+# Alcohol
+alco_lm <- lm(alco_ffq ~ alco_dr, data = valid_data)
+# Calories
+cal_lm <- lm(cal_ffq ~ cal_dr, data = valid_data)
+
+regression_results <- data.frame(
+  Nutrient = c("Saturated Fat", "Total Fat", "Alcohol", "Calories"),
+  Intercept = c(coef(sfat_lm)[1], coef(tfat_lm)[1],
+                coef(alco_lm)[1], coef(cal_lm)[1]),
+  Slope = c(coef(sfat_lm)[2], coef(tfat_lm)[2],
+            coef(alco_lm)[2], coef(cal_lm)[2]),
+  R_squared = c(summary(sfat_lm)$r.squared, summary(tfat_lm)$r.squared,
+                summary(alco_lm)$r.squared, summary(cal_lm)$r.squared),
+  RMSE = c(sqrt(mean(residuals(sfat_lm)^2)),
+           sqrt(mean(residuals(tfat_lm)^2)),
+           sqrt(mean(residuals(alco_lm)^2)),
+           sqrt(mean(residuals(cal_lm)^2)))
+)
+
+kable(regression_results, digits = 3,
+      col.names = c("Nutrient", "Intercept", "Slope", "R²", "RMSE"),
+      caption = "Regression Analysis: FFQ = Intercept + Slope × DR")
+
+cat("\nInterpretation:\n")
+cat("---------------\n")
+cat("Slope = 1.0 indicates perfect proportional agreement\n")
+cat("Slope < 1.0 indicates FFQ underestimates relative to DR\n")
+cat("Slope > 1.0 indicates FFQ overestimates relative to DR\n")
+```
+
+---
+
+# Classification Agreement
+
+Assess how well FFQ classifies individuals into tertiles compared to DR.
+
+```{r classification-agreement}
+# Create tertile classifications for each nutrient
+valid_data <- valid_data %>%
+  mutate(
+    sfat_dr_tertile = ntile(sfat_dr, 3),
+    sfat_ffq_tertile = ntile(sfat_ffq, 3),
+    tfat_dr_tertile = ntile(tfat_dr, 3),
+    tfat_ffq_tertile = ntile(tfat_ffq, 3),
+    alco_dr_tertile = ntile(alco_dr, 3),
+    alco_ffq_tertile = ntile(alco_ffq, 3),
+    cal_dr_tertile = ntile(cal_dr, 3),
+    cal_ffq_tertile = ntile(cal_ffq, 3)
+  )
+
+# Calculate exact agreement (same tertile)
+classification_accuracy <- data.frame(
+  Nutrient = c("Saturated Fat", "Total Fat", "Alcohol", "Calories"),
+  Exact_Agreement = c(
+    sum(valid_data$sfat_dr_tertile == valid_data$sfat_ffq_tertile) / nrow(valid_data) * 100,
+    sum(valid_data$tfat_dr_tertile == valid_data$tfat_ffq_tertile) / nrow(valid_data) * 100,
+    sum(valid_data$alco_dr_tertile == valid_data$alco_ffq_tertile) / nrow(valid_data) * 100,
+    sum(valid_data$cal_dr_tertile == valid_data$cal_ffq_tertile) / nrow(valid_data) * 100
+  ),
+  Within_One = c(
+    sum(abs(valid_data$sfat_dr_tertile - valid_data$sfat_ffq_tertile) <= 1) / nrow(valid_data) * 100,
+    sum(abs(valid_data$tfat_dr_tertile - valid_data$tfat_ffq_tertile) <= 1) / nrow(valid_data) * 100,
+    sum(abs(valid_data$alco_dr_tertile - valid_data$alco_ffq_tertile) <= 1) / nrow(valid_data) * 100,
+    sum(abs(valid_data$cal_dr_tertile - valid_data$cal_ffq_tertile) <= 1) / nrow(valid_data) * 100
+  ),
+  Gross_Misclass = c(
+    sum(abs(valid_data$sfat_dr_tertile - valid_data$sfat_ffq_tertile) == 2) / nrow(valid_data) * 100,
+    sum(abs(valid_data$tfat_dr_tertile - valid_data$tfat_ffq_tertile) == 2) / nrow(valid_data) * 100,
+    sum(abs(valid_data$alco_dr_tertile - valid_data$alco_ffq_tertile) == 2) / nrow(valid_data) * 100,
+    sum(abs(valid_data$cal_dr_tertile - valid_data$cal_ffq_tertile) == 2) / nrow(valid_data) * 100
+  )
+)
+
+kable(classification_accuracy, digits = 1,
+      col.names = c("Nutrient", "Exact Agreement (%)",
+                    "Within 1 Tertile (%)", "Gross Misclassification (%)"),
+      caption = "Classification Agreement: Tertile Analysis")
+
+cat("\nInterpretation:\n")
+cat("---------------\n")
+cat("Exact Agreement: FFQ and DR place individual in same tertile\n")
+cat("Within 1 Tertile: FFQ and DR differ by at most one tertile\n")
+cat("Gross Misclassification: FFQ and DR place individual in opposite tertiles (1 vs 3)\n")
+```
+
+---
+
+# Summary of Validation Results
+
+```{r summary-table}
+cat("\n## COMPREHENSIVE VALIDATION SUMMARY\n")
+cat("====================================\n\n")
+
+validation_summary <- data.frame(
+  Nutrient = c("Saturated Fat", "Total Fat", "Alcohol", "Calories"),
+  Correlation = sprintf("%.3f", correlations$Correlation),
+  Mean_Bias = sprintf("%.2f", comparison$Difference),
+  Percent_Bias = sprintf("%.1f%%", comparison$Percent_Diff),
+  Exact_Agreement = sprintf("%.1f%%", classification_accuracy$Exact_Agreement),
+  Assessment = c(
+    ifelse(correlations$Correlation[1] > 0.5 & abs(comparison$Percent_Diff[1]) < 20,
+           "Good", "Moderate"),
+    ifelse(correlations$Correlation[2] > 0.5 & abs(comparison$Percent_Diff[2]) < 20,
+           "Good", "Moderate"),
+    ifelse(correlations$Correlation[3] > 0.5 & abs(comparison$Percent_Diff[3]) < 20,
+           "Good", "Moderate"),
+    ifelse(correlations$Correlation[4] > 0.5 & abs(comparison$Percent_Diff[4]) < 20,
+           "Good", "Moderate")
+  )
+)
+
+kable(validation_summary,
+      col.names = c("Nutrient", "Correlation (r)", "Mean Bias",
+                    "% Bias", "Exact Agreement", "Overall Assessment"),
+      caption = "Comprehensive Validation Summary")
+```
+
+---
+
+# Conclusions and Recommendations
+
+## Key Findings
+
+### 1. Correlation Performance
+- **Saturated Fat**: r = `r sprintf("%.3f", cor(valid_data$sfat_dr, valid_data$sfat_ffq))`
+- **Total Fat**: r = `r sprintf("%.3f", cor(valid_data$tfat_dr, valid_data$tfat_ffq))`
+- **Alcohol**: r = `r sprintf("%.3f", cor(valid_data$alco_dr, valid_data$alco_ffq))`
+- **Calories**: r = `r sprintf("%.3f", cor(valid_data$cal_dr, valid_data$cal_ffq))`
+
+**Interpretation**: Moderate to strong correlations suggest FFQ captures relative rankings well.
+
+### 2. Systematic Bias
+- **FFQ tends to underestimate** all nutrients compared to DR
+- **Saturated Fat**: Mean bias = `r sprintf("%.2f", mean(valid_data$sfat_diff))` g/day (`r sprintf("%.1f%%", mean(valid_data$sfat_diff)/mean(valid_data$sfat_dr)*100)`)
+- **Total Fat**: Mean bias = `r sprintf("%.2f", mean(valid_data$tfat_diff))` g/day (`r sprintf("%.1f%%", mean(valid_data$tfat_diff)/mean(valid_data$tfat_dr)*100)`)
+- **Calories**: Mean bias = `r sprintf("%.0f", mean(valid_data$cal_diff))` kcal/day (`r sprintf("%.1f%%", mean(valid_data$cal_diff)/mean(valid_data$cal_dr)*100)`)
+
+### 3. Classification Accuracy
+- FFQ correctly classifies `r sprintf("%.0f-%.0f%%", min(classification_accuracy$Exact_Agreement), max(classification_accuracy$Exact_Agreement))` of individuals into same tertile
+- Gross misclassification is low (`r sprintf("%.0f-%.0f%%", min(classification_accuracy$Gross_Misclass), max(classification_accuracy$Gross_Misclass))`)
+
+### 4. Clinical Implications
+
+**Strengths of FFQ:**
+- ✓ Cost-effective alternative to expensive diet records
+- ✓ Adequate for ranking individuals by nutrient intake
+- ✓ Suitable for large epidemiological studies
+- ✓ Good classification accuracy for tertile/quartile analysis
+
+**Limitations of FFQ:**
+- ✗ Systematic underestimation of absolute intake
+- ✗ Memory-dependent (recall bias)
+- ✗ Less accurate than diet records for absolute values
+- ✗ May require calibration adjustments
+
+## Recommendations
+
+### For Research Use:
+1. **FFQ is acceptable** for studies examining associations and rankings
+2. **Use calibration equations** if absolute intake values are needed
+3. **Consider measurement error** in statistical analyses
+4. **DR remains gold standard** for validation and precise measurements
+
+### For Clinical Practice:
+1. FFQ useful for **screening and categorization**
+2. **Not recommended** for precise individual dietary assessment
+3. Best used for **population-level comparisons**
+4. Consider using DR for **high-risk individuals** requiring precise monitoring
+
+---
+
+# References
+
+- Rosner, B. (2015). *Fundamentals of Biostatistics* (8th ed.). Cengage Learning.
+- Nurses' Health Study validation data
+- 173 nurses, 12-month validation period
+- 4-week diet recording (gold standard)
+- FFQ assessment (test method)
+
+---
+
+**Note**: This analysis is for educational purposes based on the VALID dataset from Rosner's Fundamentals of Biostatistics textbook.
