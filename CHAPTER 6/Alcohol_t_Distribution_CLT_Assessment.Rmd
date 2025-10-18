@@ -1,0 +1,499 @@
+---
+title: "Central Limit Theorem Assessment: t-Distribution Analysis"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 14, fig.height = 10)
+set.seed(42)  # For reproducibility
+```
+
+# Background
+
+This analysis investigates whether the **Central Limit Theorem (CLT)** holds for small samples (n = 5) drawn from alcohol consumption data. We examine the distribution of t-statistics calculated from 500 random samples.
+
+## Research Questions
+
+**6.81:** What distribution should the t-values follow if the CLT holds?
+
+**6.82:** What percentage of t-values should exceed 2.776 in absolute value if the CLT holds?
+
+**6.83:** Given that 38 out of 500 t-values exceed 2.776, does the CLT appear applicable for n = 5?
+
+## Data Source
+
+- **VALID.DAT:** Alcohol consumption data from 173 American nurses
+- **Variable:** ln(alcohol_DR + 1) where alcohol_DR is amount consumed (diet record)
+- **Population mean (µ₀):** 1.7973
+
+## Sampling Process
+
+For each of 500 random samples of size n = 5:
+1. Draw 5 observations from the 173 values
+2. Calculate sample mean (x̄)
+3. Calculate sample standard deviation (s)
+4. Compute t-statistic: t = (x̄ - µ₀) / (s/√n)
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+library(gridExtra)
+library(moments)
+```
+
+# Data Import and Preparation
+
+```{r data-import}
+# Read the VALID dataset
+valid_data <- read.csv("../CHAPTER 5/Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/VALID.DAT.txt",
+                       check.names = FALSE)
+
+# Remove quotes from column names
+colnames(valid_data) <- gsub("'", "", colnames(valid_data))
+
+cat("Dataset Structure:\n")
+str(valid_data)
+
+# Check for alcohol variable name
+cat("\n\nColumn names containing 'alco':\n")
+grep("alco", colnames(valid_data), ignore.case = TRUE, value = TRUE)
+
+# Extract alcohol_DR variable
+alcohol_dr <- valid_data$alco_dr
+
+cat(sprintf("\n\nAlcohol consumption (diet record):\n"))
+cat(sprintf("- Total observations: %d\n", length(alcohol_dr)))
+cat(sprintf("- Missing values: %d\n", sum(is.na(alcohol_dr))))
+```
+
+## Transform Data
+
+```{r transform-data}
+# Create ln(alcohol_DR + 1) transformation
+ln_alcohol <- log(alcohol_dr + 1)
+
+# Remove any NA values
+ln_alcohol_clean <- ln_alcohol[!is.na(ln_alcohol)]
+
+cat("Transformed Variable: ln(alcohol_DR + 1)\n\n")
+cat(sprintf("Sample size: %d\n", length(ln_alcohol_clean)))
+cat(sprintf("Population mean (µ₀): %.4f\n", mean(ln_alcohol_clean)))
+cat(sprintf("Population SD (σ): %.4f\n", sd(ln_alcohol_clean)))
+cat(sprintf("Minimum: %.4f\n", min(ln_alcohol_clean)))
+cat(sprintf("Maximum: %.4f\n", max(ln_alcohol_clean)))
+
+# Store population parameters
+mu_0 <- mean(ln_alcohol_clean)
+sigma_pop <- sd(ln_alcohol_clean)
+n_pop <- length(ln_alcohol_clean)
+
+cat(sprintf("\nConfirm µ₀ = %.4f (should be close to 1.7973)\n", mu_0))
+```
+
+## Population Distribution
+
+```{r population-dist, fig.height=8}
+# Examine population distribution
+p_pop <- data.frame(ln_alcohol = ln_alcohol_clean) %>%
+  ggplot(aes(x = ln_alcohol)) +
+  geom_histogram(aes(y = ..density..), bins = 30,
+                 fill = "steelblue", alpha = 0.7) +
+  geom_density(color = "darkblue", size = 1.5) +
+  geom_vline(xintercept = mu_0, linetype = "dashed",
+             color = "red", size = 1) +
+  labs(title = "Population Distribution: ln(Alcohol_DR + 1)",
+       subtitle = sprintf("Mean = %.4f, SD = %.4f, N = %d",
+                         mu_0, sigma_pop, n_pop),
+       x = "ln(Alcohol_DR + 1)",
+       y = "Density",
+       caption = "Red dashed line = population mean") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"))
+
+# Q-Q plot to assess normality
+p_qq <- data.frame(ln_alcohol = ln_alcohol_clean) %>%
+  ggplot(aes(sample = ln_alcohol)) +
+  stat_qq(color = "steelblue", size = 2) +
+  stat_qq_line(color = "red", size = 1) +
+  labs(title = "Q-Q Plot: Population Distribution",
+       subtitle = "Assessing normality of ln(Alcohol_DR + 1)",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles") +
+  theme_minimal()
+
+grid.arrange(p_pop, p_qq, ncol = 1)
+
+# Normality test
+shapiro_result <- shapiro.test(ln_alcohol_clean)
+cat(sprintf("\n\nShapiro-Wilk Normality Test:\n"))
+cat(sprintf("W = %.4f, p-value = %.6f\n", shapiro_result$statistic, shapiro_result$p.value))
+
+if (shapiro_result$p.value < 0.05) {
+  cat("✗ Population distribution is NOT normally distributed (p < 0.05)\n")
+  cat("  This may affect CLT performance at small sample sizes\n")
+} else {
+  cat("✓ Population distribution is approximately normal (p ≥ 0.05)\n")
+}
+
+# Calculate skewness and kurtosis
+skew <- skewness(ln_alcohol_clean)
+kurt <- kurtosis(ln_alcohol_clean)
+
+cat(sprintf("\nSkewness: %.3f %s\n", skew,
+            ifelse(abs(skew) < 0.5, "(approximately symmetric)",
+                  ifelse(skew > 0, "(right-skewed)", "(left-skewed)"))))
+cat(sprintf("Kurtosis: %.3f %s\n", kurt,
+            ifelse(kurt > 3, "(heavy-tailed)", "(light-tailed)")))
+```
+
+---
+
+# Sampling Simulation
+
+```{r sampling-simulation}
+cat("\n=== SAMPLING SIMULATION ===\n\n")
+
+# Simulation parameters
+n_samples <- 500
+sample_size <- 5
+
+cat(sprintf("Drawing %d random samples of size %d\n", n_samples, sample_size))
+cat(sprintf("Population: %d values of ln(alcohol_DR + 1)\n", n_pop))
+cat(sprintf("Population mean (µ₀): %.4f\n\n", mu_0))
+
+# Storage for results
+sample_means <- numeric(n_samples)
+sample_sds <- numeric(n_samples)
+t_statistics <- numeric(n_samples)
+
+# Draw samples and calculate statistics
+for (i in 1:n_samples) {
+  # Draw random sample without replacement
+  sample_data <- sample(ln_alcohol_clean, size = sample_size, replace = FALSE)
+
+  # Calculate sample statistics
+  sample_means[i] <- mean(sample_data)
+  sample_sds[i] <- sd(sample_data)
+
+  # Calculate t-statistic
+  # t = (x̄ - µ₀) / (s / √n)
+  t_statistics[i] <- (sample_means[i] - mu_0) / (sample_sds[i] / sqrt(sample_size))
+}
+
+# Create results data frame
+sampling_results <- data.frame(
+  sample_id = 1:n_samples,
+  sample_mean = sample_means,
+  sample_sd = sample_sds,
+  t_statistic = t_statistics
+)
+
+cat("Sampling completed!\n\n")
+cat("Summary of Sampling Distribution:\n")
+summary(sampling_results[, c("sample_mean", "sample_sd", "t_statistic")]) %>%
+  kable(digits = 4, caption = "Summary Statistics from 500 Samples")
+```
+
+---
+
+# Problem 6.81: Theoretical t-Distribution
+
+```{r problem-6-81}
+cat("\n=== PROBLEM 6.81: THEORETICAL t-DISTRIBUTION ===\n\n")
+
+cat("QUESTION: What distribution should the t-values follow if the CLT holds?\n\n")
+
+cat("ANSWER:\n\n")
+
+df <- sample_size - 1
+
+cat(sprintf("If the Central Limit Theorem holds and the population is (approximately) normal,\n"))
+cat(sprintf("the t-statistics should follow a **t-distribution with df = n - 1 = %d - 1 = %d**\n\n",
+            sample_size, df))
+
+cat("THEORETICAL DISTRIBUTION:\n")
+cat(sprintf("- Distribution: t-distribution with %d degrees of freedom\n", df))
+cat(sprintf("- Mean: 0 (for t-distribution with df > 1)\n"))
+cat(sprintf("- Variance: df/(df-2) = %d/(%d-2) = %.2f\n", df, df, df/(df-2)))
+cat(sprintf("- Standard deviation: %.3f\n\n", sqrt(df/(df-2))))
+
+cat("JUSTIFICATION:\n")
+cat("Under the null hypothesis H₀: µ = µ₀, the test statistic\n")
+cat("  t = (x̄ - µ₀) / (s/√n)\n")
+cat("follows a t-distribution with (n-1) degrees of freedom when:\n")
+cat("1. The population is normally distributed, OR\n")
+cat("2. The sample size is large enough for the CLT to apply\n\n")
+
+cat(sprintf("For our case: n = %d, df = %d\n", sample_size, df))
+cat(sprintf("Critical values for t(%d):\n", df))
+cat(sprintf("- 95%% CI: ±%.3f\n", qt(0.975, df)))
+cat(sprintf("- 99%% CI: ±%.3f\n", qt(0.995, df)))
+cat(sprintf("- 90%% CI: ±%.3f\n", qt(0.95, df)))
+```
+
+---
+
+# Problem 6.82: Expected Percentage Beyond Critical Value
+
+```{r problem-6-82}
+cat("\n\n=== PROBLEM 6.82: EXPECTED PERCENTAGE ===\n\n")
+
+critical_value <- 2.776
+
+cat(sprintf("QUESTION: What percentage of t-values should exceed %.3f in absolute value?\n\n",
+            critical_value))
+
+cat("ANSWER:\n\n")
+
+# Calculate probability using t-distribution with df = 4
+prob_exceed <- 2 * pt(-abs(critical_value), df = df)
+percent_exceed <- prob_exceed * 100
+
+cat(sprintf("For a t-distribution with df = %d:\n", df))
+cat(sprintf("P(|t| > %.3f) = 2 × P(t < -%.3f)\n", critical_value, critical_value))
+cat(sprintf("               = 2 × %.6f\n", pt(-abs(critical_value), df = df)))
+cat(sprintf("               = %.6f\n", prob_exceed))
+cat(sprintf("               = %.2f%%\n\n", percent_exceed))
+
+# Expected count
+expected_count <- n_samples * prob_exceed
+
+cat(sprintf("EXPECTED NUMBER of t-values exceeding %.3f in absolute value:\n", critical_value))
+cat(sprintf("Expected = %d samples × %.6f = %.2f samples\n\n",
+            n_samples, prob_exceed, expected_count))
+
+cat("INTERPRETATION:\n")
+cat(sprintf("If the CLT holds and t-values follow t(%d), we would expect approximately\n", df))
+cat(sprintf("%.0f out of %d samples (%.2f%%) to have |t| > %.3f\n",
+            expected_count, n_samples, percent_exceed, critical_value))
+```
+
+---
+
+# Problem 6.83: Assess CLT Applicability
+
+```{r problem-6-83}
+cat("\n\n=== PROBLEM 6.83: CLT APPLICABILITY ASSESSMENT ===\n\n")
+
+observed_exceed <- sum(abs(t_statistics) > critical_value)
+observed_percent <- (observed_exceed / n_samples) * 100
+
+cat(sprintf("OBSERVED RESULTS:\n"))
+cat(sprintf("- Actual number exceeding |t| > %.3f: %d out of %d\n",
+            critical_value, observed_exceed, n_samples))
+cat(sprintf("- Observed percentage: %.2f%%\n\n", observed_percent))
+
+cat(sprintf("EXPECTED RESULTS (if CLT holds):\n"))
+cat(sprintf("- Expected number: %.2f\n", expected_count))
+cat(sprintf("- Expected percentage: %.2f%%\n\n", percent_exceed))
+
+cat("COMPARISON:\n")
+difference <- observed_exceed - expected_count
+ratio <- observed_exceed / expected_count
+
+cat(sprintf("- Difference: %d - %.2f = %.2f samples\n",
+            observed_exceed, expected_count, difference))
+cat(sprintf("- Ratio: %d / %.2f = %.2f\n", observed_exceed, expected_count, ratio))
+cat(sprintf("- Observed is %.1f%% of expected\n\n", ratio * 100))
+
+# Conduct binomial test
+# Under H₀: p = prob_exceed
+binom_test <- binom.test(observed_exceed, n_samples, prob_exceed)
+
+cat("STATISTICAL TEST:\n")
+cat("Binomial test for proportion:\n")
+cat(sprintf("H₀: p = %.6f (expected proportion under CLT)\n", prob_exceed))
+cat(sprintf("H₁: p ≠ %.6f\n", prob_exceed))
+cat(sprintf("Observed proportion: %d/%d = %.6f\n",
+            observed_exceed, n_samples, observed_exceed/n_samples))
+cat(sprintf("p-value: %.6f\n\n", binom_test$p.value))
+
+cat("CONCLUSION:\n\n")
+
+if (binom_test$p.value < 0.05) {
+  cat(sprintf("✗ The observed proportion (%.2f%%) is SIGNIFICANTLY DIFFERENT from\n",
+              observed_percent))
+  cat(sprintf("  the expected proportion (%.2f%%) at α = 0.05 level.\n\n", percent_exceed))
+  cat("INTERPRETATION:\n")
+  cat(sprintf("The actual number of extreme t-values (%d) is substantially higher than\n",
+              observed_exceed))
+  cat(sprintf("expected (%.0f) under the t-distribution assumption.\n\n", expected_count))
+  cat("This suggests:\n")
+  cat("1. The Central Limit Theorem does NOT hold well for n = 5\n")
+  cat("2. The population distribution is likely non-normal (confirmed by Shapiro-Wilk test)\n")
+  cat("3. Sample size of 5 is TOO SMALL for the CLT to provide adequate approximation\n")
+  cat("4. More extreme values occur than predicted by the t-distribution\n")
+  cat("5. Larger sample sizes (n ≥ 30) would be needed for CLT to apply\n")
+} else {
+  cat(sprintf("✓ The observed proportion (%.2f%%) is NOT significantly different from\n",
+              observed_percent))
+  cat(sprintf("  the expected proportion (%.2f%%) at α = 0.05 level.\n\n", percent_exceed))
+  cat("The Central Limit Theorem appears to hold reasonably well for n = 5.\n")
+}
+```
+
+## Visualize t-Distribution Comparison
+
+```{r t-distribution-comparison, fig.height=10}
+# Compare observed vs theoretical distribution
+p_hist <- ggplot(sampling_results, aes(x = t_statistic)) +
+  geom_histogram(aes(y = ..density..), bins = 40,
+                 fill = "steelblue", alpha = 0.7) +
+  stat_function(fun = dt, args = list(df = df),
+                color = "red", size = 1.5, linetype = "solid") +
+  geom_vline(xintercept = c(-critical_value, critical_value),
+             linetype = "dashed", color = "darkgreen", size = 1) +
+  geom_vline(xintercept = 0, linetype = "dotted", color = "black") +
+  labs(title = "Observed t-Statistics vs Theoretical t-Distribution",
+       subtitle = sprintf("Red line: t(%d) distribution | Green lines: ±%.3f critical values",
+                         df, critical_value),
+       x = "t-statistic",
+       y = "Density",
+       caption = sprintf("Observed: %d/%d (%.1f%%) exceed critical value | Expected: %.0f (%.1f%%)",
+                        observed_exceed, n_samples, observed_percent,
+                        expected_count, percent_exceed)) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"))
+
+# Q-Q plot of t-statistics
+p_qq_t <- ggplot(sampling_results, aes(sample = t_statistic)) +
+  stat_qq(distribution = qt, dparams = list(df = df),
+          color = "steelblue", size = 2) +
+  stat_qq_line(distribution = qt, dparams = list(df = df),
+               color = "red", size = 1) +
+  labs(title = sprintf("Q-Q Plot: Observed t-Statistics vs t(%d) Distribution", df),
+       subtitle = "Assessing fit to theoretical distribution",
+       x = sprintf("Theoretical t(%d) Quantiles", df),
+       y = "Sample t-Statistic Quantiles") +
+  theme_minimal()
+
+# Tail behavior
+p_tails <- sampling_results %>%
+  mutate(abs_t = abs(t_statistic),
+         extreme = abs_t > critical_value) %>%
+  ggplot(aes(x = abs_t)) +
+  geom_histogram(bins = 40, fill = "steelblue", alpha = 0.7) +
+  geom_vline(xintercept = critical_value, linetype = "dashed",
+             color = "red", size = 1.5) +
+  annotate("text", x = critical_value + 0.5, y = Inf, vjust = 1.5,
+           label = sprintf("Critical value = %.3f\n%d observed beyond this",
+                          critical_value, observed_exceed),
+           color = "red", size = 4) +
+  labs(title = "Distribution of Absolute t-Statistics",
+       subtitle = sprintf("Red line marks critical value (%.3f)", critical_value),
+       x = "|t-statistic|",
+       y = "Frequency") +
+  theme_minimal()
+
+grid.arrange(p_hist, p_qq_t, p_tails, ncol = 1, heights = c(1, 1, 0.8))
+```
+
+## Additional Diagnostic Statistics
+
+```{r diagnostics}
+cat("\n\n=== DIAGNOSTIC STATISTICS ===\n\n")
+
+# Compare observed vs theoretical moments
+obs_mean_t <- mean(t_statistics)
+obs_sd_t <- sd(t_statistics)
+obs_skew_t <- skewness(t_statistics)
+obs_kurt_t <- kurtosis(t_statistics)
+
+theo_mean_t <- 0
+theo_sd_t <- sqrt(df / (df - 2))
+theo_skew_t <- 0  # For t-distribution with df > 3
+theo_kurt_t <- 3 + 6 / (df - 4)  # For t-distribution with df > 4
+
+cat("Moment Comparison:\n\n")
+cat("Statistic       | Observed | Theoretical | Difference\n")
+cat("----------------|----------|-------------|------------\n")
+cat(sprintf("Mean            | %8.4f | %11.4f | %10.4f\n",
+            obs_mean_t, theo_mean_t, obs_mean_t - theo_mean_t))
+cat(sprintf("SD              | %8.4f | %11.4f | %10.4f\n",
+            obs_sd_t, theo_sd_t, obs_sd_t - theo_sd_t))
+cat(sprintf("Skewness        | %8.4f | %11.4f | %10.4f\n",
+            obs_skew_t, theo_skew_t, obs_skew_t - theo_skew_t))
+
+if (df > 4) {
+  cat(sprintf("Kurtosis        | %8.4f | %11.4f | %10.4f\n",
+              obs_kurt_t, theo_kurt_t, obs_kurt_t - theo_kurt_t))
+} else {
+  cat("Kurtosis        | N/A for df ≤ 4\n")
+}
+
+cat("\n\nKolmogorov-Smirnov Test:\n")
+ks_test <- ks.test(t_statistics, "pt", df = df)
+cat(sprintf("D = %.4f, p-value = %.6f\n", ks_test$statistic, ks_test$p.value))
+
+if (ks_test$p.value < 0.05) {
+  cat("✗ Observed distribution differs significantly from t-distribution (p < 0.05)\n")
+} else {
+  cat("✓ Observed distribution consistent with t-distribution (p ≥ 0.05)\n")
+}
+```
+
+---
+
+# Overall Summary
+
+```{r overall-summary}
+cat("\n\n=== OVERALL SUMMARY: PROBLEMS 6.81-6.83 ===\n\n")
+
+cat("PROBLEM 6.81: THEORETICAL DISTRIBUTION\n")
+cat(sprintf("Answer: If the CLT holds, t-values should follow a t(%d) distribution\n\n", df))
+
+cat("PROBLEM 6.82: EXPECTED PERCENTAGE\n")
+cat(sprintf("Answer: %.2f%% of t-values should exceed %.3f in absolute value\n",
+            percent_exceed, critical_value))
+cat(sprintf("        (approximately %.0f out of %d samples)\n\n",
+            expected_count, n_samples))
+
+cat("PROBLEM 6.83: CLT APPLICABILITY\n")
+cat(sprintf("Observed: %d out of %d (%.2f%%) exceed |t| > %.3f\n",
+            observed_exceed, n_samples, observed_percent, critical_value))
+cat(sprintf("Expected: %.0f out of %d (%.2f%%)\n",
+            expected_count, n_samples, percent_exceed))
+cat(sprintf("Ratio: %.2f (observed/expected)\n\n", ratio))
+
+if (ratio > 1.5) {
+  cat("CONCLUSION: ✗ CLT does NOT appear applicable for n = 5\n\n")
+  cat("EVIDENCE:\n")
+  cat(sprintf("1. Observed extreme values (%d) are %.0f%% more than expected\n",
+              observed_exceed, (ratio - 1) * 100))
+  cat("2. Population distribution is non-normal (right-skewed)\n")
+  cat("3. Sample size (n = 5) is too small for CLT convergence\n")
+  cat("4. More extreme values in tails than t-distribution predicts\n\n")
+  cat("RECOMMENDATIONS:\n")
+  cat("- Use larger sample sizes (n ≥ 30) for reliable CLT approximation\n")
+  cat("- Consider non-parametric methods for small samples from non-normal populations\n")
+  cat("- Use exact methods or bootstrap for inference with n = 5\n")
+} else {
+  cat("CONCLUSION: ✓ CLT appears reasonably applicable for n = 5\n\n")
+  cat("The observed proportion is close to the expected proportion.\n")
+}
+
+cat("\n\nKEY LEARNING POINTS:\n")
+cat("- The CLT requires sufficiently large sample sizes\n")
+cat("- For non-normal populations, n = 5 is generally too small\n")
+cat("- Empirical assessment (like this analysis) helps validate assumptions\n")
+cat("- More skewed populations require larger n for CLT to apply\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

@@ -1,0 +1,820 @@
+---
+title: "Cardiovascular Treatment Effects: Nifedipine vs Propranolol"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 14, fig.height = 10)
+```
+
+# Background
+
+This analysis examines the cardiovascular effects of two medications:
+- **Nifedipine (N):** A calcium channel blocker typically used to lower blood pressure
+- **Propranolol (P):** A beta-blocker used to lower blood pressure and heart rate
+
+## Research Questions
+
+**6.70:** Analyze changes from baseline to Level 1 for heart rate and SBP
+
+**6.71:** Analyze changes from baseline to Level 2 for heart rate and SBP
+
+**6.72:** Analyze changes from baseline to Level 3 for heart rate and SBP
+
+**6.73:** Analyze changes from baseline to last available level for heart rate and SBP
+
+**6.74:** Analyze changes from baseline to average of all levels for heart rate and SBP
+
+## Outcome Measures
+
+- **Heart Rate (HR):** Beats per minute
+- **Systolic Blood Pressure (SBP):** mmHg
+
+## Analysis Approach
+
+For each problem, we will:
+1. Calculate change scores (Level - Baseline) for each treatment group
+2. Compute mean, SD, SE, and 95% CI for changes
+3. Create box plots comparing change distributions between treatments
+4. Interpret clinical significance of changes
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+library(gridExtra)
+library(scales)
+```
+
+# Data Import and Exploration
+
+```{r data-import}
+# Read the NIFED dataset
+nifed_data <- read.csv("../CHAPTER 5/Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/NIFED.DAT.txt",
+                       check.names = FALSE)
+
+# Remove quotes from column names
+colnames(nifed_data) <- gsub("'", "", colnames(nifed_data))
+
+# Display structure
+cat("Dataset Structure:\n")
+str(nifed_data)
+
+cat("\n\nVariable Descriptions:\n")
+cat("- ID: Subject identification\n")
+cat("- trtgrp: Treatment group (N = Nifedipine, P = Propranolol)\n")
+cat("- bashrtrt: Baseline heart rate (bpm)\n")
+cat("- lv1hrtrt: Level 1 heart rate (bpm)\n")
+cat("- lv2hrtrt: Level 2 heart rate (bpm)\n")
+cat("- lv3hrtrt: Level 3 heart rate (bpm)\n")
+cat("- bassys: Baseline systolic BP (mmHg)\n")
+cat("- lv1sys: Level 1 systolic BP (mmHg)\n")
+cat("- lv2sys: Level 2 systolic BP (mmHg)\n")
+cat("- lv3sys: Level 3 systolic BP (mmHg)\n")
+
+# First few rows
+cat("\n\nFirst 10 Subjects:\n")
+head(nifed_data, 10) %>%
+  kable(digits = 0, caption = "Sample of NIFED Data")
+
+cat(sprintf("\n\nTotal number of subjects: %d\n", nrow(nifed_data)))
+```
+
+## Data Preparation
+
+```{r data-prep}
+# Handle missing values (999 codes missing)
+nifed_clean <- nifed_data %>%
+  mutate(across(starts_with(c("lv", "bas")), ~ifelse(. == 999, NA, .)))
+
+# Summary by treatment group
+group_summary <- nifed_clean %>%
+  group_by(trtgrp) %>%
+  summarise(
+    n = n(),
+    mean_baseline_hr = mean(bashrtrt, na.rm = TRUE),
+    mean_baseline_sbp = mean(bassys, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    treatment = ifelse(trtgrp == "N", "Nifedipine", "Propranolol")
+  )
+
+cat("Treatment Group Summary:\n")
+group_summary %>%
+  select(treatment, n, mean_baseline_hr, mean_baseline_sbp) %>%
+  kable(digits = 1,
+        col.names = c("Treatment", "N", "Mean Baseline HR", "Mean Baseline SBP"),
+        caption = "Sample Sizes and Baseline Values by Treatment Group")
+
+# Check data availability by level
+data_availability <- nifed_clean %>%
+  summarise(
+    n_baseline_hr = sum(!is.na(bashrtrt)),
+    n_lv1_hr = sum(!is.na(lv1hrtrt)),
+    n_lv2_hr = sum(!is.na(lv2hrtrt)),
+    n_lv3_hr = sum(!is.na(lv3hrtrt)),
+    n_baseline_sbp = sum(!is.na(bassys)),
+    n_lv1_sbp = sum(!is.na(lv1sys)),
+    n_lv2_sbp = sum(!is.na(lv2sys)),
+    n_lv3_sbp = sum(!is.na(lv3sys))
+  )
+
+cat("\n\nData Availability:\n")
+data_availability %>%
+  pivot_longer(everything(), names_to = "Measure", values_to = "N_Available") %>%
+  kable(caption = "Number of Available Observations by Level")
+```
+
+## Calculate Change Scores
+
+```{r calculate-changes}
+# Calculate all change scores
+nifed_changes <- nifed_clean %>%
+  mutate(
+    # Heart rate changes
+    change_hr_lv1 = lv1hrtrt - bashrtrt,
+    change_hr_lv2 = lv2hrtrt - bashrtrt,
+    change_hr_lv3 = lv3hrtrt - bashrtrt,
+
+    # SBP changes
+    change_sbp_lv1 = lv1sys - bassys,
+    change_sbp_lv2 = lv2sys - bassys,
+    change_sbp_lv3 = lv3sys - bassys,
+
+    # Last available heart rate
+    last_hr = coalesce(lv3hrtrt, lv2hrtrt, lv1hrtrt),
+    change_hr_last = last_hr - bashrtrt,
+
+    # Last available SBP
+    last_sbp = coalesce(lv3sys, lv2sys, lv1sys),
+    change_sbp_last = last_sbp - bassys,
+
+    # Average across all available levels
+    avg_hr = rowMeans(select(., lv1hrtrt, lv2hrtrt, lv3hrtrt), na.rm = TRUE),
+    change_hr_avg = avg_hr - bashrtrt,
+
+    avg_sbp = rowMeans(select(., lv1sys, lv2sys, lv3sys), na.rm = TRUE),
+    change_sbp_avg = avg_sbp - bassys
+  )
+
+cat("Change scores calculated successfully\n")
+cat("Positive values indicate increase from baseline\n")
+cat("Negative values indicate decrease from baseline\n")
+```
+
+---
+
+# Problem 6.70: Level 1 to Baseline
+
+```{r level1-analysis}
+cat("\n=== PROBLEM 6.70: LEVEL 1 TO BASELINE CHANGES ===\n\n")
+
+# Function to calculate statistics
+calc_stats <- function(data, change_var, group_var = "trtgrp") {
+  data %>%
+    filter(!is.na(.data[[change_var]])) %>%
+    group_by(.data[[group_var]]) %>%
+    summarise(
+      n = n(),
+      mean = mean(.data[[change_var]]),
+      sd = sd(.data[[change_var]]),
+      se = sd / sqrt(n),
+      median = median(.data[[change_var]]),
+      q25 = quantile(.data[[change_var]], 0.25),
+      q75 = quantile(.data[[change_var]], 0.75),
+      min = min(.data[[change_var]]),
+      max = max(.data[[change_var]]),
+      ci_lower = mean - qt(0.975, n - 1) * se,
+      ci_upper = mean + qt(0.975, n - 1) * se,
+      .groups = "drop"
+    )
+}
+
+# Heart rate changes
+hr_lv1_stats <- calc_stats(nifed_changes, "change_hr_lv1")
+
+cat("HEART RATE CHANGES (Level 1 - Baseline):\n\n")
+hr_lv1_stats %>%
+  mutate(
+    treatment = ifelse(trtgrp == "N", "Nifedipine", "Propranolol"),
+    ci = sprintf("[%.2f, %.2f]", ci_lower, ci_upper)
+  ) %>%
+  select(treatment, n, mean, sd, se, median, ci) %>%
+  kable(digits = 2,
+        col.names = c("Treatment", "N", "Mean Change", "SD", "SE", "Median", "95% CI"),
+        caption = "Heart Rate Changes: Level 1 to Baseline")
+
+# SBP changes
+sbp_lv1_stats <- calc_stats(nifed_changes, "change_sbp_lv1")
+
+cat("\n\nSYSTOLIC BLOOD PRESSURE CHANGES (Level 1 - Baseline):\n\n")
+sbp_lv1_stats %>%
+  mutate(
+    treatment = ifelse(trtgrp == "N", "Nifedipine", "Propranolol"),
+    ci = sprintf("[%.2f, %.2f]", ci_lower, ci_upper)
+  ) %>%
+  select(treatment, n, mean, sd, se, median, ci) %>%
+  kable(digits = 2,
+        col.names = c("Treatment", "N", "Mean Change", "SD", "SE", "Median", "95% CI"),
+        caption = "Systolic BP Changes: Level 1 to Baseline")
+```
+
+## Level 1 Box Plots
+
+```{r level1-boxplots, fig.height=8}
+# Prepare data for plotting
+plot_data_lv1 <- nifed_changes %>%
+  select(trtgrp, change_hr_lv1, change_sbp_lv1) %>%
+  filter(!is.na(change_hr_lv1) | !is.na(change_sbp_lv1)) %>%
+  mutate(treatment = ifelse(trtgrp == "N", "Nifedipine", "Propranolol"))
+
+# Heart rate box plot
+p_hr_lv1 <- plot_data_lv1 %>%
+  filter(!is.na(change_hr_lv1)) %>%
+  ggplot(aes(x = treatment, y = change_hr_lv1, fill = treatment)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16, outlier.size = 3) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "red", color = "darkred") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "blue", size = 1) +
+  labs(title = "Heart Rate Changes: Level 1 to Baseline",
+       subtitle = "Red diamond = mean, Blue line = no change",
+       x = "Treatment",
+       y = "Change in Heart Rate (bpm)",
+       caption = "Positive = increase, Negative = decrease") +
+  scale_fill_manual(values = c("lightcoral", "lightblue")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "none")
+
+# SBP box plot
+p_sbp_lv1 <- plot_data_lv1 %>%
+  filter(!is.na(change_sbp_lv1)) %>%
+  ggplot(aes(x = treatment, y = change_sbp_lv1, fill = treatment)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16, outlier.size = 3) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "red", color = "darkred") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "blue", size = 1) +
+  labs(title = "Systolic BP Changes: Level 1 to Baseline",
+       subtitle = "Red diamond = mean, Blue line = no change",
+       x = "Treatment",
+       y = "Change in Systolic BP (mmHg)",
+       caption = "Positive = increase, Negative = decrease") +
+  scale_fill_manual(values = c("lightcoral", "lightblue")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "none")
+
+grid.arrange(p_hr_lv1, p_sbp_lv1, ncol = 1)
+```
+
+## Level 1 Interpretation
+
+```{r level1-interpretation}
+cat("\n\n=== INTERPRETATION: LEVEL 1 CHANGES ===\n\n")
+
+# Heart rate interpretation
+cat("HEART RATE:\n")
+for (i in 1:nrow(hr_lv1_stats)) {
+  trt <- ifelse(hr_lv1_stats$trtgrp[i] == "N", "Nifedipine", "Propranolol")
+  cat(sprintf("\n%s (n = %d):\n", trt, hr_lv1_stats$n[i]))
+  cat(sprintf("  - Mean change: %.2f bpm (95%% CI: [%.2f, %.2f])\n",
+              hr_lv1_stats$mean[i], hr_lv1_stats$ci_lower[i], hr_lv1_stats$ci_upper[i]))
+
+  if (hr_lv1_stats$ci_upper[i] < 0) {
+    cat("  - Significant DECREASE in heart rate\n")
+  } else if (hr_lv1_stats$ci_lower[i] > 0) {
+    cat("  - Significant INCREASE in heart rate\n")
+  } else {
+    cat("  - No significant change in heart rate (CI includes 0)\n")
+  }
+}
+
+cat("\n\nSYSTOLIC BLOOD PRESSURE:\n")
+for (i in 1:nrow(sbp_lv1_stats)) {
+  trt <- ifelse(sbp_lv1_stats$trtgrp[i] == "N", "Nifedipine", "Propranolol")
+  cat(sprintf("\n%s (n = %d):\n", trt, sbp_lv1_stats$n[i]))
+  cat(sprintf("  - Mean change: %.2f mmHg (95%% CI: [%.2f, %.2f])\n",
+              sbp_lv1_stats$mean[i], sbp_lv1_stats$ci_lower[i], sbp_lv1_stats$ci_upper[i]))
+
+  if (sbp_lv1_stats$ci_upper[i] < 0) {
+    cat("  - Significant DECREASE in SBP\n")
+  } else if (sbp_lv1_stats$ci_lower[i] > 0) {
+    cat("  - Significant INCREASE in SBP\n")
+  } else {
+    cat("  - No significant change in SBP (CI includes 0)\n")
+  }
+}
+```
+
+---
+
+# Problem 6.71: Level 2 to Baseline
+
+```{r level2-analysis}
+cat("\n\n=== PROBLEM 6.71: LEVEL 2 TO BASELINE CHANGES ===\n\n")
+
+# Heart rate changes
+hr_lv2_stats <- calc_stats(nifed_changes, "change_hr_lv2")
+
+cat("HEART RATE CHANGES (Level 2 - Baseline):\n\n")
+hr_lv2_stats %>%
+  mutate(
+    treatment = ifelse(trtgrp == "N", "Nifedipine", "Propranolol"),
+    ci = sprintf("[%.2f, %.2f]", ci_lower, ci_upper)
+  ) %>%
+  select(treatment, n, mean, sd, se, median, ci) %>%
+  kable(digits = 2,
+        col.names = c("Treatment", "N", "Mean Change", "SD", "SE", "Median", "95% CI"),
+        caption = "Heart Rate Changes: Level 2 to Baseline")
+
+# SBP changes
+sbp_lv2_stats <- calc_stats(nifed_changes, "change_sbp_lv2")
+
+cat("\n\nSYSTOLIC BLOOD PRESSURE CHANGES (Level 2 - Baseline):\n\n")
+sbp_lv2_stats %>%
+  mutate(
+    treatment = ifelse(trtgrp == "N", "Nifedipine", "Propranolol"),
+    ci = sprintf("[%.2f, %.2f]", ci_lower, ci_upper)
+  ) %>%
+  select(treatment, n, mean, sd, se, median, ci) %>%
+  kable(digits = 2,
+        col.names = c("Treatment", "N", "Mean Change", "SD", "SE", "Median", "95% CI"),
+        caption = "Systolic BP Changes: Level 2 to Baseline")
+```
+
+## Level 2 Box Plots
+
+```{r level2-boxplots, fig.height=8}
+# Prepare data
+plot_data_lv2 <- nifed_changes %>%
+  select(trtgrp, change_hr_lv2, change_sbp_lv2) %>%
+  filter(!is.na(change_hr_lv2) | !is.na(change_sbp_lv2)) %>%
+  mutate(treatment = ifelse(trtgrp == "N", "Nifedipine", "Propranolol"))
+
+# Heart rate box plot
+p_hr_lv2 <- plot_data_lv2 %>%
+  filter(!is.na(change_hr_lv2)) %>%
+  ggplot(aes(x = treatment, y = change_hr_lv2, fill = treatment)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16, outlier.size = 3) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "red", color = "darkred") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "blue", size = 1) +
+  labs(title = "Heart Rate Changes: Level 2 to Baseline",
+       subtitle = "Red diamond = mean, Blue line = no change",
+       x = "Treatment",
+       y = "Change in Heart Rate (bpm)") +
+  scale_fill_manual(values = c("lightcoral", "lightblue")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "none")
+
+# SBP box plot
+p_sbp_lv2 <- plot_data_lv2 %>%
+  filter(!is.na(change_sbp_lv2)) %>%
+  ggplot(aes(x = treatment, y = change_sbp_lv2, fill = treatment)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16, outlier.size = 3) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "red", color = "darkred") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "blue", size = 1) +
+  labs(title = "Systolic BP Changes: Level 2 to Baseline",
+       subtitle = "Red diamond = mean, Blue line = no change",
+       x = "Treatment",
+       y = "Change in Systolic BP (mmHg)") +
+  scale_fill_manual(values = c("lightcoral", "lightblue")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "none")
+
+grid.arrange(p_hr_lv2, p_sbp_lv2, ncol = 1)
+```
+
+---
+
+# Problem 6.72: Level 3 to Baseline
+
+```{r level3-analysis}
+cat("\n\n=== PROBLEM 6.72: LEVEL 3 TO BASELINE CHANGES ===\n\n")
+
+# Heart rate changes
+hr_lv3_stats <- calc_stats(nifed_changes, "change_hr_lv3")
+
+cat("HEART RATE CHANGES (Level 3 - Baseline):\n\n")
+if (nrow(hr_lv3_stats) > 0) {
+  hr_lv3_stats %>%
+    mutate(
+      treatment = ifelse(trtgrp == "N", "Nifedipine", "Propranolol"),
+      ci = sprintf("[%.2f, %.2f]", ci_lower, ci_upper)
+    ) %>%
+    select(treatment, n, mean, sd, se, median, ci) %>%
+    kable(digits = 2,
+          col.names = c("Treatment", "N", "Mean Change", "SD", "SE", "Median", "95% CI"),
+          caption = "Heart Rate Changes: Level 3 to Baseline")
+} else {
+  cat("No Level 3 data available for heart rate\n")
+}
+
+# SBP changes
+sbp_lv3_stats <- calc_stats(nifed_changes, "change_sbp_lv3")
+
+cat("\n\nSYSTOLIC BLOOD PRESSURE CHANGES (Level 3 - Baseline):\n\n")
+if (nrow(sbp_lv3_stats) > 0) {
+  sbp_lv3_stats %>%
+    mutate(
+      treatment = ifelse(trtgrp == "N", "Nifedipine", "Propranolol"),
+      ci = sprintf("[%.2f, %.2f]", ci_lower, ci_upper)
+    ) %>%
+    select(treatment, n, mean, sd, se, median, ci) %>%
+    kable(digits = 2,
+          col.names = c("Treatment", "N", "Mean Change", "SD", "SE", "Median", "95% CI"),
+          caption = "Systolic BP Changes: Level 3 to Baseline")
+} else {
+  cat("No Level 3 data available for SBP\n")
+}
+```
+
+## Level 3 Box Plots
+
+```{r level3-boxplots, fig.height=8}
+# Check if Level 3 data exists
+has_lv3_hr <- sum(!is.na(nifed_changes$change_hr_lv3)) > 0
+has_lv3_sbp <- sum(!is.na(nifed_changes$change_sbp_lv3)) > 0
+
+if (has_lv3_hr || has_lv3_sbp) {
+  plot_data_lv3 <- nifed_changes %>%
+    select(trtgrp, change_hr_lv3, change_sbp_lv3) %>%
+    mutate(treatment = ifelse(trtgrp == "N", "Nifedipine", "Propranolol"))
+
+  if (has_lv3_hr) {
+    p_hr_lv3 <- plot_data_lv3 %>%
+      filter(!is.na(change_hr_lv3)) %>%
+      ggplot(aes(x = treatment, y = change_hr_lv3, fill = treatment)) +
+      geom_boxplot(alpha = 0.7, outlier.shape = 16, outlier.size = 3) +
+      stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+                   fill = "red", color = "darkred") +
+      geom_hline(yintercept = 0, linetype = "dashed", color = "blue", size = 1) +
+      labs(title = "Heart Rate Changes: Level 3 to Baseline",
+           x = "Treatment",
+           y = "Change in Heart Rate (bpm)") +
+      scale_fill_manual(values = c("lightcoral", "lightblue")) +
+      theme_minimal() +
+      theme(legend.position = "none")
+
+    print(p_hr_lv3)
+  }
+
+  if (has_lv3_sbp) {
+    p_sbp_lv3 <- plot_data_lv3 %>%
+      filter(!is.na(change_sbp_lv3)) %>%
+      ggplot(aes(x = treatment, y = change_sbp_lv3, fill = treatment)) +
+      geom_boxplot(alpha = 0.7, outlier.shape = 16, outlier.size = 3) +
+      stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+                   fill = "red", color = "darkred") +
+      geom_hline(yintercept = 0, linetype = "dashed", color = "blue", size = 1) +
+      labs(title = "Systolic BP Changes: Level 3 to Baseline",
+           x = "Treatment",
+           y = "Change in Systolic BP (mmHg)") +
+      scale_fill_manual(values = c("lightcoral", "lightblue")) +
+      theme_minimal() +
+      theme(legend.position = "none")
+
+    print(p_sbp_lv3)
+  }
+} else {
+  cat("No Level 3 data available for plotting\n")
+}
+```
+
+---
+
+# Problem 6.73: Last Available Level to Baseline
+
+```{r last-level-analysis}
+cat("\n\n=== PROBLEM 6.73: LAST AVAILABLE LEVEL TO BASELINE CHANGES ===\n\n")
+
+# Heart rate changes
+hr_last_stats <- calc_stats(nifed_changes, "change_hr_last")
+
+cat("HEART RATE CHANGES (Last Level - Baseline):\n\n")
+hr_last_stats %>%
+  mutate(
+    treatment = ifelse(trtgrp == "N", "Nifedipine", "Propranolol"),
+    ci = sprintf("[%.2f, %.2f]", ci_lower, ci_upper)
+  ) %>%
+  select(treatment, n, mean, sd, se, median, ci) %>%
+  kable(digits = 2,
+        col.names = c("Treatment", "N", "Mean Change", "SD", "SE", "Median", "95% CI"),
+        caption = "Heart Rate Changes: Last Available Level to Baseline")
+
+# SBP changes
+sbp_last_stats <- calc_stats(nifed_changes, "change_sbp_last")
+
+cat("\n\nSYSTOLIC BLOOD PRESSURE CHANGES (Last Level - Baseline):\n\n")
+sbp_last_stats %>%
+  mutate(
+    treatment = ifelse(trtgrp == "N", "Nifedipine", "Propranolol"),
+    ci = sprintf("[%.2f, %.2f]", ci_lower, ci_upper)
+  ) %>%
+  select(treatment, n, mean, sd, se, median, ci) %>%
+  kable(digits = 2,
+        col.names = c("Treatment", "N", "Mean Change", "SD", "SE", "Median", "95% CI"),
+        caption = "Systolic BP Changes: Last Available Level to Baseline")
+```
+
+## Last Level Box Plots
+
+```{r last-level-boxplots, fig.height=8}
+plot_data_last <- nifed_changes %>%
+  select(trtgrp, change_hr_last, change_sbp_last) %>%
+  mutate(treatment = ifelse(trtgrp == "N", "Nifedipine", "Propranolol"))
+
+# Heart rate box plot
+p_hr_last <- plot_data_last %>%
+  filter(!is.na(change_hr_last)) %>%
+  ggplot(aes(x = treatment, y = change_hr_last, fill = treatment)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16, outlier.size = 3) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "red", color = "darkred") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "blue", size = 1) +
+  labs(title = "Heart Rate Changes: Last Level to Baseline",
+       subtitle = "Uses last available measurement (Level 3, 2, or 1)",
+       x = "Treatment",
+       y = "Change in Heart Rate (bpm)") +
+  scale_fill_manual(values = c("lightcoral", "lightblue")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "none")
+
+# SBP box plot
+p_sbp_last <- plot_data_last %>%
+  filter(!is.na(change_sbp_last)) %>%
+  ggplot(aes(x = treatment, y = change_sbp_last, fill = treatment)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16, outlier.size = 3) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "red", color = "darkred") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "blue", size = 1) +
+  labs(title = "Systolic BP Changes: Last Level to Baseline",
+       subtitle = "Uses last available measurement (Level 3, 2, or 1)",
+       x = "Treatment",
+       y = "Change in Systolic BP (mmHg)") +
+  scale_fill_manual(values = c("lightcoral", "lightblue")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "none")
+
+grid.arrange(p_hr_last, p_sbp_last, ncol = 1)
+```
+
+---
+
+# Problem 6.74: Average of All Levels to Baseline
+
+```{r average-analysis}
+cat("\n\n=== PROBLEM 6.74: AVERAGE OF ALL LEVELS TO BASELINE CHANGES ===\n\n")
+
+# Heart rate changes
+hr_avg_stats <- calc_stats(nifed_changes, "change_hr_avg")
+
+cat("HEART RATE CHANGES (Average of All Levels - Baseline):\n\n")
+hr_avg_stats %>%
+  mutate(
+    treatment = ifelse(trtgrp == "N", "Nifedipine", "Propranolol"),
+    ci = sprintf("[%.2f, %.2f]", ci_lower, ci_upper)
+  ) %>%
+  select(treatment, n, mean, sd, se, median, ci) %>%
+  kable(digits = 2,
+        col.names = c("Treatment", "N", "Mean Change", "SD", "SE", "Median", "95% CI"),
+        caption = "Heart Rate Changes: Average of All Levels to Baseline")
+
+# SBP changes
+sbp_avg_stats <- calc_stats(nifed_changes, "change_sbp_avg")
+
+cat("\n\nSYSTOLIC BLOOD PRESSURE CHANGES (Average of All Levels - Baseline):\n\n")
+sbp_avg_stats %>%
+  mutate(
+    treatment = ifelse(trtgrp == "N", "Nifedipine", "Propranolol"),
+    ci = sprintf("[%.2f, %.2f]", ci_lower, ci_upper)
+  ) %>%
+  select(treatment, n, mean, sd, se, median, ci) %>%
+  kable(digits = 2,
+        col.names = c("Treatment", "N", "Mean Change", "SD", "SE", "Median", "95% CI"),
+        caption = "Systolic BP Changes: Average of All Levels to Baseline")
+```
+
+## Average Level Box Plots
+
+```{r average-boxplots, fig.height=8}
+plot_data_avg <- nifed_changes %>%
+  select(trtgrp, change_hr_avg, change_sbp_avg) %>%
+  mutate(treatment = ifelse(trtgrp == "N", "Nifedipine", "Propranolol"))
+
+# Heart rate box plot
+p_hr_avg <- plot_data_avg %>%
+  filter(!is.na(change_hr_avg)) %>%
+  ggplot(aes(x = treatment, y = change_hr_avg, fill = treatment)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16, outlier.size = 3) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "red", color = "darkred") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "blue", size = 1) +
+  labs(title = "Heart Rate Changes: Average of All Levels to Baseline",
+       subtitle = "Average across available measurements (Levels 1, 2, 3)",
+       x = "Treatment",
+       y = "Change in Heart Rate (bpm)") +
+  scale_fill_manual(values = c("lightcoral", "lightblue")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "none")
+
+# SBP box plot
+p_sbp_avg <- plot_data_avg %>%
+  filter(!is.na(change_sbp_avg)) %>%
+  ggplot(aes(x = treatment, y = change_sbp_avg, fill = treatment)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16, outlier.size = 3) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "red", color = "darkred") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "blue", size = 1) +
+  labs(title = "Systolic BP Changes: Average of All Levels to Baseline",
+       subtitle = "Average across available measurements (Levels 1, 2, 3)",
+       x = "Treatment",
+       y = "Change in Systolic BP (mmHg)") +
+  scale_fill_manual(values = c("lightcoral", "lightblue")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "none")
+
+grid.arrange(p_hr_avg, p_sbp_avg, ncol = 1)
+```
+
+---
+
+# Comprehensive Summary
+
+```{r comprehensive-summary, fig.height=12}
+cat("\n\n=== COMPREHENSIVE SUMMARY: ALL PROBLEMS ===\n\n")
+
+# Combine all statistics
+all_stats <- bind_rows(
+  hr_lv1_stats %>% mutate(measure = "Heart Rate", level = "Level 1"),
+  hr_lv2_stats %>% mutate(measure = "Heart Rate", level = "Level 2"),
+  hr_lv3_stats %>% mutate(measure = "Heart Rate", level = "Level 3"),
+  hr_last_stats %>% mutate(measure = "Heart Rate", level = "Last Available"),
+  hr_avg_stats %>% mutate(measure = "Heart Rate", level = "Average"),
+
+  sbp_lv1_stats %>% mutate(measure = "Systolic BP", level = "Level 1"),
+  sbp_lv2_stats %>% mutate(measure = "Systolic BP", level = "Level 2"),
+  sbp_lv3_stats %>% mutate(measure = "Systolic BP", level = "Level 3"),
+  sbp_last_stats %>% mutate(measure = "Systolic BP", level = "Last Available"),
+  sbp_avg_stats %>% mutate(measure = "Systolic BP", level = "Average")
+) %>%
+  mutate(
+    treatment = ifelse(trtgrp == "N", "Nifedipine", "Propranolol"),
+    level = factor(level, levels = c("Level 1", "Level 2", "Level 3",
+                                      "Last Available", "Average"))
+  )
+
+cat("Complete Summary Table:\n")
+all_stats %>%
+  select(measure, level, treatment, n, mean, sd, ci_lower, ci_upper) %>%
+  arrange(measure, level, treatment) %>%
+  kable(digits = 2,
+        col.names = c("Measure", "Level", "Treatment", "N",
+                     "Mean Change", "SD", "CI Lower", "CI Upper"),
+        caption = "Complete Summary: All Changes from Baseline")
+
+# Comprehensive visualization
+p_comprehensive <- all_stats %>%
+  ggplot(aes(x = level, y = mean, color = treatment, group = treatment)) +
+  geom_point(size = 4, position = position_dodge(width = 0.3)) +
+  geom_line(size = 1, position = position_dodge(width = 0.3)) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper),
+                width = 0.2, size = 1, position = position_dodge(width = 0.3)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50", size = 1) +
+  facet_wrap(~ measure, ncol = 1, scales = "free_y") +
+  labs(title = "Treatment Effects Across All Measurement Levels",
+       subtitle = "Error bars show 95% confidence intervals; Dashed line = no change",
+       x = "Measurement Level",
+       y = "Mean Change from Baseline",
+       color = "Treatment") +
+  scale_color_manual(values = c("darkred", "darkblue")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "top")
+
+print(p_comprehensive)
+```
+
+## Treatment Comparison
+
+```{r treatment-comparison}
+cat("\n\n=== TREATMENT COMPARISON ===\n\n")
+
+cat("1. NIFEDIPINE EFFECTS:\n\n")
+
+nifed_stats <- all_stats %>% filter(treatment == "Nifedipine")
+
+cat("Heart Rate:\n")
+for (i in 1:nrow(nifed_stats %>% filter(measure == "Heart Rate"))) {
+  row <- nifed_stats %>% filter(measure == "Heart Rate") %>% slice(i)
+  sig <- ifelse(row$ci_upper < 0, "DECREASE",
+               ifelse(row$ci_lower > 0, "INCREASE", "No change"))
+  cat(sprintf("  %s: %.2f bpm [%.2f, %.2f] - %s\n",
+              row$level, row$mean, row$ci_lower, row$ci_upper, sig))
+}
+
+cat("\nSystolic BP:\n")
+for (i in 1:nrow(nifed_stats %>% filter(measure == "Systolic BP"))) {
+  row <- nifed_stats %>% filter(measure == "Systolic BP") %>% slice(i)
+  sig <- ifelse(row$ci_upper < 0, "DECREASE",
+               ifelse(row$ci_lower > 0, "INCREASE", "No change"))
+  cat(sprintf("  %s: %.2f mmHg [%.2f, %.2f] - %s\n",
+              row$level, row$mean, row$ci_lower, row$ci_upper, sig))
+}
+
+cat("\n\n2. PROPRANOLOL EFFECTS:\n\n")
+
+prop_stats <- all_stats %>% filter(treatment == "Propranolol")
+
+cat("Heart Rate:\n")
+for (i in 1:nrow(prop_stats %>% filter(measure == "Heart Rate"))) {
+  row <- prop_stats %>% filter(measure == "Heart Rate") %>% slice(i)
+  sig <- ifelse(row$ci_upper < 0, "DECREASE",
+               ifelse(row$ci_lower > 0, "INCREASE", "No change"))
+  cat(sprintf("  %s: %.2f bpm [%.2f, %.2f] - %s\n",
+              row$level, row$mean, row$ci_lower, row$ci_upper, sig))
+}
+
+cat("\nSystolic BP:\n")
+for (i in 1:nrow(prop_stats %>% filter(measure == "Systolic BP"))) {
+  row <- prop_stats %>% filter(measure == "Systolic BP") %>% slice(i)
+  sig <- ifelse(row$ci_upper < 0, "DECREASE",
+               ifelse(row$ci_lower > 0, "INCREASE", "No change"))
+  cat(sprintf("  %s: %.2f mmHg [%.2f, %.2f] - %s\n",
+              row$level, row$mean, row$ci_lower, row$ci_upper, sig))
+}
+```
+
+---
+
+# Overall Conclusions
+
+```{r overall-conclusions}
+cat("\n\n=== OVERALL CONCLUSIONS: PROBLEMS 6.70-6.74 ===\n\n")
+
+cat("ANALYSIS COMPLETED FOR ALL FIVE PROBLEMS:\n\n")
+cat("✓ Problem 6.70: Level 1 to Baseline changes\n")
+cat("✓ Problem 6.71: Level 2 to Baseline changes\n")
+cat("✓ Problem 6.72: Level 3 to Baseline changes\n")
+cat("✓ Problem 6.73: Last available level to Baseline changes\n")
+cat("✓ Problem 6.74: Average of all levels to Baseline changes\n\n")
+
+cat("STATISTICAL METHODS USED:\n")
+cat("- Point estimates (mean) for change scores\n")
+cat("- Standard deviation and standard error\n")
+cat("- 95% confidence intervals using t-distribution\n")
+cat("- Box plots showing distribution of changes\n")
+cat("- Separate analysis by treatment group\n\n")
+
+cat("KEY PHARMACOLOGICAL FINDINGS:\n\n")
+
+cat("NIFEDIPINE (Calcium Channel Blocker):\n")
+avg_nifed_hr <- mean(nifed_stats$mean[nifed_stats$measure == "Heart Rate"], na.rm = TRUE)
+avg_nifed_sbp <- mean(nifed_stats$mean[nifed_stats$measure == "Systolic BP"], na.rm = TRUE)
+
+cat(sprintf("- Average HR change: %.2f bpm\n", avg_nifed_hr))
+cat(sprintf("- Average SBP change: %.2f mmHg\n", avg_nifed_sbp))
+cat("- Expected mechanism: Vasodilation → BP decrease, possible reflex tachycardia\n\n")
+
+cat("PROPRANOLOL (Beta-Blocker):\n")
+avg_prop_hr <- mean(prop_stats$mean[prop_stats$measure == "Heart Rate"], na.rm = TRUE)
+avg_prop_sbp <- mean(prop_stats$mean[prop_stats$measure == "Systolic BP"], na.rm = TRUE)
+
+cat(sprintf("- Average HR change: %.2f bpm\n", avg_prop_hr))
+cat(sprintf("- Average SBP change: %.2f mmHg\n", avg_prop_sbp))
+cat("- Expected mechanism: Beta-blockade → HR and BP decrease\n\n")
+
+cat("CLINICAL IMPLICATIONS:\n")
+cat("- Both medications show effects on cardiovascular parameters\n")
+cat("- Different mechanisms of action produce distinct patterns\n")
+cat("- 95% CIs provide precision of treatment effect estimates\n")
+cat("- Box plots reveal individual variability in treatment response\n")
+cat("- Results inform clinical decision-making for cardiovascular management\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

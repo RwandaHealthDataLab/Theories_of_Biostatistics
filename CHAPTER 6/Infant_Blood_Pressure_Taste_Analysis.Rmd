@@ -1,0 +1,1091 @@
+---
+title: "Infant Blood Pressure and Taste Responsiveness Study"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.width = 14, fig.height = 10)
+```
+
+# Background
+
+This study investigates the hypothesis that **excessive sodium intake adversely affects blood pressure outcomes** by examining the relationship between taste responsiveness to salt and blood pressure levels in 3-day-old infants.
+
+## Study Protocol
+
+### Salt Taste Test (10 periods)
+1. **Period 1-2**: Water (baseline)
+2. **Period 3-4**: 0.1 molar salt + water
+3. **Period 5-6**: Water (washout)
+4. **Period 7-8**: 0.3 molar salt + water
+5. **Period 9-10**: Water (final washout)
+
+### Sugar Taste Test (5 periods)
+1. **Period 1**: Nonnutritive sucking (baseline)
+2. **Period 2**: Water
+3. **Period 3**: 5% sucrose + water
+4. **Period 4**: 15% sucrose + water
+5. **Period 5**: Nonnutritive sucking (final)
+
+## Measurement
+
+- **MSB (Mean Sucks per Burst)**: Vigor of sucking response
+- **Blood Pressure**: Mean systolic (SBP) and diastolic (DBP) measurements
+
+## Research Questions
+
+**6.56:** Are salt-taste indices normally distributed? What are the 95% CIs?
+
+**6.57:** Are sugar-taste indices normally distributed? What are the 95% CIs?
+
+**6.58:** Is there a relationship between taste indices and blood pressure?
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+library(gridExtra)
+library(moments)
+library(scales)
+library(corrplot)
+```
+
+# Data Import and Cleaning
+
+```{r data-import}
+# Read the INFANTBP dataset
+infant_data <- read.csv("../CHAPTER 5/Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/INFANTBP.DAT.txt",
+                        check.names = FALSE)
+
+# Remove quotes from column names
+colnames(infant_data) <- gsub("'", "", colnames(infant_data))
+
+# Display structure
+cat("Dataset Structure:\n")
+str(infant_data)
+
+cat("\n\nVariable Descriptions:\n")
+cat("Id: Infant identification number\n")
+cat("Mn_sbp: Mean systolic blood pressure (mmHg)\n")
+cat("Mn_dbp: Mean diastolic blood pressure (mmHg)\n")
+cat("MSB1slt - MSB10slt: Mean sucks per burst for salt trials 1-10\n")
+cat("MSB1sug - MSB5sug: Mean sucks per burst for sugar trials 1-5\n")
+
+cat(sprintf("\n\nTotal number of infants: %d\n", nrow(infant_data)))
+
+# First few rows
+head(infant_data, 10) %>%
+  kable(digits = 2, caption = "First 10 Infants in the Study")
+```
+
+## Handle Missing Values
+
+```{r missing-values}
+cat("\n=== MISSING VALUE ANALYSIS ===\n\n")
+
+# Check for missing values (999.99 codes missing)
+# Replace 999.99 with NA
+infant_clean <- infant_data %>%
+  mutate(across(starts_with("MSB"), ~ifelse(. == 999.99, NA, .)))
+
+# Also handle blood pressure missing values
+infant_clean <- infant_clean %>%
+  mutate(
+    Mn_sbp = ifelse(Mn_sbp == 99.99, NA, Mn_sbp),
+    Mn_dbp = ifelse(Mn_dbp == 99.99, NA, Mn_dbp)
+  )
+
+# Count missing values
+missing_summary <- infant_clean %>%
+  summarise(across(everything(), ~sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "Missing_Count") %>%
+  filter(Missing_Count > 0) %>%
+  arrange(desc(Missing_Count))
+
+if (nrow(missing_summary) > 0) {
+  cat("Variables with Missing Values:\n")
+  missing_summary %>%
+    kable(caption = "Missing Value Summary")
+} else {
+  cat("No missing values detected.\n")
+}
+
+# Summary statistics for blood pressure
+cat("\n\nBlood Pressure Summary:\n")
+infant_clean %>%
+  select(Mn_sbp, Mn_dbp) %>%
+  summary() %>%
+  kable()
+```
+
+# Create Taste Indices
+
+## Salt-Taste Indices
+
+```{r create-salt-indices}
+cat("\n=== CREATING SALT-TASTE INDICES ===\n\n")
+
+infant_clean <- infant_clean %>%
+  mutate(
+    # Index 1: 0.1 molar salt response (trials 3,4 vs 1,2)
+    Salt_Index_01M = ((MSB3slt + MSB4slt) / 2) - ((MSB1slt + MSB2slt) / 2),
+
+    # Index 2: 0.3 molar salt response (trials 7,8 vs 5,6)
+    Salt_Index_03M = ((MSB7slt + MSB8slt) / 2) - ((MSB5slt + MSB6slt) / 2),
+
+    # Combined salt index (average of both)
+    Salt_Index_Combined = (Salt_Index_01M + Salt_Index_03M) / 2
+  )
+
+cat("Salt-Taste Index Definitions:\n\n")
+cat("1. Salt_Index_01M:\n")
+cat("   - (Average MSB for 0.1M salt trials) - (Average MSB for baseline water)\n")
+cat("   - = [(MSB3 + MSB4)/2] - [(MSB1 + MSB2)/2]\n")
+cat("   - Measures response to LOW concentration salt\n\n")
+
+cat("2. Salt_Index_03M:\n")
+cat("   - (Average MSB for 0.3M salt trials) - (Average MSB for washout water)\n")
+cat("   - = [(MSB7 + MSB8)/2] - [(MSB5 + MSB6)/2]\n")
+cat("   - Measures response to HIGH concentration salt\n\n")
+
+cat("3. Salt_Index_Combined:\n")
+cat("   - Average of both indices\n")
+cat("   - Overall salt taste responsiveness\n\n")
+
+# Summary of salt indices
+cat("Salt-Taste Index Summary Statistics:\n")
+infant_clean %>%
+  select(starts_with("Salt_Index")) %>%
+  summary() %>%
+  kable()
+
+# Count available data
+cat(sprintf("\n\nAvailable data (non-NA):\n"))
+cat(sprintf("- Salt_Index_01M: %d infants\n",
+            sum(!is.na(infant_clean$Salt_Index_01M))))
+cat(sprintf("- Salt_Index_03M: %d infants\n",
+            sum(!is.na(infant_clean$Salt_Index_03M))))
+cat(sprintf("- Salt_Index_Combined: %d infants\n",
+            sum(!is.na(infant_clean$Salt_Index_Combined))))
+```
+
+## Sugar-Taste Indices
+
+```{r create-sugar-indices}
+cat("\n=== CREATING SUGAR-TASTE INDICES ===\n\n")
+
+infant_clean <- infant_clean %>%
+  mutate(
+    # Index 1: 5% sucrose response (trial 3 vs 2)
+    Sugar_Index_5pct = MSB3sug - MSB2sug,
+
+    # Index 2: 15% sucrose response (trial 4 vs 2)
+    Sugar_Index_15pct = MSB4sug - MSB2sug,
+
+    # Index 3: Overall sugar response (average 3,4 vs average 1,2)
+    Sugar_Index_Combined = ((MSB3sug + MSB4sug) / 2) - ((MSB1sug + MSB2sug) / 2)
+  )
+
+cat("Sugar-Taste Index Definitions:\n\n")
+cat("1. Sugar_Index_5pct:\n")
+cat("   - MSB for 5% sucrose - MSB for water\n")
+cat("   - = MSB3 - MSB2\n")
+cat("   - Response to LOW concentration sugar\n\n")
+
+cat("2. Sugar_Index_15pct:\n")
+cat("   - MSB for 15% sucrose - MSB for water\n")
+cat("   - = MSB4 - MSB2\n")
+cat("   - Response to HIGH concentration sugar\n\n")
+
+cat("3. Sugar_Index_Combined:\n")
+cat("   - [(MSB3 + MSB4)/2] - [(MSB1 + MSB2)/2]\n")
+cat("   - Overall sugar taste responsiveness\n\n")
+
+# Summary of sugar indices
+cat("Sugar-Taste Index Summary Statistics:\n")
+infant_clean %>%
+  select(starts_with("Sugar_Index")) %>%
+  summary() %>%
+  kable()
+
+# Count available data
+cat(sprintf("\n\nAvailable data (non-NA):\n"))
+cat(sprintf("- Sugar_Index_5pct: %d infants\n",
+            sum(!is.na(infant_clean$Sugar_Index_5pct))))
+cat(sprintf("- Sugar_Index_15pct: %d infants\n",
+            sum(!is.na(infant_clean$Sugar_Index_15pct))))
+cat(sprintf("- Sugar_Index_Combined: %d infants\n",
+            sum(!is.na(infant_clean$Sugar_Index_Combined))))
+```
+
+---
+
+# Problem 6.56: Salt-Taste Index Analysis
+
+## Descriptive Statistics
+
+```{r salt-descriptives}
+cat("\n=== PROBLEM 6.56: SALT-TASTE INDEX ANALYSIS ===\n\n")
+
+# Calculate detailed statistics
+salt_stats <- infant_clean %>%
+  select(starts_with("Salt_Index")) %>%
+  pivot_longer(everything(), names_to = "Index", values_to = "Value") %>%
+  filter(!is.na(Value)) %>%
+  group_by(Index) %>%
+  summarise(
+    N = n(),
+    Mean = mean(Value),
+    SD = sd(Value),
+    SE = sd(Value) / sqrt(n()),
+    Median = median(Value),
+    Q1 = quantile(Value, 0.25),
+    Q3 = quantile(Value, 0.75),
+    Min = min(Value),
+    Max = max(Value),
+    Skewness = skewness(Value),
+    Kurtosis = kurtosis(Value),
+    .groups = "drop"
+  )
+
+salt_stats %>%
+  kable(digits = 3,
+        caption = "Descriptive Statistics for Salt-Taste Indices")
+```
+
+## Graphical Displays
+
+```{r salt-plots, fig.height=12}
+# Prepare data for plotting
+salt_plot_data <- infant_clean %>%
+  select(Id, starts_with("Salt_Index")) %>%
+  pivot_longer(cols = starts_with("Salt_Index"),
+               names_to = "Index", values_to = "Value") %>%
+  filter(!is.na(Value)) %>%
+  mutate(Index = recode(Index,
+                        "Salt_Index_01M" = "0.1M Salt Index",
+                        "Salt_Index_03M" = "0.3M Salt Index",
+                        "Salt_Index_Combined" = "Combined Salt Index"))
+
+# Histograms with normal curve overlay
+p_salt1 <- ggplot(salt_plot_data, aes(x = Value)) +
+  geom_histogram(aes(y = ..density..), bins = 30,
+                 fill = "steelblue", alpha = 0.7) +
+  geom_density(color = "darkblue", size = 1.2) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(salt_plot_data$Value),
+                           sd = sd(salt_plot_data$Value)),
+                color = "red", size = 1, linetype = "dashed") +
+  facet_wrap(~ Index, ncol = 1, scales = "free") +
+  labs(title = "Distribution of Salt-Taste Indices",
+       subtitle = "Blue curve: actual density; Red dashed: normal distribution",
+       x = "Index Value (Change in MSB)",
+       y = "Density") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"))
+
+# Box plots
+p_salt2 <- ggplot(salt_plot_data, aes(x = Index, y = Value, fill = Index)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", size = 1) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4, fill = "yellow") +
+  labs(title = "Box Plots of Salt-Taste Indices",
+       subtitle = "Yellow diamond = mean, Red line = no change",
+       x = "Salt-Taste Index",
+       y = "Index Value (Change in MSB)") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 15, hjust = 1))
+
+# Q-Q plots
+p_salt3 <- ggplot(salt_plot_data, aes(sample = Value)) +
+  stat_qq(color = "steelblue", size = 2) +
+  stat_qq_line(color = "red", size = 1) +
+  facet_wrap(~ Index, ncol = 3, scales = "free") +
+  labs(title = "Q-Q Plots: Salt-Taste Indices",
+       subtitle = "Assessing normality assumption",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles") +
+  theme_minimal()
+
+grid.arrange(p_salt1, p_salt2, p_salt3, ncol = 1, heights = c(1.5, 1, 1))
+```
+
+## Normality Tests
+
+```{r salt-normality}
+cat("\n\n=== NORMALITY TESTS FOR SALT-TASTE INDICES ===\n\n")
+
+# Shapiro-Wilk tests
+normality_salt <- data.frame(
+  Index = c("Salt_Index_01M", "Salt_Index_03M", "Salt_Index_Combined"),
+  N = numeric(3),
+  Shapiro_W = numeric(3),
+  Shapiro_p = numeric(3),
+  Normal = character(3),
+  stringsAsFactors = FALSE
+)
+
+for (i in 1:3) {
+  idx_name <- normality_salt$Index[i]
+  idx_data <- infant_clean[[idx_name]][!is.na(infant_clean[[idx_name]])]
+
+  normality_salt$N[i] <- length(idx_data)
+
+  if (length(idx_data) >= 3) {
+    shapiro_result <- shapiro.test(idx_data)
+    normality_salt$Shapiro_W[i] <- shapiro_result$statistic
+    normality_salt$Shapiro_p[i] <- shapiro_result$p.value
+    normality_salt$Normal[i] <- ifelse(shapiro_result$p.value > 0.05, "Yes", "No")
+  }
+}
+
+cat("Shapiro-Wilk Normality Tests:\n")
+cat("H₀: Data are normally distributed\n")
+cat("α = 0.05 significance level\n\n")
+
+normality_salt %>%
+  kable(digits = 4,
+        col.names = c("Index", "N", "W Statistic", "p-value", "Normal?"),
+        caption = "Normality Assessment for Salt-Taste Indices")
+
+cat("\n\nINTERPRETATION:\n")
+for (i in 1:nrow(normality_salt)) {
+  cat(sprintf("\n%s:\n", normality_salt$Index[i]))
+  if (normality_salt$Normal[i] == "Yes") {
+    cat(sprintf("  - Appears normally distributed (p = %.4f)\n", normality_salt$Shapiro_p[i]))
+  } else {
+    cat(sprintf("  - Deviates from normality (p = %.4f)\n", normality_salt$Shapiro_p[i]))
+  }
+
+  skew <- salt_stats$Skewness[salt_stats$Index == normality_salt$Index[i]]
+  kurt <- salt_stats$Kurtosis[salt_stats$Index == normality_salt$Index[i]]
+  cat(sprintf("  - Skewness: %.3f %s\n", skew,
+              ifelse(abs(skew) < 0.5, "(approximately symmetric)",
+                     ifelse(skew > 0, "(right-skewed)", "(left-skewed)"))))
+  cat(sprintf("  - Kurtosis: %.3f %s\n", kurt,
+              ifelse(kurt > 3, "(heavy-tailed)", "(light-tailed)")))
+}
+```
+
+## 95% Confidence Intervals
+
+```{r salt-ci}
+cat("\n\n=== 95% CONFIDENCE INTERVALS FOR SALT-TASTE INDICES ===\n\n")
+
+# Calculate CIs
+salt_ci <- infant_clean %>%
+  select(starts_with("Salt_Index")) %>%
+  pivot_longer(everything(), names_to = "Index", values_to = "Value") %>%
+  filter(!is.na(Value)) %>%
+  group_by(Index) %>%
+  summarise(
+    N = n(),
+    Mean = mean(Value),
+    SD = sd(Value),
+    SE = SD / sqrt(N),
+    CI_Lower = Mean - qt(0.975, N-1) * SE,
+    CI_Upper = Mean + qt(0.975, N-1) * SE,
+    CI_Width = CI_Upper - CI_Lower,
+    .groups = "drop"
+  )
+
+cat("95% Confidence Intervals (t-distribution):\n\n")
+cat("Formula: Mean ± t(0.975, df) × SE\n")
+cat("where SE = SD / sqrt(N)\n\n")
+
+salt_ci %>%
+  mutate(
+    `95% CI` = sprintf("[%.3f, %.3f]", CI_Lower, CI_Upper),
+    Index = recode(Index,
+                   "Salt_Index_01M" = "0.1M Salt Index",
+                   "Salt_Index_03M" = "0.3M Salt Index",
+                   "Salt_Index_Combined" = "Combined Salt Index")
+  ) %>%
+  select(Index, N, Mean, SD, SE, `95% CI`, CI_Width) %>%
+  kable(digits = 3,
+        caption = "Point Estimates and 95% Confidence Intervals")
+
+# Visualization
+p_ci_salt <- salt_ci %>%
+  mutate(Index = recode(Index,
+                        "Salt_Index_01M" = "0.1M Salt",
+                        "Salt_Index_03M" = "0.3M Salt",
+                        "Salt_Index_Combined" = "Combined")) %>%
+  ggplot(aes(x = Index, y = Mean)) +
+  geom_point(size = 4, color = "darkblue") +
+  geom_errorbar(aes(ymin = CI_Lower, ymax = CI_Upper),
+                width = 0.2, size = 1, color = "darkblue") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", size = 1) +
+  labs(title = "95% Confidence Intervals for Salt-Taste Indices",
+       subtitle = "Error bars show 95% CI; Red line indicates no response",
+       x = "Salt-Taste Index",
+       y = "Mean Index Value (Change in MSB)") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"))
+
+print(p_ci_salt)
+```
+
+## Summary: Problem 6.56
+
+```{r salt-summary}
+cat("\n\n=== SUMMARY: PROBLEM 6.56 ===\n\n")
+
+cat("NORMALITY ASSESSMENT:\n")
+normal_count <- sum(normality_salt$Normal == "Yes")
+if (normal_count == nrow(normality_salt)) {
+  cat("- All salt-taste indices appear approximately normally distributed\n")
+  cat("- Parametric methods (t-tests, ANOVA) are appropriate\n")
+} else if (normal_count > 0) {
+  cat(sprintf("- %d out of %d indices appear normally distributed\n",
+              normal_count, nrow(normality_salt)))
+  cat("- Consider robustness of parametric procedures\n")
+} else {
+  cat("- None of the indices appear normally distributed\n")
+  cat("- Non-parametric methods may be more appropriate\n")
+}
+
+cat("\n\nKEY FINDINGS:\n")
+for (i in 1:nrow(salt_ci)) {
+  idx_name <- salt_ci$Index[i]
+  display_name <- recode(idx_name,
+                         "Salt_Index_01M" = "0.1M Salt Index",
+                         "Salt_Index_03M" = "0.3M Salt Index",
+                         "Salt_Index_Combined" = "Combined Salt Index")
+
+  cat(sprintf("\n%s:\n", display_name))
+  cat(sprintf("  - Sample mean: %.3f (SE = %.3f)\n",
+              salt_ci$Mean[i], salt_ci$SE[i]))
+  cat(sprintf("  - 95%% CI: [%.3f, %.3f]\n",
+              salt_ci$CI_Lower[i], salt_ci$CI_Upper[i]))
+
+  if (salt_ci$CI_Lower[i] > 0) {
+    cat("  - Significantly POSITIVE response (infants suck more with salt)\n")
+  } else if (salt_ci$CI_Upper[i] < 0) {
+    cat("  - Significantly NEGATIVE response (infants suck less with salt)\n")
+  } else {
+    cat("  - Response not significantly different from zero\n")
+  }
+}
+
+cat("\n\nINTERPRETATION:\n")
+cat("- Positive index: Increased sucking with salt (preference or arousal)\n")
+cat("- Negative index: Decreased sucking with salt (aversion)\n")
+cat("- Zero index: No change in sucking response\n")
+```
+
+---
+
+# Problem 6.57: Sugar-Taste Index Analysis
+
+## Descriptive Statistics
+
+```{r sugar-descriptives}
+cat("\n=== PROBLEM 6.57: SUGAR-TASTE INDEX ANALYSIS ===\n\n")
+
+# Calculate detailed statistics
+sugar_stats <- infant_clean %>%
+  select(starts_with("Sugar_Index")) %>%
+  pivot_longer(everything(), names_to = "Index", values_to = "Value") %>%
+  filter(!is.na(Value)) %>%
+  group_by(Index) %>%
+  summarise(
+    N = n(),
+    Mean = mean(Value),
+    SD = sd(Value),
+    SE = sd(Value) / sqrt(n()),
+    Median = median(Value),
+    Q1 = quantile(Value, 0.25),
+    Q3 = quantile(Value, 0.75),
+    Min = min(Value),
+    Max = max(Value),
+    Skewness = skewness(Value),
+    Kurtosis = kurtosis(Value),
+    .groups = "drop"
+  )
+
+sugar_stats %>%
+  kable(digits = 3,
+        caption = "Descriptive Statistics for Sugar-Taste Indices")
+```
+
+## Graphical Displays
+
+```{r sugar-plots, fig.height=12}
+# Prepare data for plotting
+sugar_plot_data <- infant_clean %>%
+  select(Id, starts_with("Sugar_Index")) %>%
+  pivot_longer(cols = starts_with("Sugar_Index"),
+               names_to = "Index", values_to = "Value") %>%
+  filter(!is.na(Value)) %>%
+  mutate(Index = recode(Index,
+                        "Sugar_Index_5pct" = "5% Sucrose Index",
+                        "Sugar_Index_15pct" = "15% Sucrose Index",
+                        "Sugar_Index_Combined" = "Combined Sugar Index"))
+
+# Histograms with normal curve overlay
+p_sugar1 <- ggplot(sugar_plot_data, aes(x = Value)) +
+  geom_histogram(aes(y = ..density..), bins = 30,
+                 fill = "coral", alpha = 0.7) +
+  geom_density(color = "darkred", size = 1.2) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(sugar_plot_data$Value),
+                           sd = sd(sugar_plot_data$Value)),
+                color = "blue", size = 1, linetype = "dashed") +
+  facet_wrap(~ Index, ncol = 1, scales = "free") +
+  labs(title = "Distribution of Sugar-Taste Indices",
+       subtitle = "Red curve: actual density; Blue dashed: normal distribution",
+       x = "Index Value (Change in MSB)",
+       y = "Density") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"))
+
+# Box plots
+p_sugar2 <- ggplot(sugar_plot_data, aes(x = Index, y = Value, fill = Index)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", size = 1) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4, fill = "yellow") +
+  labs(title = "Box Plots of Sugar-Taste Indices",
+       subtitle = "Yellow diamond = mean, Red line = no change",
+       x = "Sugar-Taste Index",
+       y = "Index Value (Change in MSB)") +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 15, hjust = 1))
+
+# Q-Q plots
+p_sugar3 <- ggplot(sugar_plot_data, aes(sample = Value)) +
+  stat_qq(color = "coral", size = 2) +
+  stat_qq_line(color = "blue", size = 1) +
+  facet_wrap(~ Index, ncol = 3, scales = "free") +
+  labs(title = "Q-Q Plots: Sugar-Taste Indices",
+       subtitle = "Assessing normality assumption",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles") +
+  theme_minimal()
+
+grid.arrange(p_sugar1, p_sugar2, p_sugar3, ncol = 1, heights = c(1.5, 1, 1))
+```
+
+## Normality Tests
+
+```{r sugar-normality}
+cat("\n\n=== NORMALITY TESTS FOR SUGAR-TASTE INDICES ===\n\n")
+
+# Shapiro-Wilk tests
+normality_sugar <- data.frame(
+  Index = c("Sugar_Index_5pct", "Sugar_Index_15pct", "Sugar_Index_Combined"),
+  N = numeric(3),
+  Shapiro_W = numeric(3),
+  Shapiro_p = numeric(3),
+  Normal = character(3),
+  stringsAsFactors = FALSE
+)
+
+for (i in 1:3) {
+  idx_name <- normality_sugar$Index[i]
+  idx_data <- infant_clean[[idx_name]][!is.na(infant_clean[[idx_name]])]
+
+  normality_sugar$N[i] <- length(idx_data)
+
+  if (length(idx_data) >= 3) {
+    shapiro_result <- shapiro.test(idx_data)
+    normality_sugar$Shapiro_W[i] <- shapiro_result$statistic
+    normality_sugar$Shapiro_p[i] <- shapiro_result$p.value
+    normality_sugar$Normal[i] <- ifelse(shapiro_result$p.value > 0.05, "Yes", "No")
+  }
+}
+
+cat("Shapiro-Wilk Normality Tests:\n")
+cat("H₀: Data are normally distributed\n")
+cat("α = 0.05 significance level\n\n")
+
+normality_sugar %>%
+  kable(digits = 4,
+        col.names = c("Index", "N", "W Statistic", "p-value", "Normal?"),
+        caption = "Normality Assessment for Sugar-Taste Indices")
+
+cat("\n\nINTERPRETATION:\n")
+for (i in 1:nrow(normality_sugar)) {
+  cat(sprintf("\n%s:\n", normality_sugar$Index[i]))
+  if (normality_sugar$Normal[i] == "Yes") {
+    cat(sprintf("  - Appears normally distributed (p = %.4f)\n", normality_sugar$Shapiro_p[i]))
+  } else {
+    cat(sprintf("  - Deviates from normality (p = %.4f)\n", normality_sugar$Shapiro_p[i]))
+  }
+
+  skew <- sugar_stats$Skewness[sugar_stats$Index == normality_sugar$Index[i]]
+  kurt <- sugar_stats$Kurtosis[sugar_stats$Index == normality_sugar$Index[i]]
+  cat(sprintf("  - Skewness: %.3f %s\n", skew,
+              ifelse(abs(skew) < 0.5, "(approximately symmetric)",
+                     ifelse(skew > 0, "(right-skewed)", "(left-skewed)"))))
+  cat(sprintf("  - Kurtosis: %.3f %s\n", kurt,
+              ifelse(kurt > 3, "(heavy-tailed)", "(light-tailed)")))
+}
+```
+
+## 95% Confidence Intervals
+
+```{r sugar-ci}
+cat("\n\n=== 95% CONFIDENCE INTERVALS FOR SUGAR-TASTE INDICES ===\n\n")
+
+# Calculate CIs
+sugar_ci <- infant_clean %>%
+  select(starts_with("Sugar_Index")) %>%
+  pivot_longer(everything(), names_to = "Index", values_to = "Value") %>%
+  filter(!is.na(Value)) %>%
+  group_by(Index) %>%
+  summarise(
+    N = n(),
+    Mean = mean(Value),
+    SD = sd(Value),
+    SE = SD / sqrt(N),
+    CI_Lower = Mean - qt(0.975, N-1) * SE,
+    CI_Upper = Mean + qt(0.975, N-1) * SE,
+    CI_Width = CI_Upper - CI_Lower,
+    .groups = "drop"
+  )
+
+cat("95% Confidence Intervals (t-distribution):\n\n")
+
+sugar_ci %>%
+  mutate(
+    `95% CI` = sprintf("[%.3f, %.3f]", CI_Lower, CI_Upper),
+    Index = recode(Index,
+                   "Sugar_Index_5pct" = "5% Sucrose Index",
+                   "Sugar_Index_15pct" = "15% Sucrose Index",
+                   "Sugar_Index_Combined" = "Combined Sugar Index")
+  ) %>%
+  select(Index, N, Mean, SD, SE, `95% CI`, CI_Width) %>%
+  kable(digits = 3,
+        caption = "Point Estimates and 95% Confidence Intervals")
+
+# Visualization
+p_ci_sugar <- sugar_ci %>%
+  mutate(Index = recode(Index,
+                        "Sugar_Index_5pct" = "5% Sucrose",
+                        "Sugar_Index_15pct" = "15% Sucrose",
+                        "Sugar_Index_Combined" = "Combined")) %>%
+  ggplot(aes(x = Index, y = Mean)) +
+  geom_point(size = 4, color = "darkred") +
+  geom_errorbar(aes(ymin = CI_Lower, ymax = CI_Upper),
+                width = 0.2, size = 1, color = "darkred") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "blue", size = 1) +
+  labs(title = "95% Confidence Intervals for Sugar-Taste Indices",
+       subtitle = "Error bars show 95% CI; Blue line indicates no response",
+       x = "Sugar-Taste Index",
+       y = "Mean Index Value (Change in MSB)") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"))
+
+print(p_ci_sugar)
+```
+
+## Summary: Problem 6.57
+
+```{r sugar-summary}
+cat("\n\n=== SUMMARY: PROBLEM 6.57 ===\n\n")
+
+cat("NORMALITY ASSESSMENT:\n")
+normal_count <- sum(normality_sugar$Normal == "Yes")
+if (normal_count == nrow(normality_sugar)) {
+  cat("- All sugar-taste indices appear approximately normally distributed\n")
+  cat("- Parametric methods (t-tests, ANOVA) are appropriate\n")
+} else if (normal_count > 0) {
+  cat(sprintf("- %d out of %d indices appear normally distributed\n",
+              normal_count, nrow(normality_sugar)))
+  cat("- Consider robustness of parametric procedures\n")
+} else {
+  cat("- None of the indices appear normally distributed\n")
+  cat("- Non-parametric methods may be more appropriate\n")
+}
+
+cat("\n\nKEY FINDINGS:\n")
+for (i in 1:nrow(sugar_ci)) {
+  idx_name <- sugar_ci$Index[i]
+  display_name <- recode(idx_name,
+                         "Sugar_Index_5pct" = "5% Sucrose Index",
+                         "Sugar_Index_15pct" = "15% Sucrose Index",
+                         "Sugar_Index_Combined" = "Combined Sugar Index")
+
+  cat(sprintf("\n%s:\n", display_name))
+  cat(sprintf("  - Sample mean: %.3f (SE = %.3f)\n",
+              sugar_ci$Mean[i], sugar_ci$SE[i]))
+  cat(sprintf("  - 95%% CI: [%.3f, %.3f]\n",
+              sugar_ci$CI_Lower[i], sugar_ci$CI_Upper[i]))
+
+  if (sugar_ci$CI_Lower[i] > 0) {
+    cat("  - Significantly POSITIVE response (infants prefer sugar)\n")
+  } else if (sugar_ci$CI_Upper[i] < 0) {
+    cat("  - Significantly NEGATIVE response (infants avoid sugar)\n")
+  } else {
+    cat("  - Response not significantly different from zero\n")
+  }
+}
+
+cat("\n\nCOMPARISON TO SALT:\n")
+mean_salt <- mean(salt_ci$Mean)
+mean_sugar <- mean(sugar_ci$Mean)
+cat(sprintf("- Average salt response: %.3f\n", mean_salt))
+cat(sprintf("- Average sugar response: %.3f\n", mean_sugar))
+if (mean_sugar > mean_salt) {
+  cat("- Infants show STRONGER response to sugar than salt\n")
+  cat("- Consistent with innate preference for sweet taste\n")
+} else {
+  cat("- Infants show similar or stronger response to salt\n")
+}
+```
+
+---
+
+# Problem 6.58: Relationship with Blood Pressure
+
+## Correlation Analysis
+
+```{r bp-correlation}
+cat("\n=== PROBLEM 6.58: BLOOD PRESSURE RELATIONSHIPS ===\n\n")
+
+# Create dataset for correlation
+bp_data <- infant_clean %>%
+  select(Id, Mn_sbp, Mn_dbp,
+         starts_with("Salt_Index"), starts_with("Sugar_Index")) %>%
+  filter(!is.na(Mn_sbp) & !is.na(Mn_dbp))
+
+cat(sprintf("Infants with complete BP data: %d\n\n", nrow(bp_data)))
+
+# Correlation matrix
+cor_vars <- bp_data %>%
+  select(-Id) %>%
+  cor(use = "pairwise.complete.obs")
+
+cat("Correlation Matrix:\n")
+cor_vars %>%
+  kable(digits = 3, caption = "Pearson Correlations")
+
+# Test significance of correlations with BP
+cor_results <- data.frame(
+  Index = character(),
+  BP_Type = character(),
+  Correlation = numeric(),
+  p_value = numeric(),
+  Significant = character(),
+  stringsAsFactors = FALSE
+)
+
+for (idx in c("Salt_Index_01M", "Salt_Index_03M", "Salt_Index_Combined",
+              "Sugar_Index_5pct", "Sugar_Index_15pct", "Sugar_Index_Combined")) {
+  for (bp in c("Mn_sbp", "Mn_dbp")) {
+    test_data <- bp_data %>%
+      select(all_of(c(idx, bp))) %>%
+      filter(!is.na(.[[idx]]) & !is.na(.[[bp]]))
+
+    if (nrow(test_data) > 2) {
+      cor_test <- cor.test(test_data[[idx]], test_data[[bp]])
+
+      cor_results <- rbind(cor_results, data.frame(
+        Index = idx,
+        BP_Type = bp,
+        Correlation = cor_test$estimate,
+        p_value = cor_test$p.value,
+        Significant = ifelse(cor_test$p.value < 0.05, "Yes", "No"),
+        stringsAsFactors = FALSE
+      ))
+    }
+  }
+}
+
+cat("\n\nCorrelation Tests with Blood Pressure:\n")
+cor_results %>%
+  mutate(
+    Index = recode(Index,
+                   "Salt_Index_01M" = "Salt 0.1M",
+                   "Salt_Index_03M" = "Salt 0.3M",
+                   "Salt_Index_Combined" = "Salt Combined",
+                   "Sugar_Index_5pct" = "Sugar 5%",
+                   "Sugar_Index_15pct" = "Sugar 15%",
+                   "Sugar_Index_Combined" = "Sugar Combined"),
+    BP_Type = recode(BP_Type,
+                     "Mn_sbp" = "SBP",
+                     "Mn_dbp" = "DBP")
+  ) %>%
+  kable(digits = 4,
+        col.names = c("Taste Index", "BP", "r", "p-value", "Sig?"),
+        caption = "Correlations between Taste Indices and Blood Pressure")
+```
+
+## Scatter Plots: Salt Indices vs Blood Pressure
+
+```{r salt-bp-scatter, fig.height=10}
+# SBP plots
+p_salt_sbp1 <- ggplot(bp_data, aes(x = Salt_Index_01M, y = Mn_sbp)) +
+  geom_point(alpha = 0.6, color = "steelblue", size = 3) +
+  geom_smooth(method = "lm", se = TRUE, color = "darkblue", fill = "lightblue") +
+  labs(title = "0.1M Salt Index vs Systolic BP",
+       x = "Salt Index 0.1M (Change in MSB)",
+       y = "Mean Systolic BP (mmHg)") +
+  theme_minimal()
+
+p_salt_sbp2 <- ggplot(bp_data, aes(x = Salt_Index_03M, y = Mn_sbp)) +
+  geom_point(alpha = 0.6, color = "steelblue", size = 3) +
+  geom_smooth(method = "lm", se = TRUE, color = "darkblue", fill = "lightblue") +
+  labs(title = "0.3M Salt Index vs Systolic BP",
+       x = "Salt Index 0.3M (Change in MSB)",
+       y = "Mean Systolic BP (mmHg)") +
+  theme_minimal()
+
+# DBP plots
+p_salt_dbp1 <- ggplot(bp_data, aes(x = Salt_Index_01M, y = Mn_dbp)) +
+  geom_point(alpha = 0.6, color = "coral", size = 3) +
+  geom_smooth(method = "lm", se = TRUE, color = "darkred", fill = "lightcoral") +
+  labs(title = "0.1M Salt Index vs Diastolic BP",
+       x = "Salt Index 0.1M (Change in MSB)",
+       y = "Mean Diastolic BP (mmHg)") +
+  theme_minimal()
+
+p_salt_dbp2 <- ggplot(bp_data, aes(x = Salt_Index_03M, y = Mn_dbp)) +
+  geom_point(alpha = 0.6, color = "coral", size = 3) +
+  geom_smooth(method = "lm", se = TRUE, color = "darkred", fill = "lightcoral") +
+  labs(title = "0.3M Salt Index vs Diastolic BP",
+       x = "Salt Index 0.3M (Change in MSB)",
+       y = "Mean Diastolic BP (mmHg)") +
+  theme_minimal()
+
+grid.arrange(p_salt_sbp1, p_salt_sbp2, p_salt_dbp1, p_salt_dbp2, ncol = 2)
+```
+
+## Scatter Plots: Sugar Indices vs Blood Pressure
+
+```{r sugar-bp-scatter, fig.height=10}
+# SBP plots
+p_sugar_sbp1 <- ggplot(bp_data, aes(x = Sugar_Index_5pct, y = Mn_sbp)) +
+  geom_point(alpha = 0.6, color = "forestgreen", size = 3) +
+  geom_smooth(method = "lm", se = TRUE, color = "darkgreen", fill = "lightgreen") +
+  labs(title = "5% Sucrose Index vs Systolic BP",
+       x = "Sugar Index 5% (Change in MSB)",
+       y = "Mean Systolic BP (mmHg)") +
+  theme_minimal()
+
+p_sugar_sbp2 <- ggplot(bp_data, aes(x = Sugar_Index_15pct, y = Mn_sbp)) +
+  geom_point(alpha = 0.6, color = "forestgreen", size = 3) +
+  geom_smooth(method = "lm", se = TRUE, color = "darkgreen", fill = "lightgreen") +
+  labs(title = "15% Sucrose Index vs Systolic BP",
+       x = "Sugar Index 15% (Change in MSB)",
+       y = "Mean Systolic BP (mmHg)") +
+  theme_minimal()
+
+# DBP plots
+p_sugar_dbp1 <- ggplot(bp_data, aes(x = Sugar_Index_5pct, y = Mn_dbp)) +
+  geom_point(alpha = 0.6, color = "purple", size = 3) +
+  geom_smooth(method = "lm", se = TRUE, color = "purple4", fill = "plum") +
+  labs(title = "5% Sucrose Index vs Diastolic BP",
+       x = "Sugar Index 5% (Change in MSB)",
+       y = "Mean Diastolic BP (mmHg)") +
+  theme_minimal()
+
+p_sugar_dbp2 <- ggplot(bp_data, aes(x = Sugar_Index_15pct, y = Mn_dbp)) +
+  geom_point(alpha = 0.6, color = "purple", size = 3) +
+  geom_smooth(method = "lm", se = TRUE, color = "purple4", fill = "plum") +
+  labs(title = "15% Sucrose Index vs Diastolic BP",
+       x = "Sugar Index 15% (Change in MSB)",
+       y = "Mean Diastolic BP (mmHg)") +
+  theme_minimal()
+
+grid.arrange(p_sugar_sbp1, p_sugar_sbp2, p_sugar_dbp1, p_sugar_dbp2, ncol = 2)
+```
+
+## Combined Visualization
+
+```{r combined-scatter, fig.height=8}
+# Combined salt index
+p_comb1 <- ggplot(bp_data, aes(x = Salt_Index_Combined, y = Mn_sbp)) +
+  geom_point(alpha = 0.6, color = "steelblue", size = 3) +
+  geom_smooth(method = "lm", se = TRUE, color = "darkblue") +
+  labs(title = "Combined Salt Index vs SBP",
+       x = "Combined Salt Index",
+       y = "Systolic BP (mmHg)") +
+  theme_minimal()
+
+p_comb2 <- ggplot(bp_data, aes(x = Salt_Index_Combined, y = Mn_dbp)) +
+  geom_point(alpha = 0.6, color = "coral", size = 3) +
+  geom_smooth(method = "lm", se = TRUE, color = "darkred") +
+  labs(title = "Combined Salt Index vs DBP",
+       x = "Combined Salt Index",
+       y = "Diastolic BP (mmHg)") +
+  theme_minimal()
+
+p_comb3 <- ggplot(bp_data, aes(x = Sugar_Index_Combined, y = Mn_sbp)) +
+  geom_point(alpha = 0.6, color = "forestgreen", size = 3) +
+  geom_smooth(method = "lm", se = TRUE, color = "darkgreen") +
+  labs(title = "Combined Sugar Index vs SBP",
+       x = "Combined Sugar Index",
+       y = "Systolic BP (mmHg)") +
+  theme_minimal()
+
+p_comb4 <- ggplot(bp_data, aes(x = Sugar_Index_Combined, y = Mn_dbp)) +
+  geom_point(alpha = 0.6, color = "purple", size = 3) +
+  geom_smooth(method = "lm", se = TRUE, color = "purple4") +
+  labs(title = "Combined Sugar Index vs DBP",
+       x = "Combined Sugar Index",
+       y = "Diastolic BP (mmHg)") +
+  theme_minimal()
+
+grid.arrange(p_comb1, p_comb2, p_comb3, p_comb4, ncol = 2)
+```
+
+## Summary: Problem 6.58
+
+```{r bp-summary}
+cat("\n\n=== SUMMARY: PROBLEM 6.58 ===\n\n")
+
+cat("RELATIONSHIP BETWEEN TASTE RESPONSIVENESS AND BLOOD PRESSURE:\n\n")
+
+# Count significant correlations
+sig_salt <- cor_results %>%
+  filter(grepl("Salt", Index) & Significant == "Yes") %>%
+  nrow()
+
+sig_sugar <- cor_results %>%
+  filter(grepl("Sugar", Index) & Significant == "Yes") %>%
+  nrow()
+
+cat("SALT-TASTE INDICES:\n")
+if (sig_salt > 0) {
+  cat(sprintf("- %d significant correlation(s) with blood pressure\n", sig_salt))
+  sig_salt_details <- cor_results %>%
+    filter(grepl("Salt", Index) & Significant == "Yes")
+  for (i in 1:nrow(sig_salt_details)) {
+    cat(sprintf("  * %s with %s: r = %.3f (p = %.4f)\n",
+                sig_salt_details$Index[i],
+                sig_salt_details$BP_Type[i],
+                sig_salt_details$Correlation[i],
+                sig_salt_details$p_value[i]))
+  }
+} else {
+  cat("- No significant correlations with blood pressure\n")
+  cat("- Salt taste responsiveness does not appear related to BP in this sample\n")
+}
+
+cat("\n\nSUGAR-TASTE INDICES:\n")
+if (sig_sugar > 0) {
+  cat(sprintf("- %d significant correlation(s) with blood pressure\n", sig_sugar))
+  sig_sugar_details <- cor_results %>%
+    filter(grepl("Sugar", Index) & Significant == "Yes")
+  for (i in 1:nrow(sig_sugar_details)) {
+    cat(sprintf("  * %s with %s: r = %.3f (p = %.4f)\n",
+                sig_sugar_details$Index[i],
+                sig_sugar_details$BP_Type[i],
+                sig_sugar_details$Correlation[i],
+                sig_sugar_details$p_value[i]))
+  }
+} else {
+  cat("- No significant correlations with blood pressure\n")
+  cat("- Sugar taste responsiveness does not appear related to BP in this sample\n")
+}
+
+cat("\n\nOVERALL INTERPRETATION:\n")
+if (sig_salt > 0 | sig_sugar > 0) {
+  cat("- Some evidence of relationship between taste and BP\n")
+  cat("- Further investigation warranted with regression analysis (Chapter 11)\n")
+  cat("- Consider confounding factors (age, weight, genetics)\n")
+} else {
+  cat("- No strong evidence of linear relationship in this sample\n")
+  cat("- Possible explanations:\n")
+  cat("  * True lack of relationship at this age\n")
+  cat("  * Relationship may be non-linear\n")
+  cat("  * Sample size limitations\n")
+  cat("  * Measurement variability\n")
+}
+
+cat("\n\nNEXT STEPS:\n")
+cat("- Regression analysis to control for confounders (Chapter 11)\n")
+cat("- Longitudinal follow-up as infants age\n")
+cat("- Examine subgroup differences (sex, ethnicity)\n")
+cat("- Consider genetic factors in taste perception\n")
+```
+
+---
+
+# Overall Conclusions
+
+```{r overall-conclusions}
+cat("\n\n=== OVERALL STUDY CONCLUSIONS ===\n\n")
+
+cat("STUDY DESIGN:\n")
+cat("- Novel approach to assess taste responsiveness in 3-day-old infants\n")
+cat("- Objective measurement using sucking behavior (MSB)\n")
+cat("- Controlled protocol with baseline and washout periods\n")
+
+cat("\n\nSALT-TASTE FINDINGS (Problem 6.56):\n")
+for (i in 1:nrow(salt_ci)) {
+  idx_name <- recode(salt_ci$Index[i],
+                     "Salt_Index_01M" = "Low concentration (0.1M)",
+                     "Salt_Index_03M" = "High concentration (0.3M)",
+                     "Salt_Index_Combined" = "Combined")
+  cat(sprintf("- %s: Mean = %.3f, 95%% CI [%.3f, %.3f]\n",
+              idx_name, salt_ci$Mean[i],
+              salt_ci$CI_Lower[i], salt_ci$CI_Upper[i]))
+}
+
+cat("\n\nSUGAR-TASTE FINDINGS (Problem 6.57):\n")
+for (i in 1:nrow(sugar_ci)) {
+  idx_name <- recode(sugar_ci$Index[i],
+                     "Sugar_Index_5pct" = "Low concentration (5%)",
+                     "Sugar_Index_15pct" = "High concentration (15%)",
+                     "Sugar_Index_Combined" = "Combined")
+  cat(sprintf("- %s: Mean = %.3f, 95%% CI [%.3f, %.3f]\n",
+              idx_name, sugar_ci$Mean[i],
+              sugar_ci$CI_Lower[i], sugar_ci$CI_Upper[i]))
+}
+
+cat("\n\nBLOOD PRESSURE RELATIONSHIPS (Problem 6.58):\n")
+total_tests <- nrow(cor_results)
+sig_tests <- sum(cor_results$Significant == "Yes")
+cat(sprintf("- %d out of %d correlations significant (α = 0.05)\n",
+            sig_tests, total_tests))
+
+if (sig_tests > 0) {
+  cat("- Evidence suggests taste responsiveness may relate to BP\n")
+  cat("- Hypothesis of salt-BP connection partially supported\n")
+} else {
+  cat("- Limited evidence for taste-BP relationship in infants\n")
+  cat("- May emerge later in development\n")
+}
+
+cat("\n\nSTRENGTHS:\n")
+cat("- Large sample size (n = 100)\n")
+cat("- Standardized protocol\n")
+cat("- Objective behavioral measurement\n")
+cat("- Early life assessment (before dietary influence)\n")
+
+cat("\n\nLIMITATIONS:\n")
+cat("- Cross-sectional design\n")
+cat("- Some missing data\n")
+cat("- Potential measurement error in BP for infants\n")
+cat("- Cannot establish causation\n")
+
+cat("\n\nIMPLICATIONS:\n")
+cat("- Taste preferences may have early origins\n")
+cat("- Individual differences in taste perception measurable at birth\n")
+cat("- Longitudinal follow-up needed to assess BP development\n")
+cat("- May inform early intervention strategies\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

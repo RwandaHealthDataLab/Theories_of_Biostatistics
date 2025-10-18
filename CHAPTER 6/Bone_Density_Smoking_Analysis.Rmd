@@ -1,0 +1,562 @@
+---
+title: "Bone Mineral Density and Cigarette Smoking: CI-Based Analysis"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 14, fig.height = 10)
+```
+
+# Background
+
+This analysis investigates the relationship between **bone mineral density (BMD)** at different anatomical sites and **cigarette smoking** status. Smoking is known to be a risk factor for osteoporosis and reduced bone density.
+
+## Research Questions
+
+**6.86:** Is there a relationship between BMD at the **femoral neck** and cigarette smoking?
+
+**6.87:** Is there a relationship between BMD at the **femoral shaft** and cigarette smoking?
+
+## Anatomical Sites
+
+- **Femoral Neck (fn):** Narrow region connecting femoral head to shaft; common fracture site
+- **Femoral Shaft (fs):** Long cylindrical portion of femur; weight-bearing region
+
+## Analysis Approach
+
+Using **confidence interval (CI) methodology** (Section 6.6):
+1. Compare mean BMD between smokers and non-smokers
+2. Calculate 95% CI for the difference in means
+3. Assess whether CI includes 0 (no difference)
+4. If CI excludes 0, conclude significant relationship exists
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+library(gridExtra)
+library(scales)
+```
+
+# Data Import and Exploration
+
+```{r data-import}
+# Read the BONEDEN dataset
+boneden_data <- read.csv("../BONEDEN.DAT.txt",
+                         check.names = FALSE)
+
+# Remove quotes from column names
+colnames(boneden_data) <- gsub("'", "", colnames(boneden_data))
+
+# Display structure
+cat("Dataset Structure:\n")
+str(boneden_data)
+
+cat("\n\nKey Variable Descriptions:\n")
+cat("- ID: Subject identification\n")
+cat("- age: Age (years)\n")
+cat("- cur1: Current smoking status at visit 1 (0 = no, 1+ = yes)\n")
+cat("- fn1: Femoral neck BMD at visit 1 (g/cm²)\n")
+cat("- fs1: Femoral shaft BMD at visit 1 (g/cm²)\n")
+cat("- cur2: Current smoking status at visit 2\n")
+cat("- fn2: Femoral neck BMD at visit 2 (g/cm²)\n")
+cat("- fs2: Femoral shaft BMD at visit 2 (g/cm²)\n")
+
+cat("\n\nFirst 10 Subjects:\n")
+head(boneden_data, 10) %>%
+  select(ID, age, cur1, fn1, fs1, cur2, fn2, fs2) %>%
+  kable(digits = 3, caption = "Sample of Bone Density Data")
+
+cat(sprintf("\n\nTotal number of subjects: %d\n", nrow(boneden_data)))
+```
+
+## Data Preparation
+
+```{r data-prep}
+# Create analysis dataset focusing on Visit 1
+boneden_clean <- boneden_data %>%
+  mutate(
+    # Create binary smoking variable (0 = non-smoker, 1 = smoker)
+    smoker_v1 = ifelse(cur1 > 0, 1, 0),
+    smoking_status_v1 = ifelse(cur1 > 0, "Smoker", "Non-smoker"),
+
+    # Visit 2
+    smoker_v2 = ifelse(cur2 > 0, 1, 0),
+    smoking_status_v2 = ifelse(cur2 > 0, "Smoker", "Non-smoker")
+  ) %>%
+  # Remove missing values for BMD
+  filter(!is.na(fn1) & !is.na(fs1) & !is.na(cur1))
+
+cat("Data Preparation Complete\n\n")
+
+# Summary by smoking status (Visit 1)
+smoking_summary <- boneden_clean %>%
+  group_by(smoking_status_v1) %>%
+  summarise(
+    n = n(),
+    mean_age = mean(age, na.rm = TRUE),
+    mean_fn = mean(fn1, na.rm = TRUE),
+    mean_fs = mean(fs1, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cat("Summary by Smoking Status (Visit 1):\n")
+smoking_summary %>%
+  kable(digits = 2,
+        col.names = c("Smoking Status", "N", "Mean Age", "Mean Femoral Neck BMD",
+                     "Mean Femoral Shaft BMD"),
+        caption = "Baseline Characteristics by Smoking Status")
+
+# Check smoking status distribution
+smoking_counts <- table(boneden_clean$smoking_status_v1)
+cat(sprintf("\n\nSmoking Status Distribution:\n"))
+cat(sprintf("- Non-smokers: %d (%.1f%%)\n",
+            smoking_counts["Non-smoker"],
+            100 * smoking_counts["Non-smoker"] / sum(smoking_counts)))
+cat(sprintf("- Smokers: %d (%.1f%%)\n",
+            smoking_counts["Smoker"],
+            100 * smoking_counts["Smoker"] / sum(smoking_counts)))
+```
+
+---
+
+# Problem 6.86: Femoral Neck BMD and Smoking
+
+```{r femoral-neck-analysis}
+cat("\n=== PROBLEM 6.86: FEMORAL NECK BMD AND CIGARETTE SMOKING ===\n\n")
+
+# Calculate statistics by smoking status
+fn_stats <- boneden_clean %>%
+  group_by(smoking_status_v1) %>%
+  summarise(
+    n = n(),
+    mean = mean(fn1, na.rm = TRUE),
+    sd = sd(fn1, na.rm = TRUE),
+    se = sd / sqrt(n),
+    median = median(fn1, na.rm = TRUE),
+    q25 = quantile(fn1, 0.25, na.rm = TRUE),
+    q75 = quantile(fn1, 0.75, na.rm = TRUE),
+    min = min(fn1, na.rm = TRUE),
+    max = max(fn1, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    ci_lower = mean - qt(0.975, n - 1) * se,
+    ci_upper = mean + qt(0.975, n - 1) * se
+  )
+
+cat("FEMORAL NECK BMD: Descriptive Statistics by Smoking Status\n\n")
+fn_stats %>%
+  select(smoking_status_v1, n, mean, sd, se, median, ci_lower, ci_upper) %>%
+  kable(digits = 4,
+        col.names = c("Smoking Status", "N", "Mean", "SD", "SE", "Median",
+                     "95% CI Lower", "95% CI Upper"),
+        caption = "Femoral Neck BMD (g/cm²) by Smoking Status")
+```
+
+## Difference in Means (Two-Sample Approach)
+
+```{r femoral-neck-difference}
+cat("\n\nDIFFERENCE IN MEAN FEMORAL NECK BMD:\n\n")
+
+# Extract group data
+non_smoker_fn <- fn_stats %>% filter(smoking_status_v1 == "Non-smoker")
+smoker_fn <- fn_stats %>% filter(smoking_status_v1 == "Smoker")
+
+# Calculate difference (Non-smoker - Smoker)
+mean_diff_fn <- non_smoker_fn$mean - smoker_fn$mean
+
+# Standard error for difference
+se_diff_fn <- sqrt((non_smoker_fn$sd^2 / non_smoker_fn$n) +
+                    (smoker_fn$sd^2 / smoker_fn$n))
+
+# Degrees of freedom (Welch approximation for unequal variances)
+df_fn <- ((non_smoker_fn$sd^2/non_smoker_fn$n + smoker_fn$sd^2/smoker_fn$n)^2) /
+         ((non_smoker_fn$sd^2/non_smoker_fn$n)^2/(non_smoker_fn$n-1) +
+          (smoker_fn$sd^2/smoker_fn$n)^2/(smoker_fn$n-1))
+
+# 95% CI for difference
+t_crit_fn <- qt(0.975, df_fn)
+ci_diff_lower_fn <- mean_diff_fn - t_crit_fn * se_diff_fn
+ci_diff_upper_fn <- mean_diff_fn + t_crit_fn * se_diff_fn
+
+cat("Comparison: Non-smokers vs Smokers\n\n")
+cat(sprintf("Non-smoker mean: %.4f g/cm² (n = %d)\n",
+            non_smoker_fn$mean, non_smoker_fn$n))
+cat(sprintf("Smoker mean:     %.4f g/cm² (n = %d)\n",
+            smoker_fn$mean, smoker_fn$n))
+cat(sprintf("\nDifference (Non-smoker - Smoker): %.4f g/cm²\n", mean_diff_fn))
+cat(sprintf("Standard error of difference: %.4f\n", se_diff_fn))
+cat(sprintf("Degrees of freedom: %.2f\n", df_fn))
+cat(sprintf("95%% CI for difference: [%.4f, %.4f] g/cm²\n",
+            ci_diff_lower_fn, ci_diff_upper_fn))
+
+cat("\n\nINTERPRETATION:\n")
+if (ci_diff_lower_fn > 0) {
+  cat("✓ The 95% CI for the difference EXCLUDES 0 (entirely positive)\n")
+  cat("✓ Non-smokers have SIGNIFICANTLY HIGHER femoral neck BMD than smokers\n")
+  cat(sprintf("✓ On average, non-smokers have %.4f g/cm² higher BMD (95%% CI: [%.4f, %.4f])\n",
+              mean_diff_fn, ci_diff_lower_fn, ci_diff_upper_fn))
+  cat("✓ CONCLUSION: There IS a significant relationship between femoral neck BMD and smoking\n")
+  cat("  Smoking is associated with LOWER bone density at the femoral neck\n")
+} else if (ci_diff_upper_fn < 0) {
+  cat("✓ The 95% CI for the difference EXCLUDES 0 (entirely negative)\n")
+  cat("✓ Smokers have SIGNIFICANTLY HIGHER femoral neck BMD than non-smokers\n")
+  cat("✓ CONCLUSION: There IS a significant relationship (unexpected direction)\n")
+} else {
+  cat("✗ The 95% CI for the difference INCLUDES 0\n")
+  cat("✗ No statistically significant difference in femoral neck BMD between groups\n")
+  cat("✗ CONCLUSION: There is NO significant relationship between femoral neck BMD and smoking\n")
+}
+
+# Percent difference
+percent_diff_fn <- (mean_diff_fn / smoker_fn$mean) * 100
+cat(sprintf("\nPercent difference: %.2f%% %s\n",
+            abs(percent_diff_fn),
+            ifelse(percent_diff_fn > 0, "higher in non-smokers", "higher in smokers")))
+```
+
+## Femoral Neck Visualizations
+
+```{r femoral-neck-plots, fig.height=8}
+# Box plot
+p_fn_box <- boneden_clean %>%
+  ggplot(aes(x = smoking_status_v1, y = fn1, fill = smoking_status_v1)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16, outlier.size = 3) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "red", color = "darkred") +
+  labs(title = "Femoral Neck BMD by Smoking Status",
+       subtitle = "Red diamond = mean",
+       x = "Smoking Status",
+       y = "Femoral Neck BMD (g/cm²)") +
+  scale_fill_manual(values = c("lightblue", "lightcoral")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "none")
+
+# Means with 95% CI
+p_fn_ci <- fn_stats %>%
+  ggplot(aes(x = smoking_status_v1, y = mean, color = smoking_status_v1)) +
+  geom_point(size = 5) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper),
+                width = 0.2, size = 1.5) +
+  labs(title = "Mean Femoral Neck BMD with 95% Confidence Intervals",
+       subtitle = sprintf("Difference: %.4f g/cm² [%.4f, %.4f]",
+                         mean_diff_fn, ci_diff_lower_fn, ci_diff_upper_fn),
+       x = "Smoking Status",
+       y = "Mean Femoral Neck BMD (g/cm²)",
+       color = "Smoking Status") +
+  scale_color_manual(values = c("darkblue", "darkred")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "none")
+
+grid.arrange(p_fn_box, p_fn_ci, ncol = 1)
+```
+
+---
+
+# Problem 6.87: Femoral Shaft BMD and Smoking
+
+```{r femoral-shaft-analysis}
+cat("\n\n=== PROBLEM 6.87: FEMORAL SHAFT BMD AND CIGARETTE SMOKING ===\n\n")
+
+# Calculate statistics by smoking status
+fs_stats <- boneden_clean %>%
+  group_by(smoking_status_v1) %>%
+  summarise(
+    n = n(),
+    mean = mean(fs1, na.rm = TRUE),
+    sd = sd(fs1, na.rm = TRUE),
+    se = sd / sqrt(n),
+    median = median(fs1, na.rm = TRUE),
+    q25 = quantile(fs1, 0.25, na.rm = TRUE),
+    q75 = quantile(fs1, 0.75, na.rm = TRUE),
+    min = min(fs1, na.rm = TRUE),
+    max = max(fs1, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    ci_lower = mean - qt(0.975, n - 1) * se,
+    ci_upper = mean + qt(0.975, n - 1) * se
+  )
+
+cat("FEMORAL SHAFT BMD: Descriptive Statistics by Smoking Status\n\n")
+fs_stats %>%
+  select(smoking_status_v1, n, mean, sd, se, median, ci_lower, ci_upper) %>%
+  kable(digits = 4,
+        col.names = c("Smoking Status", "N", "Mean", "SD", "SE", "Median",
+                     "95% CI Lower", "95% CI Upper"),
+        caption = "Femoral Shaft BMD (g/cm²) by Smoking Status")
+```
+
+## Difference in Means (Two-Sample Approach)
+
+```{r femoral-shaft-difference}
+cat("\n\nDIFFERENCE IN MEAN FEMORAL SHAFT BMD:\n\n")
+
+# Extract group data
+non_smoker_fs <- fs_stats %>% filter(smoking_status_v1 == "Non-smoker")
+smoker_fs <- fs_stats %>% filter(smoking_status_v1 == "Smoker")
+
+# Calculate difference (Non-smoker - Smoker)
+mean_diff_fs <- non_smoker_fs$mean - smoker_fs$mean
+
+# Standard error for difference
+se_diff_fs <- sqrt((non_smoker_fs$sd^2 / non_smoker_fs$n) +
+                    (smoker_fs$sd^2 / smoker_fs$n))
+
+# Degrees of freedom (Welch approximation)
+df_fs <- ((non_smoker_fs$sd^2/non_smoker_fs$n + smoker_fs$sd^2/smoker_fs$n)^2) /
+         ((non_smoker_fs$sd^2/non_smoker_fs$n)^2/(non_smoker_fs$n-1) +
+          (smoker_fs$sd^2/smoker_fs$n)^2/(smoker_fs$n-1))
+
+# 95% CI for difference
+t_crit_fs <- qt(0.975, df_fs)
+ci_diff_lower_fs <- mean_diff_fs - t_crit_fs * se_diff_fs
+ci_diff_upper_fs <- mean_diff_fs + t_crit_fs * se_diff_fs
+
+cat("Comparison: Non-smokers vs Smokers\n\n")
+cat(sprintf("Non-smoker mean: %.4f g/cm² (n = %d)\n",
+            non_smoker_fs$mean, non_smoker_fs$n))
+cat(sprintf("Smoker mean:     %.4f g/cm² (n = %d)\n",
+            smoker_fs$mean, smoker_fs$n))
+cat(sprintf("\nDifference (Non-smoker - Smoker): %.4f g/cm²\n", mean_diff_fs))
+cat(sprintf("Standard error of difference: %.4f\n", se_diff_fs))
+cat(sprintf("Degrees of freedom: %.2f\n", df_fs))
+cat(sprintf("95%% CI for difference: [%.4f, %.4f] g/cm²\n",
+            ci_diff_lower_fs, ci_diff_upper_fs))
+
+cat("\n\nINTERPRETATION:\n")
+if (ci_diff_lower_fs > 0) {
+  cat("✓ The 95% CI for the difference EXCLUDES 0 (entirely positive)\n")
+  cat("✓ Non-smokers have SIGNIFICANTLY HIGHER femoral shaft BMD than smokers\n")
+  cat(sprintf("✓ On average, non-smokers have %.4f g/cm² higher BMD (95%% CI: [%.4f, %.4f])\n",
+              mean_diff_fs, ci_diff_lower_fs, ci_diff_upper_fs))
+  cat("✓ CONCLUSION: There IS a significant relationship between femoral shaft BMD and smoking\n")
+  cat("  Smoking is associated with LOWER bone density at the femoral shaft\n")
+} else if (ci_diff_upper_fs < 0) {
+  cat("✓ The 95% CI for the difference EXCLUDES 0 (entirely negative)\n")
+  cat("✓ Smokers have SIGNIFICANTLY HIGHER femoral shaft BMD than non-smokers\n")
+  cat("✓ CONCLUSION: There IS a significant relationship (unexpected direction)\n")
+} else {
+  cat("✗ The 95% CI for the difference INCLUDES 0\n")
+  cat("✗ No statistically significant difference in femoral shaft BMD between groups\n")
+  cat("✗ CONCLUSION: There is NO significant relationship between femoral shaft BMD and smoking\n")
+}
+
+# Percent difference
+percent_diff_fs <- (mean_diff_fs / smoker_fs$mean) * 100
+cat(sprintf("\nPercent difference: %.2f%% %s\n",
+            abs(percent_diff_fs),
+            ifelse(percent_diff_fs > 0, "higher in non-smokers", "higher in smokers")))
+```
+
+## Femoral Shaft Visualizations
+
+```{r femoral-shaft-plots, fig.height=8}
+# Box plot
+p_fs_box <- boneden_clean %>%
+  ggplot(aes(x = smoking_status_v1, y = fs1, fill = smoking_status_v1)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16, outlier.size = 3) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "red", color = "darkred") +
+  labs(title = "Femoral Shaft BMD by Smoking Status",
+       subtitle = "Red diamond = mean",
+       x = "Smoking Status",
+       y = "Femoral Shaft BMD (g/cm²)") +
+  scale_fill_manual(values = c("lightblue", "lightcoral")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "none")
+
+# Means with 95% CI
+p_fs_ci <- fs_stats %>%
+  ggplot(aes(x = smoking_status_v1, y = mean, color = smoking_status_v1)) +
+  geom_point(size = 5) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper),
+                width = 0.2, size = 1.5) +
+  labs(title = "Mean Femoral Shaft BMD with 95% Confidence Intervals",
+       subtitle = sprintf("Difference: %.4f g/cm² [%.4f, %.4f]",
+                         mean_diff_fs, ci_diff_lower_fs, ci_diff_upper_fs),
+       x = "Smoking Status",
+       y = "Mean Femoral Shaft BMD (g/cm²)",
+       color = "Smoking Status") +
+  scale_color_manual(values = c("darkblue", "darkred")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "none")
+
+grid.arrange(p_fs_box, p_fs_ci, ncol = 1)
+```
+
+---
+
+# Comprehensive Comparison
+
+```{r comprehensive-comparison, fig.height=10}
+cat("\n\n=== COMPREHENSIVE COMPARISON: BOTH ANATOMICAL SITES ===\n\n")
+
+# Combine statistics
+all_bmd_stats <- bind_rows(
+  fn_stats %>% mutate(site = "Femoral Neck"),
+  fs_stats %>% mutate(site = "Femoral Shaft")
+)
+
+cat("Summary Table: Both Sites\n")
+all_bmd_stats %>%
+  select(site, smoking_status_v1, n, mean, sd, ci_lower, ci_upper) %>%
+  arrange(site, smoking_status_v1) %>%
+  kable(digits = 4,
+        col.names = c("Site", "Smoking Status", "N", "Mean", "SD",
+                     "CI Lower", "CI Upper"),
+        caption = "BMD Summary for Both Anatomical Sites")
+
+# Create comparison summary
+comparison_summary <- data.frame(
+  Site = c("Femoral Neck", "Femoral Shaft"),
+  NonSmoker_Mean = c(non_smoker_fn$mean, non_smoker_fs$mean),
+  Smoker_Mean = c(smoker_fn$mean, smoker_fs$mean),
+  Difference = c(mean_diff_fn, mean_diff_fs),
+  CI_Lower = c(ci_diff_lower_fn, ci_diff_lower_fs),
+  CI_Upper = c(ci_diff_upper_fn, ci_diff_upper_fs),
+  Percent_Diff = c(percent_diff_fn, percent_diff_fs)
+)
+
+cat("\n\nDifference Summary:\n")
+comparison_summary %>%
+  mutate(
+    CI = sprintf("[%.4f, %.4f]", CI_Lower, CI_Upper),
+    Significant = ifelse(CI_Lower > 0, "Yes (p < 0.05)",
+                        ifelse(CI_Upper < 0, "Yes (p < 0.05)", "No"))
+  ) %>%
+  select(Site, NonSmoker_Mean, Smoker_Mean, Difference, CI, Percent_Diff, Significant) %>%
+  kable(digits = 4,
+        col.names = c("Site", "Non-Smoker Mean", "Smoker Mean",
+                     "Difference", "95% CI", "% Difference", "Significant?"),
+        caption = "Comparison of BMD Differences by Anatomical Site")
+
+# Side-by-side visualization
+p_comparison <- all_bmd_stats %>%
+  ggplot(aes(x = smoking_status_v1, y = mean, color = site, group = site)) +
+  geom_point(size = 4, position = position_dodge(width = 0.3)) +
+  geom_line(size = 1, position = position_dodge(width = 0.3)) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper),
+                width = 0.2, size = 1, position = position_dodge(width = 0.3)) +
+  labs(title = "BMD Comparison: Femoral Neck vs Femoral Shaft by Smoking Status",
+       subtitle = "Error bars show 95% confidence intervals",
+       x = "Smoking Status",
+       y = "Mean BMD (g/cm²)",
+       color = "Anatomical Site") +
+  scale_color_manual(values = c("darkblue", "darkgreen")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "top")
+
+# Bar chart
+p_bars <- comparison_summary %>%
+  pivot_longer(cols = c(NonSmoker_Mean, Smoker_Mean),
+               names_to = "Group", values_to = "Mean_BMD") %>%
+  mutate(Group = recode(Group,
+                       "NonSmoker_Mean" = "Non-smoker",
+                       "Smoker_Mean" = "Smoker")) %>%
+  ggplot(aes(x = Site, y = Mean_BMD, fill = Group)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), alpha = 0.7) +
+  labs(title = "Mean BMD by Site and Smoking Status",
+       x = "Anatomical Site",
+       y = "Mean BMD (g/cm²)",
+       fill = "Smoking Status") +
+  scale_fill_manual(values = c("steelblue", "coral")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "top")
+
+grid.arrange(p_comparison, p_bars, ncol = 1)
+```
+
+---
+
+# Overall Conclusions
+
+```{r overall-conclusions}
+cat("\n\n=== OVERALL CONCLUSIONS: PROBLEMS 6.86-6.87 ===\n\n")
+
+cat("SUMMARY OF FINDINGS:\n\n")
+
+cat("PROBLEM 6.86: FEMORAL NECK BMD\n")
+cat(sprintf("- Non-smoker mean: %.4f g/cm²\n", non_smoker_fn$mean))
+cat(sprintf("- Smoker mean: %.4f g/cm²\n", smoker_fn$mean))
+cat(sprintf("- Difference: %.4f g/cm² (%.2f%% difference)\n",
+            mean_diff_fn, abs(percent_diff_fn)))
+cat(sprintf("- 95%% CI for difference: [%.4f, %.4f]\n", ci_diff_lower_fn, ci_diff_upper_fn))
+
+if (ci_diff_lower_fn > 0 | ci_diff_upper_fn < 0) {
+  cat("- CONCLUSION: ✓ Significant relationship EXISTS\n")
+  cat(sprintf("  Smoking associated with %.2f%% %s BMD at femoral neck\n\n",
+              abs(percent_diff_fn),
+              ifelse(mean_diff_fn > 0, "LOWER", "HIGHER")))
+} else {
+  cat("- CONCLUSION: ✗ No significant relationship\n\n")
+}
+
+cat("PROBLEM 6.87: FEMORAL SHAFT BMD\n")
+cat(sprintf("- Non-smoker mean: %.4f g/cm²\n", non_smoker_fs$mean))
+cat(sprintf("- Smoker mean: %.4f g/cm²\n", smoker_fs$mean))
+cat(sprintf("- Difference: %.4f g/cm² (%.2f%% difference)\n",
+            mean_diff_fs, abs(percent_diff_fs)))
+cat(sprintf("- 95%% CI for difference: [%.4f, %.4f]\n", ci_diff_lower_fs, ci_diff_upper_fs))
+
+if (ci_diff_lower_fs > 0 | ci_diff_upper_fs < 0) {
+  cat("- CONCLUSION: ✓ Significant relationship EXISTS\n")
+  cat(sprintf("  Smoking associated with %.2f%% %s BMD at femoral shaft\n\n",
+              abs(percent_diff_fs),
+              ifelse(mean_diff_fs > 0, "LOWER", "HIGHER")))
+} else {
+  cat("- CONCLUSION: ✗ No significant relationship\n\n")
+}
+
+cat("CONSISTENCY ACROSS SITES:\n")
+both_significant <- (ci_diff_lower_fn > 0 | ci_diff_upper_fn < 0) &
+                    (ci_diff_lower_fs > 0 | ci_diff_upper_fs < 0)
+same_direction <- sign(mean_diff_fn) == sign(mean_diff_fs)
+
+if (both_significant && same_direction) {
+  cat("✓ Results are CONSISTENT across both anatomical sites\n")
+  cat("✓ Smoking shows similar adverse effect on BMD at both locations\n")
+  cat("✓ This strengthens the evidence for a causal relationship\n\n")
+} else if (!both_significant) {
+  cat("Results show mixed significance across sites\n\n")
+}
+
+cat("CLINICAL IMPLICATIONS:\n")
+cat("- Cigarette smoking is a modifiable risk factor for bone health\n")
+cat("- Smokers show reduced BMD at critical anatomical sites\n")
+cat("- Lower BMD increases fracture risk, especially at femoral neck\n")
+cat("- Smoking cessation programs may help preserve bone density\n")
+cat("- Healthcare providers should screen smokers for osteoporosis risk\n\n")
+
+cat("STATISTICAL METHODOLOGY:\n")
+cat("- Used 95% confidence intervals for difference in means (Section 6.6)\n")
+cat("- Two-sample t-test approach with Welch correction for unequal variances\n")
+cat("- CI excludes 0 → significant relationship exists\n")
+cat("- CI includes 0 → no significant relationship\n")
+cat("- Results presented with both statistical and clinical significance\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

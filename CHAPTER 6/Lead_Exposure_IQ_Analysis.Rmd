@@ -1,0 +1,777 @@
+---
+title: "Lead Exposure and IQ: Environmental Health Analysis"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 14, fig.height = 10)
+```
+
+# Background
+
+This analysis investigates the relationship between **blood-lead exposure levels** and **cognitive development** (IQ scores) in children. Lead exposure, particularly in early childhood, is a known neurotoxicant that can adversely affect cognitive development.
+
+## Research Questions
+
+**6.67:** Analyze **Verbal IQ** by lead exposure group with descriptive statistics, 95% CIs, and visualizations
+
+**6.68:** Analyze **Performance IQ** by lead exposure group with descriptive statistics, 95% CIs, and visualizations
+
+**6.69:** Analyze **Full-Scale IQ** by lead exposure group with descriptive statistics, 95% CIs, and visualizations
+
+## Lead Exposure Groups
+
+Children were classified into three groups based on blood-lead levels measured in 1972 and 1973:
+
+- **Group 1:** Blood-lead level **< 40 µg/100 mL** in BOTH 1972 and 1973 (Consistently Low)
+- **Group 2:** Blood-lead level **≥ 40 µg/100 mL** in 1973 (Currently High)
+- **Group 3:** Blood-lead level **≥ 40 µg/100 mL** in 1972 but **< 40 µg/100 mL** in 1973 (Previously High, Now Low)
+
+## IQ Measures
+
+- **iqv:** Verbal IQ score
+- **iqp:** Performance IQ score
+- **iqf:** Full-Scale IQ score (composite of verbal and performance)
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+library(gridExtra)
+library(scales)
+```
+
+# Data Import and Exploration
+
+```{r data-import}
+# Read the LEAD dataset
+lead_data <- read.csv("../CHAPTER 5/Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/LEAD.DAT.txt",
+                      check.names = FALSE)
+
+# Remove quotes from column names
+colnames(lead_data) <- gsub("'", "", colnames(lead_data))
+
+# Display structure
+cat("Dataset Structure:\n")
+str(lead_data)
+
+cat("\n\nKey Variables:\n")
+cat("- id: Subject identification\n")
+cat("- lead_grp: Lead exposure group (1, 2, or 3)\n")
+cat("- iqv: Verbal IQ score\n")
+cat("- iqp: Performance IQ score\n")
+cat("- iqf: Full-Scale IQ score\n")
+cat("- ld72: Blood-lead level in 1972 (µg/100 mL)\n")
+cat("- ld73: Blood-lead level in 1973 (µg/100 mL)\n")
+
+# First few rows
+cat("\n\nFirst 10 Subjects:\n")
+head(lead_data, 10) %>%
+  select(id, lead_grp, ld72, ld73, iqv, iqp, iqf) %>%
+  kable(digits = 1, caption = "Sample of Lead Exposure and IQ Data")
+
+cat(sprintf("\n\nTotal number of subjects: %d\n", nrow(lead_data)))
+```
+
+## Data Preparation
+
+```{r data-prep}
+# Create factor for lead group with descriptive labels
+lead_data <- lead_data %>%
+  mutate(
+    lead_group_factor = factor(lead_grp,
+                               levels = c(1, 2, 3),
+                               labels = c("Group 1: Low (Both Years)",
+                                        "Group 2: High in 1973",
+                                        "Group 3: High in 1972, Low in 1973"))
+  )
+
+# Summary by lead group
+group_summary <- lead_data %>%
+  group_by(lead_grp, lead_group_factor) %>%
+  summarise(
+    n = n(),
+    mean_ld72 = mean(ld72, na.rm = TRUE),
+    mean_ld73 = mean(ld73, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cat("Lead Exposure Group Summary:\n")
+group_summary %>%
+  kable(digits = 1,
+        col.names = c("Group", "Description", "N", "Mean Lead 1972", "Mean Lead 1973"),
+        caption = "Sample Sizes and Mean Blood-Lead Levels by Group")
+
+# Check for missing IQ values
+missing_summary <- lead_data %>%
+  summarise(
+    missing_iqv = sum(is.na(iqv)),
+    missing_iqp = sum(is.na(iqp)),
+    missing_iqf = sum(is.na(iqf))
+  )
+
+cat("\n\nMissing IQ Data:\n")
+cat(sprintf("- Verbal IQ: %d missing\n", missing_summary$missing_iqv))
+cat(sprintf("- Performance IQ: %d missing\n", missing_summary$missing_iqp))
+cat(sprintf("- Full-Scale IQ: %d missing\n", missing_summary$missing_iqf))
+```
+
+---
+
+# Problem 6.67: Verbal IQ Analysis
+
+```{r verbal-iq-stats}
+cat("\n=== PROBLEM 6.67: VERBAL IQ BY LEAD EXPOSURE GROUP ===\n\n")
+
+# Calculate statistics by group
+verbal_iq_stats <- lead_data %>%
+  filter(!is.na(iqv) & !is.na(lead_grp)) %>%
+  group_by(lead_grp, lead_group_factor) %>%
+  summarise(
+    n = n(),
+    mean = mean(iqv),
+    sd = sd(iqv),
+    se = sd(iqv) / sqrt(n()),
+    median = median(iqv),
+    min = min(iqv),
+    max = max(iqv),
+    q25 = quantile(iqv, 0.25),
+    q75 = quantile(iqv, 0.75),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    ci_lower = mean - qt(0.975, n - 1) * se,
+    ci_upper = mean + qt(0.975, n - 1) * se,
+    ci_width = ci_upper - ci_lower
+  )
+
+cat("Verbal IQ: Descriptive Statistics by Lead Group\n\n")
+verbal_iq_stats %>%
+  select(lead_grp, n, mean, sd, se, median, min, max) %>%
+  kable(digits = 2,
+        col.names = c("Group", "N", "Mean", "SD", "SE", "Median", "Min", "Max"),
+        caption = "Verbal IQ Descriptive Statistics")
+
+cat("\n\n95% Confidence Intervals for Mean Verbal IQ:\n")
+verbal_iq_stats %>%
+  mutate(ci = sprintf("[%.2f, %.2f]", ci_lower, ci_upper)) %>%
+  select(lead_grp, lead_group_factor, n, mean, se, ci) %>%
+  kable(digits = 2,
+        col.names = c("Group", "Description", "N", "Mean", "SE", "95% CI"),
+        caption = "Mean Verbal IQ with 95% Confidence Intervals")
+```
+
+## Verbal IQ Box Plots
+
+```{r verbal-iq-boxplot, fig.height=8}
+# Create box plot
+p_verbal_box <- lead_data %>%
+  filter(!is.na(iqv) & !is.na(lead_grp)) %>%
+  ggplot(aes(x = lead_group_factor, y = iqv, fill = lead_group_factor)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16, outlier.size = 3) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "red", color = "darkred") +
+  geom_hline(yintercept = 100, linetype = "dashed", color = "blue", size = 1) +
+  labs(title = "Verbal IQ Distribution by Lead Exposure Group",
+       subtitle = "Red diamond = mean, Blue dashed line = population mean (100)",
+       x = "Lead Exposure Group",
+       y = "Verbal IQ Score",
+       caption = "Box shows median and IQR; whiskers extend to 1.5×IQR") +
+  scale_fill_manual(values = c("lightblue", "coral", "lightgreen")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(angle = 15, hjust = 1),
+        legend.position = "none")
+
+# Add mean and CI error bars
+p_verbal_ci <- verbal_iq_stats %>%
+  ggplot(aes(x = as.factor(lead_grp), y = mean, color = lead_group_factor)) +
+  geom_point(size = 5) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper),
+                width = 0.3, size = 1.2) +
+  geom_hline(yintercept = 100, linetype = "dashed", color = "blue", size = 1) +
+  labs(title = "Mean Verbal IQ with 95% Confidence Intervals",
+       subtitle = "Error bars show 95% CI for the mean",
+       x = "Lead Exposure Group",
+       y = "Mean Verbal IQ",
+       color = "Group") +
+  scale_color_manual(values = c("darkblue", "darkred", "darkgreen")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "bottom") +
+  guides(color = guide_legend(nrow = 2))
+
+grid.arrange(p_verbal_box, p_verbal_ci, ncol = 1, heights = c(1.2, 1))
+```
+
+## Verbal IQ: Summary
+
+```{r verbal-iq-summary}
+cat("\n\n=== SUMMARY: VERBAL IQ (PROBLEM 6.67) ===\n\n")
+
+cat("KEY FINDINGS:\n\n")
+
+for (i in 1:nrow(verbal_iq_stats)) {
+  cat(sprintf("%s (n = %d):\n",
+              verbal_iq_stats$lead_group_factor[i],
+              verbal_iq_stats$n[i]))
+  cat(sprintf("  - Mean: %.2f (SD = %.2f, SE = %.2f)\n",
+              verbal_iq_stats$mean[i],
+              verbal_iq_stats$sd[i],
+              verbal_iq_stats$se[i]))
+  cat(sprintf("  - 95%% CI: [%.2f, %.2f]\n",
+              verbal_iq_stats$ci_lower[i],
+              verbal_iq_stats$ci_upper[i]))
+  cat(sprintf("  - Median: %.1f (Range: %.0f - %.0f)\n\n",
+              verbal_iq_stats$median[i],
+              verbal_iq_stats$min[i],
+              verbal_iq_stats$max[i]))
+}
+
+# Compare groups
+cat("COMPARISON ACROSS GROUPS:\n\n")
+
+mean_diff_12 <- verbal_iq_stats$mean[1] - verbal_iq_stats$mean[2]
+mean_diff_13 <- verbal_iq_stats$mean[1] - verbal_iq_stats$mean[3]
+mean_diff_23 <- verbal_iq_stats$mean[2] - verbal_iq_stats$mean[3]
+
+cat(sprintf("- Group 1 vs Group 2: Mean difference = %.2f points\n", mean_diff_12))
+cat(sprintf("- Group 1 vs Group 3: Mean difference = %.2f points\n", mean_diff_13))
+cat(sprintf("- Group 2 vs Group 3: Mean difference = %.2f points\n\n", mean_diff_23))
+
+# Check CI overlap
+ci1 <- c(verbal_iq_stats$ci_lower[1], verbal_iq_stats$ci_upper[1])
+ci2 <- c(verbal_iq_stats$ci_lower[2], verbal_iq_stats$ci_upper[2])
+ci3 <- c(verbal_iq_stats$ci_lower[3], verbal_iq_stats$ci_upper[3])
+
+overlap_12 <- !(ci1[2] < ci2[1] | ci2[2] < ci1[1])
+overlap_13 <- !(ci1[2] < ci3[1] | ci3[2] < ci1[1])
+overlap_23 <- !(ci2[2] < ci3[1] | ci3[2] < ci2[1])
+
+cat("95% CI Overlap Assessment:\n")
+cat(sprintf("- Group 1 vs Group 2: %s\n",
+            ifelse(overlap_12, "CIs overlap (not significantly different)",
+                             "CIs do NOT overlap (significantly different)")))
+cat(sprintf("- Group 1 vs Group 3: %s\n",
+            ifelse(overlap_13, "CIs overlap (not significantly different)",
+                             "CIs do NOT overlap (significantly different)")))
+cat(sprintf("- Group 2 vs Group 3: %s\n",
+            ifelse(overlap_23, "CIs overlap (not significantly different)",
+                             "CIs do NOT overlap (significantly different)")))
+```
+
+---
+
+# Problem 6.68: Performance IQ Analysis
+
+```{r performance-iq-stats}
+cat("\n\n=== PROBLEM 6.68: PERFORMANCE IQ BY LEAD EXPOSURE GROUP ===\n\n")
+
+# Calculate statistics by group
+performance_iq_stats <- lead_data %>%
+  filter(!is.na(iqp) & !is.na(lead_grp)) %>%
+  group_by(lead_grp, lead_group_factor) %>%
+  summarise(
+    n = n(),
+    mean = mean(iqp),
+    sd = sd(iqp),
+    se = sd(iqp) / sqrt(n()),
+    median = median(iqp),
+    min = min(iqp),
+    max = max(iqp),
+    q25 = quantile(iqp, 0.25),
+    q75 = quantile(iqp, 0.75),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    ci_lower = mean - qt(0.975, n - 1) * se,
+    ci_upper = mean + qt(0.975, n - 1) * se,
+    ci_width = ci_upper - ci_lower
+  )
+
+cat("Performance IQ: Descriptive Statistics by Lead Group\n\n")
+performance_iq_stats %>%
+  select(lead_grp, n, mean, sd, se, median, min, max) %>%
+  kable(digits = 2,
+        col.names = c("Group", "N", "Mean", "SD", "SE", "Median", "Min", "Max"),
+        caption = "Performance IQ Descriptive Statistics")
+
+cat("\n\n95% Confidence Intervals for Mean Performance IQ:\n")
+performance_iq_stats %>%
+  mutate(ci = sprintf("[%.2f, %.2f]", ci_lower, ci_upper)) %>%
+  select(lead_grp, lead_group_factor, n, mean, se, ci) %>%
+  kable(digits = 2,
+        col.names = c("Group", "Description", "N", "Mean", "SE", "95% CI"),
+        caption = "Mean Performance IQ with 95% Confidence Intervals")
+```
+
+## Performance IQ Box Plots
+
+```{r performance-iq-boxplot, fig.height=8}
+# Create box plot
+p_performance_box <- lead_data %>%
+  filter(!is.na(iqp) & !is.na(lead_grp)) %>%
+  ggplot(aes(x = lead_group_factor, y = iqp, fill = lead_group_factor)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16, outlier.size = 3) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "red", color = "darkred") +
+  geom_hline(yintercept = 100, linetype = "dashed", color = "blue", size = 1) +
+  labs(title = "Performance IQ Distribution by Lead Exposure Group",
+       subtitle = "Red diamond = mean, Blue dashed line = population mean (100)",
+       x = "Lead Exposure Group",
+       y = "Performance IQ Score",
+       caption = "Box shows median and IQR; whiskers extend to 1.5×IQR") +
+  scale_fill_manual(values = c("lightblue", "coral", "lightgreen")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(angle = 15, hjust = 1),
+        legend.position = "none")
+
+# Add mean and CI error bars
+p_performance_ci <- performance_iq_stats %>%
+  ggplot(aes(x = as.factor(lead_grp), y = mean, color = lead_group_factor)) +
+  geom_point(size = 5) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper),
+                width = 0.3, size = 1.2) +
+  geom_hline(yintercept = 100, linetype = "dashed", color = "blue", size = 1) +
+  labs(title = "Mean Performance IQ with 95% Confidence Intervals",
+       subtitle = "Error bars show 95% CI for the mean",
+       x = "Lead Exposure Group",
+       y = "Mean Performance IQ",
+       color = "Group") +
+  scale_color_manual(values = c("darkblue", "darkred", "darkgreen")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "bottom") +
+  guides(color = guide_legend(nrow = 2))
+
+grid.arrange(p_performance_box, p_performance_ci, ncol = 1, heights = c(1.2, 1))
+```
+
+## Performance IQ: Summary
+
+```{r performance-iq-summary}
+cat("\n\n=== SUMMARY: PERFORMANCE IQ (PROBLEM 6.68) ===\n\n")
+
+cat("KEY FINDINGS:\n\n")
+
+for (i in 1:nrow(performance_iq_stats)) {
+  cat(sprintf("%s (n = %d):\n",
+              performance_iq_stats$lead_group_factor[i],
+              performance_iq_stats$n[i]))
+  cat(sprintf("  - Mean: %.2f (SD = %.2f, SE = %.2f)\n",
+              performance_iq_stats$mean[i],
+              performance_iq_stats$sd[i],
+              performance_iq_stats$se[i]))
+  cat(sprintf("  - 95%% CI: [%.2f, %.2f]\n",
+              performance_iq_stats$ci_lower[i],
+              performance_iq_stats$ci_upper[i]))
+  cat(sprintf("  - Median: %.1f (Range: %.0f - %.0f)\n\n",
+              performance_iq_stats$median[i],
+              performance_iq_stats$min[i],
+              performance_iq_stats$max[i]))
+}
+
+# Compare groups
+cat("COMPARISON ACROSS GROUPS:\n\n")
+
+mean_diff_12 <- performance_iq_stats$mean[1] - performance_iq_stats$mean[2]
+mean_diff_13 <- performance_iq_stats$mean[1] - performance_iq_stats$mean[3]
+mean_diff_23 <- performance_iq_stats$mean[2] - performance_iq_stats$mean[3]
+
+cat(sprintf("- Group 1 vs Group 2: Mean difference = %.2f points\n", mean_diff_12))
+cat(sprintf("- Group 1 vs Group 3: Mean difference = %.2f points\n", mean_diff_13))
+cat(sprintf("- Group 2 vs Group 3: Mean difference = %.2f points\n\n", mean_diff_23))
+
+# Check CI overlap
+ci1 <- c(performance_iq_stats$ci_lower[1], performance_iq_stats$ci_upper[1])
+ci2 <- c(performance_iq_stats$ci_lower[2], performance_iq_stats$ci_upper[2])
+ci3 <- c(performance_iq_stats$ci_lower[3], performance_iq_stats$ci_upper[3])
+
+overlap_12 <- !(ci1[2] < ci2[1] | ci2[2] < ci1[1])
+overlap_13 <- !(ci1[2] < ci3[1] | ci3[2] < ci1[1])
+overlap_23 <- !(ci2[2] < ci3[1] | ci3[2] < ci2[1])
+
+cat("95% CI Overlap Assessment:\n")
+cat(sprintf("- Group 1 vs Group 2: %s\n",
+            ifelse(overlap_12, "CIs overlap (not significantly different)",
+                             "CIs do NOT overlap (significantly different)")))
+cat(sprintf("- Group 1 vs Group 3: %s\n",
+            ifelse(overlap_13, "CIs overlap (not significantly different)",
+                             "CIs do NOT overlap (significantly different)")))
+cat(sprintf("- Group 2 vs Group 3: %s\n",
+            ifelse(overlap_23, "CIs overlap (not significantly different)",
+                             "CIs do NOT overlap (significantly different)")))
+```
+
+---
+
+# Problem 6.69: Full-Scale IQ Analysis
+
+```{r fullscale-iq-stats}
+cat("\n\n=== PROBLEM 6.69: FULL-SCALE IQ BY LEAD EXPOSURE GROUP ===\n\n")
+
+# Calculate statistics by group
+fullscale_iq_stats <- lead_data %>%
+  filter(!is.na(iqf) & !is.na(lead_grp)) %>%
+  group_by(lead_grp, lead_group_factor) %>%
+  summarise(
+    n = n(),
+    mean = mean(iqf),
+    sd = sd(iqf),
+    se = sd(iqf) / sqrt(n()),
+    median = median(iqf),
+    min = min(iqf),
+    max = max(iqf),
+    q25 = quantile(iqf, 0.25),
+    q75 = quantile(iqf, 0.75),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    ci_lower = mean - qt(0.975, n - 1) * se,
+    ci_upper = mean + qt(0.975, n - 1) * se,
+    ci_width = ci_upper - ci_lower
+  )
+
+cat("Full-Scale IQ: Descriptive Statistics by Lead Group\n\n")
+fullscale_iq_stats %>%
+  select(lead_grp, n, mean, sd, se, median, min, max) %>%
+  kable(digits = 2,
+        col.names = c("Group", "N", "Mean", "SD", "SE", "Median", "Min", "Max"),
+        caption = "Full-Scale IQ Descriptive Statistics")
+
+cat("\n\n95% Confidence Intervals for Mean Full-Scale IQ:\n")
+fullscale_iq_stats %>%
+  mutate(ci = sprintf("[%.2f, %.2f]", ci_lower, ci_upper)) %>%
+  select(lead_grp, lead_group_factor, n, mean, se, ci) %>%
+  kable(digits = 2,
+        col.names = c("Group", "Description", "N", "Mean", "SE", "95% CI"),
+        caption = "Mean Full-Scale IQ with 95% Confidence Intervals")
+```
+
+## Full-Scale IQ Box Plots
+
+```{r fullscale-iq-boxplot, fig.height=8}
+# Create box plot
+p_fullscale_box <- lead_data %>%
+  filter(!is.na(iqf) & !is.na(lead_grp)) %>%
+  ggplot(aes(x = lead_group_factor, y = iqf, fill = lead_group_factor)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16, outlier.size = 3) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "red", color = "darkred") +
+  geom_hline(yintercept = 100, linetype = "dashed", color = "blue", size = 1) +
+  labs(title = "Full-Scale IQ Distribution by Lead Exposure Group",
+       subtitle = "Red diamond = mean, Blue dashed line = population mean (100)",
+       x = "Lead Exposure Group",
+       y = "Full-Scale IQ Score",
+       caption = "Box shows median and IQR; whiskers extend to 1.5×IQR") +
+  scale_fill_manual(values = c("lightblue", "coral", "lightgreen")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(angle = 15, hjust = 1),
+        legend.position = "none")
+
+# Add mean and CI error bars
+p_fullscale_ci <- fullscale_iq_stats %>%
+  ggplot(aes(x = as.factor(lead_grp), y = mean, color = lead_group_factor)) +
+  geom_point(size = 5) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper),
+                width = 0.3, size = 1.2) +
+  geom_hline(yintercept = 100, linetype = "dashed", color = "blue", size = 1) +
+  labs(title = "Mean Full-Scale IQ with 95% Confidence Intervals",
+       subtitle = "Error bars show 95% CI for the mean",
+       x = "Lead Exposure Group",
+       y = "Mean Full-Scale IQ",
+       color = "Group") +
+  scale_color_manual(values = c("darkblue", "darkred", "darkgreen")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "bottom") +
+  guides(color = guide_legend(nrow = 2))
+
+grid.arrange(p_fullscale_box, p_fullscale_ci, ncol = 1, heights = c(1.2, 1))
+```
+
+## Full-Scale IQ: Summary
+
+```{r fullscale-iq-summary}
+cat("\n\n=== SUMMARY: FULL-SCALE IQ (PROBLEM 6.69) ===\n\n")
+
+cat("KEY FINDINGS:\n\n")
+
+for (i in 1:nrow(fullscale_iq_stats)) {
+  cat(sprintf("%s (n = %d):\n",
+              fullscale_iq_stats$lead_group_factor[i],
+              fullscale_iq_stats$n[i]))
+  cat(sprintf("  - Mean: %.2f (SD = %.2f, SE = %.2f)\n",
+              fullscale_iq_stats$mean[i],
+              fullscale_iq_stats$sd[i],
+              fullscale_iq_stats$se[i]))
+  cat(sprintf("  - 95%% CI: [%.2f, %.2f]\n",
+              fullscale_iq_stats$ci_lower[i],
+              fullscale_iq_stats$ci_upper[i]))
+  cat(sprintf("  - Median: %.1f (Range: %.0f - %.0f)\n\n",
+              fullscale_iq_stats$median[i],
+              fullscale_iq_stats$min[i],
+              fullscale_iq_stats$max[i]))
+}
+
+# Compare groups
+cat("COMPARISON ACROSS GROUPS:\n\n")
+
+mean_diff_12 <- fullscale_iq_stats$mean[1] - fullscale_iq_stats$mean[2]
+mean_diff_13 <- fullscale_iq_stats$mean[1] - fullscale_iq_stats$mean[3]
+mean_diff_23 <- fullscale_iq_stats$mean[2] - fullscale_iq_stats$mean[3]
+
+cat(sprintf("- Group 1 vs Group 2: Mean difference = %.2f points\n", mean_diff_12))
+cat(sprintf("- Group 1 vs Group 3: Mean difference = %.2f points\n", mean_diff_13))
+cat(sprintf("- Group 2 vs Group 3: Mean difference = %.2f points\n\n", mean_diff_23))
+
+# Check CI overlap
+ci1 <- c(fullscale_iq_stats$ci_lower[1], fullscale_iq_stats$ci_upper[1])
+ci2 <- c(fullscale_iq_stats$ci_lower[2], fullscale_iq_stats$ci_upper[2])
+ci3 <- c(fullscale_iq_stats$ci_lower[3], fullscale_iq_stats$ci_upper[3])
+
+overlap_12 <- !(ci1[2] < ci2[1] | ci2[2] < ci1[1])
+overlap_13 <- !(ci1[2] < ci3[1] | ci3[2] < ci1[1])
+overlap_23 <- !(ci2[2] < ci3[1] | ci3[2] < ci2[1])
+
+cat("95% CI Overlap Assessment:\n")
+cat(sprintf("- Group 1 vs Group 2: %s\n",
+            ifelse(overlap_12, "CIs overlap (not significantly different)",
+                             "CIs do NOT overlap (significantly different)")))
+cat(sprintf("- Group 1 vs Group 3: %s\n",
+            ifelse(overlap_13, "CIs overlap (not significantly different)",
+                             "CIs do NOT overlap (significantly different)")))
+cat(sprintf("- Group 2 vs Group 3: %s\n",
+            ifelse(overlap_23, "CIs overlap (not significantly different)",
+                             "CIs do NOT overlap (significantly different)")))
+```
+
+---
+
+# Comprehensive Comparison
+
+```{r comprehensive-comparison, fig.height=10}
+cat("\n\n=== COMPREHENSIVE COMPARISON: ALL IQ MEASURES ===\n\n")
+
+# Combine all statistics
+all_iq_stats <- bind_rows(
+  verbal_iq_stats %>% mutate(IQ_Type = "Verbal IQ"),
+  performance_iq_stats %>% mutate(IQ_Type = "Performance IQ"),
+  fullscale_iq_stats %>% mutate(IQ_Type = "Full-Scale IQ")
+)
+
+cat("Summary Table: All IQ Types by Lead Group\n")
+all_iq_stats %>%
+  select(IQ_Type, lead_grp, n, mean, sd, ci_lower, ci_upper) %>%
+  arrange(IQ_Type, lead_grp) %>%
+  kable(digits = 2,
+        col.names = c("IQ Type", "Group", "N", "Mean", "SD", "CI Lower", "CI Upper"),
+        caption = "Complete Summary: All IQ Measures by Lead Exposure Group")
+
+# Side-by-side comparison plot
+p_comparison <- all_iq_stats %>%
+  ggplot(aes(x = as.factor(lead_grp), y = mean, color = IQ_Type, group = IQ_Type)) +
+  geom_point(size = 4, position = position_dodge(width = 0.3)) +
+  geom_line(size = 1, position = position_dodge(width = 0.3)) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper),
+                width = 0.2, size = 1, position = position_dodge(width = 0.3)) +
+  geom_hline(yintercept = 100, linetype = "dashed", color = "gray50", size = 1) +
+  labs(title = "Comparison of All IQ Measures Across Lead Exposure Groups",
+       subtitle = "Error bars show 95% confidence intervals; Dashed line = population mean (100)",
+       x = "Lead Exposure Group",
+       y = "Mean IQ Score",
+       color = "IQ Measure") +
+  scale_x_discrete(labels = c("1\n(Low Both Years)", "2\n(High in 1973)", "3\n(High 1972, Low 1973)")) +
+  scale_color_manual(values = c("darkblue", "darkred", "darkgreen")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "top")
+
+print(p_comparison)
+
+# Grouped bar chart
+p_bars <- all_iq_stats %>%
+  ggplot(aes(x = as.factor(lead_grp), y = mean, fill = IQ_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), alpha = 0.7) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper),
+                width = 0.2, position = position_dodge(width = 0.8)) +
+  geom_hline(yintercept = 100, linetype = "dashed", color = "gray50", size = 1) +
+  labs(title = "Mean IQ Scores by Lead Exposure Group and IQ Type",
+       subtitle = "Error bars show 95% CI",
+       x = "Lead Exposure Group",
+       y = "Mean IQ Score",
+       fill = "IQ Type") +
+  scale_x_discrete(labels = c("Group 1", "Group 2", "Group 3")) +
+  scale_fill_manual(values = c("steelblue", "coral", "forestgreen")) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "top")
+
+print(p_bars)
+```
+
+## Pattern Analysis
+
+```{r pattern-analysis}
+cat("\n\n=== PATTERN ANALYSIS ===\n\n")
+
+cat("1. OVERALL IQ LEVELS RELATIVE TO POPULATION MEAN (100):\n\n")
+
+for (iq_type in c("Verbal IQ", "Performance IQ", "Full-Scale IQ")) {
+  cat(sprintf("%s:\n", iq_type))
+
+  type_stats <- all_iq_stats %>% filter(IQ_Type == iq_type)
+
+  for (i in 1:nrow(type_stats)) {
+    below_100 <- type_stats$ci_upper[i] < 100
+    above_100 <- type_stats$ci_lower[i] > 100
+    includes_100 <- !below_100 & !above_100
+
+    cat(sprintf("  - Group %d: Mean = %.2f, 95%% CI [%.2f, %.2f] - %s\n",
+                type_stats$lead_grp[i],
+                type_stats$mean[i],
+                type_stats$ci_lower[i],
+                type_stats$ci_upper[i],
+                ifelse(below_100, "Significantly BELOW population mean",
+                      ifelse(above_100, "Significantly ABOVE population mean",
+                            "Not significantly different from population mean"))))
+  }
+  cat("\n")
+}
+
+cat("\n2. GROUP COMPARISONS (Consistent Patterns):\n\n")
+
+# Check if Group 1 consistently highest
+verbal_pattern <- verbal_iq_stats$mean[1] > verbal_iq_stats$mean[2] &&
+                  verbal_iq_stats$mean[1] > verbal_iq_stats$mean[3]
+perf_pattern <- performance_iq_stats$mean[1] > performance_iq_stats$mean[2] &&
+                performance_iq_stats$mean[1] > performance_iq_stats$mean[3]
+full_pattern <- fullscale_iq_stats$mean[1] > fullscale_iq_stats$mean[2] &&
+                fullscale_iq_stats$mean[1] > fullscale_iq_stats$mean[3]
+
+if (verbal_pattern && perf_pattern && full_pattern) {
+  cat("✓ CONSISTENT PATTERN: Group 1 (low lead in both years) shows highest IQ across ALL measures\n")
+  cat("  - This suggests protective effect of consistently low lead exposure\n\n")
+} else {
+  cat("✗ Pattern varies across IQ types\n\n")
+}
+
+# Check if Group 2 consistently lowest
+verbal_lowest_2 <- verbal_iq_stats$mean[2] < verbal_iq_stats$mean[1] &&
+                   verbal_iq_stats$mean[2] < verbal_iq_stats$mean[3]
+perf_lowest_2 <- performance_iq_stats$mean[2] < performance_iq_stats$mean[1] &&
+                 performance_iq_stats$mean[2] < performance_iq_stats$mean[3]
+full_lowest_2 <- fullscale_iq_stats$mean[2] < fullscale_iq_stats$mean[1] &&
+                 fullscale_iq_stats$mean[2] < fullscale_iq_stats$mean[3]
+
+if (verbal_lowest_2 && perf_lowest_2 && full_lowest_2) {
+  cat("✓ CONSISTENT PATTERN: Group 2 (high lead in 1973) shows lowest IQ across ALL measures\n")
+  cat("  - This suggests adverse effect of current high lead exposure\n\n")
+} else {
+  cat("✗ Lowest group varies across IQ types\n\n")
+}
+
+cat("\n3. EFFECT OF LEAD REDUCTION (Group 3 vs Group 2):\n\n")
+
+verbal_improved <- verbal_iq_stats$mean[3] > verbal_iq_stats$mean[2]
+perf_improved <- performance_iq_stats$mean[3] > performance_iq_stats$mean[2]
+full_improved <- fullscale_iq_stats$mean[3] > fullscale_iq_stats$mean[2]
+
+cat(sprintf("- Verbal IQ: Group 3 mean %.2f vs Group 2 mean %.2f (%s)\n",
+            verbal_iq_stats$mean[3], verbal_iq_stats$mean[2],
+            ifelse(verbal_improved, "Improved after reduction", "No improvement")))
+cat(sprintf("- Performance IQ: Group 3 mean %.2f vs Group 2 mean %.2f (%s)\n",
+            performance_iq_stats$mean[3], performance_iq_stats$mean[2],
+            ifelse(perf_improved, "Improved after reduction", "No improvement")))
+cat(sprintf("- Full-Scale IQ: Group 3 mean %.2f vs Group 2 mean %.2f (%s)\n\n",
+            fullscale_iq_stats$mean[3], fullscale_iq_stats$mean[2],
+            ifelse(full_improved, "Improved after reduction", "No improvement")))
+
+if (verbal_improved && perf_improved && full_improved) {
+  cat("✓ Children with reduced lead exposure (Group 3) show better IQ than those with continued high exposure (Group 2)\n")
+  cat("  - Suggests potential benefit of lead reduction interventions\n")
+}
+```
+
+---
+
+# Overall Conclusions
+
+```{r overall-conclusions}
+cat("\n\n=== OVERALL CONCLUSIONS: PROBLEMS 6.67-6.69 ===\n\n")
+
+cat("SUMMARY OF FINDINGS:\n\n")
+
+cat("1. DESCRIPTIVE STATISTICS COMPLETED:\n")
+cat("   ✓ Calculated mean, SD, SE, and 95% CI for all three IQ measures\n")
+cat("   ✓ Provided comprehensive summary statistics by lead exposure group\n")
+cat("   ✓ Created box plots showing distributions and group comparisons\n\n")
+
+cat("2. KEY FINDINGS BY IQ TYPE:\n\n")
+
+cat("   VERBAL IQ (Problem 6.67):\n")
+cat(sprintf("   - Group 1: %.2f [%.2f, %.2f]\n",
+            verbal_iq_stats$mean[1], verbal_iq_stats$ci_lower[1], verbal_iq_stats$ci_upper[1]))
+cat(sprintf("   - Group 2: %.2f [%.2f, %.2f]\n",
+            verbal_iq_stats$mean[2], verbal_iq_stats$ci_lower[2], verbal_iq_stats$ci_upper[2]))
+cat(sprintf("   - Group 3: %.2f [%.2f, %.2f]\n\n",
+            verbal_iq_stats$mean[3], verbal_iq_stats$ci_lower[3], verbal_iq_stats$ci_upper[3]))
+
+cat("   PERFORMANCE IQ (Problem 6.68):\n")
+cat(sprintf("   - Group 1: %.2f [%.2f, %.2f]\n",
+            performance_iq_stats$mean[1], performance_iq_stats$ci_lower[1], performance_iq_stats$ci_upper[1]))
+cat(sprintf("   - Group 2: %.2f [%.2f, %.2f]\n",
+            performance_iq_stats$mean[2], performance_iq_stats$ci_lower[2], performance_iq_stats$ci_upper[2]))
+cat(sprintf("   - Group 3: %.2f [%.2f, %.2f]\n\n",
+            performance_iq_stats$mean[3], performance_iq_stats$ci_lower[3], performance_iq_stats$ci_upper[3]))
+
+cat("   FULL-SCALE IQ (Problem 6.69):\n")
+cat(sprintf("   - Group 1: %.2f [%.2f, %.2f]\n",
+            fullscale_iq_stats$mean[1], fullscale_iq_stats$ci_lower[1], fullscale_iq_stats$ci_upper[1]))
+cat(sprintf("   - Group 2: %.2f [%.2f, %.2f]\n",
+            fullscale_iq_stats$mean[2], fullscale_iq_stats$ci_lower[2], fullscale_iq_stats$ci_upper[2]))
+cat(sprintf("   - Group 3: %.2f [%.2f, %.2f]\n\n",
+            fullscale_iq_stats$mean[3], fullscale_iq_stats$ci_lower[3], fullscale_iq_stats$ci_upper[3]))
+
+cat("3. ENVIRONMENTAL HEALTH IMPLICATIONS:\n\n")
+
+avg_diff_1_2 <- mean(c(verbal_iq_stats$mean[1] - verbal_iq_stats$mean[2],
+                        performance_iq_stats$mean[1] - performance_iq_stats$mean[2],
+                        fullscale_iq_stats$mean[1] - fullscale_iq_stats$mean[2]))
+
+cat(sprintf("   - Average IQ difference (Low vs High lead): %.2f points\n", avg_diff_1_2))
+cat("   - Lead exposure associated with measurable cognitive deficits\n")
+cat("   - Effects consistent across verbal, performance, and full-scale IQ\n")
+cat("   - Public health significance: Even moderate lead exposure affects child development\n\n")
+
+cat("4. CLINICAL SIGNIFICANCE:\n")
+cat("   - IQ differences of 5+ points are considered educationally meaningful\n")
+cat("   - Children with elevated lead exposure may require additional educational support\n")
+cat("   - Early intervention and lead reduction strategies are critical\n\n")
+
+cat("5. RECOMMENDATIONS:\n")
+cat("   - Continue monitoring blood-lead levels in at-risk children\n")
+cat("   - Implement lead abatement programs in high-exposure areas\n")
+cat("   - Provide developmental screening for lead-exposed children\n")
+cat("   - Further research on long-term effects and intervention effectiveness\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
