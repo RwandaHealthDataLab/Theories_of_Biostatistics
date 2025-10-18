@@ -1,0 +1,579 @@
+---
+title: "Endocrinology: Smoking and Bone Mineral Density in Twins"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.width = 12, fig.height = 8)
+```
+
+# Background
+
+This analysis examines the relationship between smoking and bone mineral density (BMD) using data from 41 pairs of twins. The twin study design is particularly powerful because it controls for genetic factors and many environmental influences.
+
+**Study Design:** Twin pairs where one twin smokes more heavily than the other
+
+**Measurements:**
+- **Lumbar Spine (ls)**: Bone density at lumbar spine (g/cm²)
+- **Femoral Neck (fn)**: Bone density at femoral neck (g/cm²)
+- **Femoral Shaft (fs)**: Bone density at femoral shaft (g/cm²)
+- **Pack-years (pyr)**: Measure of smoking exposure
+
+**Research Questions:**
+1. Is smoking related to bone density?
+2. Does the effect become stronger when we focus on twin pairs with larger differences in smoking?
+
+**Analysis Strategy:**
+- Compare bone density between heavier-smoking and lighter-smoking twins
+- Use binomial distribution to test if the number of negative differences (heavier smoker has lower BMD) is greater than expected by chance
+- Repeat analysis for top 20 twin pairs with largest smoking differences
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+library(gridExtra)
+library(scales)
+```
+
+# Data Import
+
+```{r data-import}
+# Read the BONEDEN dataset
+boneden_data <- read.csv("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/BONEDEN.DAT.txt",
+                         check.names = FALSE)
+
+# Remove quotes from column names
+colnames(boneden_data) <- gsub("'", "", colnames(boneden_data))
+
+# Display variable information
+cat("Dataset Structure:\n")
+str(boneden_data)
+
+cat("\n\nVariable Descriptions:\n")
+cat("ID: Twin pair identification\n")
+cat("age: Age in years\n")
+cat("zyg: Zygosity (1 = monozygotic/identical, 2 = dizygotic/fraternal)\n")
+cat("\nTwin 1 variables (suffix 1):\n")
+cat("  pyr1: Pack-years of smoking\n")
+cat("  ls1: Lumbar spine BMD (g/cm²)\n")
+cat("  fn1: Femoral neck BMD (g/cm²)\n")
+cat("  fs1: Femoral shaft BMD (g/cm²)\n")
+cat("\nTwin 2 variables (suffix 2):\n")
+cat("  pyr2: Pack-years of smoking\n")
+cat("  ls2: Lumbar spine BMD (g/cm²)\n")
+cat("  fn2: Femoral neck BMD (g/cm²)\n")
+cat("  fs2: Femoral shaft BMD (g/cm²)\n")
+
+# Display first rows
+head(boneden_data, 10) %>%
+  select(ID, age, pyr1, ls1, fn1, fs1, pyr2, ls2, fn2, fs2) %>%
+  kable(caption = "First 10 Twin Pairs - Key Variables", digits = 3)
+
+cat(sprintf("\n\nTotal number of twin pairs: %d\n", nrow(boneden_data)))
+```
+
+# Data Processing
+
+```{r data-processing}
+# Identify heavier and lighter smoker in each pair
+boneden_processed <- boneden_data %>%
+  mutate(
+    # Determine who smokes more
+    heavier_pyr = pmax(pyr1, pyr2),
+    lighter_pyr = pmin(pyr1, pyr2),
+    smoking_diff = abs(pyr1 - pyr2),
+
+    # BMD for heavier smoker
+    heavier_ls = ifelse(pyr1 > pyr2, ls1, ls2),
+    heavier_fn = ifelse(pyr1 > pyr2, fn1, fn2),
+    heavier_fs = ifelse(pyr1 > pyr2, fs1, fs2),
+
+    # BMD for lighter smoker
+    lighter_ls = ifelse(pyr1 > pyr2, ls2, ls1),
+    lighter_fn = ifelse(pyr1 > pyr2, fn2, fn1),
+    lighter_fs = ifelse(pyr1 > pyr2, fs2, fs1),
+
+    # Handle ties (if both smoke same amount, use twin 1 as heavier)
+    heavier_ls = ifelse(pyr1 == pyr2, ls1, heavier_ls),
+    heavier_fn = ifelse(pyr1 == pyr2, fn1, heavier_fn),
+    heavier_fs = ifelse(pyr1 == pyr2, fs1, heavier_fs),
+    lighter_ls = ifelse(pyr1 == pyr2, ls2, lighter_ls),
+    lighter_fn = ifelse(pyr1 == pyr2, fn2, lighter_fn),
+    lighter_fs = ifelse(pyr1 == pyr2, fs2, lighter_fs),
+
+    # Calculate differences (heavier - lighter)
+    diff_ls = heavier_ls - lighter_ls,
+    diff_fn = heavier_fn - lighter_fn,
+    diff_fs = heavier_fs - lighter_fs
+  )
+
+# Summary of smoking differences
+cat("Smoking Differences Summary (pack-years):\n")
+summary(boneden_processed$smoking_diff) %>% print()
+
+cat("\n\nBMD Differences Summary:\n")
+cat("Lumbar Spine:\n")
+summary(boneden_processed$diff_ls) %>% print()
+cat("\nFemoral Neck:\n")
+summary(boneden_processed$diff_fn) %>% print()
+cat("\nFemoral Shaft:\n")
+summary(boneden_processed$diff_fs) %>% print()
+```
+
+---
+
+# Problem 4.78: Lumbar Spine - All 41 Twin Pairs
+
+**Question:** Calculate the difference in bone density of the lumbar spine between the heavier-smoking twin and the lighter-smoking twin. If smoking has no relationship to bone density, what would be the expected number of twin pairs with negative difference scores? What is the actual number? Is smoking related to bone density of the lumbar spine?
+
+## Analysis
+
+```{r problem-4.78}
+cat("=== PROBLEM 4.78: LUMBAR SPINE - ALL 41 PAIRS ===\n\n")
+
+n_pairs <- nrow(boneden_processed)
+cat(sprintf("Total twin pairs: %d\n\n", n_pairs))
+
+# Count negative differences
+n_negative_ls <- sum(boneden_processed$diff_ls < 0)
+n_positive_ls <- sum(boneden_processed$diff_ls > 0)
+n_zero_ls <- sum(boneden_processed$diff_ls == 0)
+
+cat("Difference Distribution (Heavier smoker - Lighter smoker):\n")
+cat(sprintf("  Negative differences (heavier has LOWER BMD): %d\n", n_negative_ls))
+cat(sprintf("  Positive differences (heavier has HIGHER BMD): %d\n", n_positive_ls))
+cat(sprintf("  Zero differences (same BMD): %d\n\n", n_zero_ls))
+
+# Under null hypothesis (no relationship), p = 0.5 for negative difference
+cat("HYPOTHESIS TEST:\n")
+cat("H₀: Smoking has no relationship to bone density (p = 0.5)\n")
+cat("H₁: Heavier smokers tend to have lower BMD (p > 0.5)\n\n")
+
+# Expected number under H0
+p_null <- 0.5
+expected_negative <- n_pairs * p_null
+
+cat(sprintf("Expected number of negative differences under H₀: %.1f\n", expected_negative))
+cat(sprintf("Observed number of negative differences: %d\n\n", n_negative_ls))
+
+# Binomial test
+# P-value for observing k or more negative differences
+p_value_ls <- pbinom(n_negative_ls - 1, size = n_pairs, prob = p_null, lower.tail = FALSE)
+
+cat("Binomial Test Results:\n")
+cat(sprintf("Sample size (n): %d\n", n_pairs))
+cat(sprintf("Number of negative differences (k): %d\n", n_negative_ls))
+cat(sprintf("Probability under H₀ (p): %.2f\n", p_null))
+cat(sprintf("P(X ≥ %d | n=%d, p=%.2f) = %.6f\n\n", n_negative_ls, n_pairs, p_null, p_value_ls))
+
+# Two-sided test (more conservative)
+p_value_two_sided <- 2 * min(p_value_ls, 1 - p_value_ls)
+cat(sprintf("Two-sided p-value: %.6f\n\n", p_value_two_sided))
+
+# Interpretation
+cat("CONCLUSION:\n")
+if (p_value_ls < 0.05) {
+  cat(sprintf("At α = 0.05, we REJECT the null hypothesis (p = %.4f).\n", p_value_ls))
+  cat("There IS statistically significant evidence that smoking is related to\n")
+  cat("bone density of the lumbar spine.\n\n")
+  cat("The heavier-smoking twins have significantly LOWER bone density.\n")
+} else {
+  cat(sprintf("At α = 0.05, we FAIL TO REJECT the null hypothesis (p = %.4f).\n", p_value_ls))
+  cat("There is NOT sufficient evidence that smoking is related to\n")
+  cat("bone density of the lumbar spine at the 5% significance level.\n")
+}
+
+cat("\nEFFECT SIZE:\n")
+mean_diff_ls <- mean(boneden_processed$diff_ls)
+cat(sprintf("Mean difference: %.4f g/cm²\n", mean_diff_ls))
+if (mean_diff_ls < 0) {
+  cat("On average, heavier smokers have LOWER lumbar spine BMD.\n")
+} else {
+  cat("On average, heavier smokers have HIGHER lumbar spine BMD.\n")
+}
+```
+
+## Visualization
+
+```{r problem-4.78-plot}
+# Create visualization
+p1 <- ggplot(boneden_processed, aes(x = diff_ls)) +
+  geom_histogram(aes(fill = diff_ls < 0), bins = 15, alpha = 0.7, color = "black") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red", size = 1) +
+  geom_vline(xintercept = mean_diff_ls, linetype = "solid", color = "blue", size = 1) +
+  scale_fill_manual(values = c("TRUE" = "coral", "FALSE" = "lightblue"),
+                    labels = c("Positive", "Negative"),
+                    name = "Difference Sign") +
+  labs(title = "Distribution of BMD Differences - Lumbar Spine (All 41 Pairs)",
+       subtitle = sprintf("Red line = 0, Blue line = mean (%.4f)", mean_diff_ls),
+       x = "Difference in BMD (Heavier smoker - Lighter smoker) [g/cm²]",
+       y = "Frequency") +
+  theme_minimal()
+
+# Scatter plot
+p2 <- ggplot(boneden_processed, aes(x = smoking_diff, y = diff_ls)) +
+  geom_point(size = 3, alpha = 0.6, color = "steelblue") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  geom_smooth(method = "lm", se = TRUE, color = "darkblue") +
+  labs(title = "BMD Difference vs Smoking Difference - Lumbar Spine",
+       x = "Smoking Difference (pack-years)",
+       y = "BMD Difference (g/cm²)") +
+  theme_minimal()
+
+grid.arrange(p1, p2, ncol = 1)
+```
+
+---
+
+# Problem 4.79: Lumbar Spine - Top 20 Pairs
+
+**Question:** Sort the differences in smoking between members of a twin pair (expressed in pack-years). Identify the subgroup of 20 twin pairs with the largest differences in smoking. Answer Problem 4.78 based on this subgroup.
+
+## Analysis
+
+```{r problem-4.79}
+cat("\n\n=== PROBLEM 4.79: LUMBAR SPINE - TOP 20 PAIRS ===\n\n")
+
+# Sort by smoking difference and select top 20
+boneden_top20 <- boneden_processed %>%
+  arrange(desc(smoking_diff)) %>%
+  slice(1:20)
+
+cat("Top 20 pairs by smoking difference:\n")
+boneden_top20 %>%
+  select(ID, smoking_diff, diff_ls) %>%
+  kable(digits = 3,
+        col.names = c("Pair ID", "Smoking Diff (pack-years)", "BMD Diff (g/cm²)"),
+        caption = "Top 20 Twin Pairs with Largest Smoking Differences")
+
+n_pairs_top20 <- 20
+n_negative_ls_top20 <- sum(boneden_top20$diff_ls < 0)
+n_positive_ls_top20 <- sum(boneden_top20$diff_ls > 0)
+n_zero_ls_top20 <- sum(boneden_top20$diff_ls == 0)
+
+cat("\n\nDifference Distribution in Top 20:\n")
+cat(sprintf("  Negative differences: %d\n", n_negative_ls_top20))
+cat(sprintf("  Positive differences: %d\n", n_positive_ls_top20))
+cat(sprintf("  Zero differences: %d\n\n", n_zero_ls_top20))
+
+# Expected under H0
+expected_negative_top20 <- n_pairs_top20 * p_null
+
+cat(sprintf("Expected negative differences under H₀: %.1f\n", expected_negative_top20))
+cat(sprintf("Observed negative differences: %d\n\n", n_negative_ls_top20))
+
+# Binomial test
+p_value_ls_top20 <- pbinom(n_negative_ls_top20 - 1, size = n_pairs_top20, prob = p_null,
+                            lower.tail = FALSE)
+
+cat("Binomial Test Results (Top 20):\n")
+cat(sprintf("P(X ≥ %d | n=%d, p=%.2f) = %.6f\n\n", n_negative_ls_top20, n_pairs_top20,
+            p_null, p_value_ls_top20))
+
+# Interpretation
+cat("CONCLUSION:\n")
+if (p_value_ls_top20 < 0.05) {
+  cat(sprintf("At α = 0.05, we REJECT the null hypothesis (p = %.4f).\n", p_value_ls_top20))
+  cat("There IS statistically significant evidence that smoking is related to\n")
+  cat("lumbar spine BMD in pairs with large smoking differences.\n\n")
+  cat("The effect is STRONGER when focusing on pairs with larger smoking differences.\n")
+} else {
+  cat(sprintf("At α = 0.05, we FAIL TO REJECT the null hypothesis (p = %.4f).\n",
+              p_value_ls_top20))
+  cat("There is NOT sufficient evidence of a relationship in this subgroup.\n")
+}
+
+mean_diff_ls_top20 <- mean(boneden_top20$diff_ls)
+cat(sprintf("\nMean difference in top 20: %.4f g/cm²\n", mean_diff_ls_top20))
+```
+
+---
+
+# Problem 4.80: Femoral Neck - All 41 Pairs
+
+**Question:** Answer Problem 4.78 for bone density of the femoral neck.
+
+```{r problem-4.80}
+cat("\n\n=== PROBLEM 4.80: FEMORAL NECK - ALL 41 PAIRS ===\n\n")
+
+# Count negative differences
+n_negative_fn <- sum(boneden_processed$diff_fn < 0)
+n_positive_fn <- sum(boneden_processed$diff_fn > 0)
+n_zero_fn <- sum(boneden_processed$diff_fn == 0)
+
+cat("Difference Distribution (Heavier smoker - Lighter smoker):\n")
+cat(sprintf("  Negative differences: %d\n", n_negative_fn))
+cat(sprintf("  Positive differences: %d\n", n_positive_fn))
+cat(sprintf("  Zero differences: %d\n\n", n_zero_fn))
+
+cat(sprintf("Expected negative differences under H₀: %.1f\n", expected_negative))
+cat(sprintf("Observed negative differences: %d\n\n", n_negative_fn))
+
+# Binomial test
+p_value_fn <- pbinom(n_negative_fn - 1, size = n_pairs, prob = p_null, lower.tail = FALSE)
+
+cat("Binomial Test Results:\n")
+cat(sprintf("P(X ≥ %d | n=%d, p=%.2f) = %.6f\n\n", n_negative_fn, n_pairs, p_null, p_value_fn))
+
+# Interpretation
+cat("CONCLUSION:\n")
+if (p_value_fn < 0.05) {
+  cat(sprintf("At α = 0.05, we REJECT the null hypothesis (p = %.4f).\n", p_value_fn))
+  cat("There IS statistically significant evidence that smoking is related to\n")
+  cat("bone density of the femoral neck.\n")
+} else {
+  cat(sprintf("At α = 0.05, we FAIL TO REJECT the null hypothesis (p = %.4f).\n", p_value_fn))
+  cat("There is NOT sufficient evidence of a relationship.\n")
+}
+
+mean_diff_fn <- mean(boneden_processed$diff_fn)
+cat(sprintf("\nMean difference: %.4f g/cm²\n", mean_diff_fn))
+```
+
+---
+
+# Problem 4.81: Femoral Neck - Top 20 Pairs
+
+**Question:** Answer Problem 4.79 for bone density of the femoral neck.
+
+```{r problem-4.81}
+cat("\n\n=== PROBLEM 4.81: FEMORAL NECK - TOP 20 PAIRS ===\n\n")
+
+n_negative_fn_top20 <- sum(boneden_top20$diff_fn < 0)
+n_positive_fn_top20 <- sum(boneden_top20$diff_fn > 0)
+
+cat("Difference Distribution in Top 20:\n")
+cat(sprintf("  Negative differences: %d\n", n_negative_fn_top20))
+cat(sprintf("  Positive differences: %d\n\n", n_positive_fn_top20))
+
+cat(sprintf("Expected negative differences under H₀: %.1f\n", expected_negative_top20))
+cat(sprintf("Observed negative differences: %d\n\n", n_negative_fn_top20))
+
+# Binomial test
+p_value_fn_top20 <- pbinom(n_negative_fn_top20 - 1, size = n_pairs_top20, prob = p_null,
+                            lower.tail = FALSE)
+
+cat("Binomial Test Results (Top 20):\n")
+cat(sprintf("P(X ≥ %d | n=%d, p=%.2f) = %.6f\n\n", n_negative_fn_top20, n_pairs_top20,
+            p_null, p_value_fn_top20))
+
+# Interpretation
+cat("CONCLUSION:\n")
+if (p_value_fn_top20 < 0.05) {
+  cat(sprintf("At α = 0.05, we REJECT the null hypothesis (p = %.4f).\n", p_value_fn_top20))
+  cat("There IS statistically significant evidence that smoking is related to\n")
+  cat("femoral neck BMD in pairs with large smoking differences.\n")
+} else {
+  cat(sprintf("At α = 0.05, we FAIL TO REJECT the null hypothesis (p = %.4f).\n",
+              p_value_fn_top20))
+  cat("There is NOT sufficient evidence of a relationship in this subgroup.\n")
+}
+
+mean_diff_fn_top20 <- mean(boneden_top20$diff_fn)
+cat(sprintf("\nMean difference in top 20: %.4f g/cm²\n", mean_diff_fn_top20))
+```
+
+---
+
+# Problem 4.82: Femoral Shaft - All 41 Pairs
+
+**Question:** Answer Problem 4.78 for bone density of the femoral shaft.
+
+```{r problem-4.82}
+cat("\n\n=== PROBLEM 4.82: FEMORAL SHAFT - ALL 41 PAIRS ===\n\n")
+
+# Count negative differences
+n_negative_fs <- sum(boneden_processed$diff_fs < 0)
+n_positive_fs <- sum(boneden_processed$diff_fs > 0)
+n_zero_fs <- sum(boneden_processed$diff_fs == 0)
+
+cat("Difference Distribution (Heavier smoker - Lighter smoker):\n")
+cat(sprintf("  Negative differences: %d\n", n_negative_fs))
+cat(sprintf("  Positive differences: %d\n", n_positive_fs))
+cat(sprintf("  Zero differences: %d\n\n", n_zero_fs))
+
+cat(sprintf("Expected negative differences under H₀: %.1f\n", expected_negative))
+cat(sprintf("Observed negative differences: %d\n\n", n_negative_fs))
+
+# Binomial test
+p_value_fs <- pbinom(n_negative_fs - 1, size = n_pairs, prob = p_null, lower.tail = FALSE)
+
+cat("Binomial Test Results:\n")
+cat(sprintf("P(X ≥ %d | n=%d, p=%.2f) = %.6f\n\n", n_negative_fs, n_pairs, p_null, p_value_fs))
+
+# Interpretation
+cat("CONCLUSION:\n")
+if (p_value_fs < 0.05) {
+  cat(sprintf("At α = 0.05, we REJECT the null hypothesis (p = %.4f).\n", p_value_fs))
+  cat("There IS statistically significant evidence that smoking is related to\n")
+  cat("bone density of the femoral shaft.\n")
+} else {
+  cat(sprintf("At α = 0.05, we FAIL TO REJECT the null hypothesis (p = %.4f).\n", p_value_fs))
+  cat("There is NOT sufficient evidence of a relationship.\n")
+}
+
+mean_diff_fs <- mean(boneden_processed$diff_fs)
+cat(sprintf("\nMean difference: %.4f g/cm²\n", mean_diff_fs))
+```
+
+---
+
+# Problem 4.83: Femoral Shaft - Top 20 Pairs
+
+**Question:** Answer Problem 4.79 for bone density of the femoral shaft.
+
+```{r problem-4.83}
+cat("\n\n=== PROBLEM 4.83: FEMORAL SHAFT - TOP 20 PAIRS ===\n\n")
+
+n_negative_fs_top20 <- sum(boneden_top20$diff_fs < 0)
+n_positive_fs_top20 <- sum(boneden_top20$diff_fs > 0)
+
+cat("Difference Distribution in Top 20:\n")
+cat(sprintf("  Negative differences: %d\n", n_negative_fs_top20))
+cat(sprintf("  Positive differences: %d\n\n", n_positive_fs_top20))
+
+cat(sprintf("Expected negative differences under H₀: %.1f\n", expected_negative_top20))
+cat(sprintf("Observed negative differences: %d\n\n", n_negative_fs_top20))
+
+# Binomial test
+p_value_fs_top20 <- pbinom(n_negative_fs_top20 - 1, size = n_pairs_top20, prob = p_null,
+                            lower.tail = FALSE)
+
+cat("Binomial Test Results (Top 20):\n")
+cat(sprintf("P(X ≥ %d | n=%d, p=%.2f) = %.6f\n\n", n_negative_fs_top20, n_pairs_top20,
+            p_null, p_value_fs_top20))
+
+# Interpretation
+cat("CONCLUSION:\n")
+if (p_value_fs_top20 < 0.05) {
+  cat(sprintf("At α = 0.05, we REJECT the null hypothesis (p = %.4f).\n", p_value_fs_top20))
+  cat("There IS statistically significant evidence that smoking is related to\n")
+  cat("femoral shaft BMD in pairs with large smoking differences.\n")
+} else {
+  cat(sprintf("At α = 0.05, we FAIL TO REJECT the null hypothesis (p = %.4f).\n",
+              p_value_fs_top20))
+  cat("There is NOT sufficient evidence of a relationship in this subgroup.\n")
+}
+
+mean_diff_fs_top20 <- mean(boneden_top20$diff_fs)
+cat(sprintf("\nMean difference in top 20: %.4f g/cm²\n", mean_diff_fs_top20))
+```
+
+---
+
+# Comprehensive Summary
+
+```{r comprehensive-summary}
+cat("\n\n=== COMPREHENSIVE SUMMARY ===\n\n")
+
+# Create summary table
+summary_table <- data.frame(
+  Site = rep(c("Lumbar Spine", "Femoral Neck", "Femoral Shaft"), 2),
+  Group = c(rep("All 41 Pairs", 3), rep("Top 20 Pairs", 3)),
+  N = c(rep(n_pairs, 3), rep(n_pairs_top20, 3)),
+  N_Negative = c(n_negative_ls, n_negative_fn, n_negative_fs,
+                 n_negative_ls_top20, n_negative_fn_top20, n_negative_fs_top20),
+  Expected = c(rep(expected_negative, 3), rep(expected_negative_top20, 3)),
+  P_Value = c(p_value_ls, p_value_fn, p_value_fs,
+              p_value_ls_top20, p_value_fn_top20, p_value_fs_top20),
+  Mean_Diff = c(mean_diff_ls, mean_diff_fn, mean_diff_fs,
+                mean_diff_ls_top20, mean_diff_fn_top20, mean_diff_fs_top20)
+) %>%
+  mutate(
+    Significant = ifelse(P_Value < 0.05, "Yes", "No"),
+    Conclusion = ifelse(P_Value < 0.05, "Reject H₀", "Fail to Reject H₀")
+  )
+
+summary_table %>%
+  kable(digits = 6,
+        col.names = c("BMD Site", "Group", "N", "N Negative", "Expected",
+                      "p-value", "Mean Diff", "Sig (α=0.05)", "Conclusion"),
+        caption = "Summary of All Binomial Tests")
+
+cat("\n\nKEY FINDINGS:\n\n")
+
+# Count significant results
+sig_all <- sum(c(p_value_ls, p_value_fn, p_value_fs) < 0.05)
+sig_top20 <- sum(c(p_value_ls_top20, p_value_fn_top20, p_value_fs_top20) < 0.05)
+
+cat(sprintf("All 41 Pairs: %d out of 3 sites show significant effect (α = 0.05)\n", sig_all))
+cat(sprintf("Top 20 Pairs: %d out of 3 sites show significant effect (α = 0.05)\n\n", sig_top20))
+
+cat("INTERPRETATION:\n")
+if (sig_all > 0 || sig_top20 > 0) {
+  cat("There is evidence that smoking is negatively associated with bone density.\n")
+  cat("Heavier-smoking twins tend to have LOWER bone mineral density.\n\n")
+
+  if (sig_top20 > sig_all) {
+    cat("The effect becomes STRONGER when focusing on twin pairs with\n")
+    cat("larger differences in smoking exposure (top 20 pairs).\n")
+    cat("This suggests a dose-response relationship.\n")
+  }
+} else {
+  cat("No significant evidence of smoking effect on bone density at α = 0.05.\n")
+}
+
+cat("\n\nCLINICAL SIGNIFICANCE:\n")
+cat("Mean BMD differences (all 41 pairs):\n")
+cat(sprintf("  Lumbar Spine:  %.4f g/cm²\n", mean_diff_ls))
+cat(sprintf("  Femoral Neck:  %.4f g/cm²\n", mean_diff_fn))
+cat(sprintf("  Femoral Shaft: %.4f g/cm²\n", mean_diff_fs))
+cat("\nNegative values indicate heavier smokers have lower BMD.\n")
+```
+
+## Visualization: Summary Comparison
+
+```{r summary-plots, fig.height=10}
+# Bar plot of observed vs expected
+plot_data <- summary_table %>%
+  select(Site, Group, N_Negative, Expected) %>%
+  pivot_longer(cols = c(N_Negative, Expected),
+               names_to = "Type",
+               values_to = "Count") %>%
+  mutate(Type = ifelse(Type == "N_Negative", "Observed", "Expected"))
+
+p1 <- ggplot(plot_data, aes(x = Site, y = Count, fill = Type)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.7) +
+  facet_wrap(~ Group, ncol = 1) +
+  geom_text(aes(label = sprintf("%.1f", Count)),
+            position = position_dodge(width = 0.9), vjust = -0.5, size = 3) +
+  labs(title = "Observed vs Expected Negative Differences",
+       subtitle = "Under H₀: p = 0.5 (no smoking effect)",
+       x = "BMD Site", y = "Number of Negative Differences") +
+  scale_fill_manual(values = c("Observed" = "coral", "Expected" = "lightblue")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# P-value plot
+p2 <- ggplot(summary_table, aes(x = Site, y = -log10(P_Value), fill = Group)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.7) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "red", size = 1) +
+  geom_text(aes(label = sprintf("%.4f", P_Value)),
+            position = position_dodge(width = 0.9), vjust = -0.5, size = 3, angle = 45) +
+  labs(title = "Statistical Significance by BMD Site",
+       subtitle = "Red line indicates α = 0.05 significance level",
+       x = "BMD Site", y = "-log10(p-value)") +
+  scale_fill_manual(values = c("All 41 Pairs" = "steelblue", "Top 20 Pairs" = "darkgreen")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+grid.arrange(p1, p2, ncol = 1)
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

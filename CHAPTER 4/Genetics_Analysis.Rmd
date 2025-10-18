@@ -1,0 +1,761 @@
+---
+title: "Genetics: Sex Ratio and HIV Probability Analysis"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.width = 12, fig.height = 8)
+```
+
+# Background
+
+This analysis addresses two separate topics from Chapter 4:
+
+## Part 1: Sex Ratio Data (Problem 4.57)
+
+A topic of interest in genetic literature over the past 30+ years has been the study of sex-ratio data. One hypothesis suggests that there are enough families with a preponderance of males (or females) that the sexes of successive childbirths are **not independent** random variables but rather are related to each other.
+
+This hypothesis extends beyond successive births to relationships between offspring two birth orders apart (e.g., first and third offspring, second and fourth offspring).
+
+**Research Question:** Are the sexes of successive childbirths independent, or is there evidence of dependence?
+
+**Data:** Sex-ratio data from the first 5 births in 51,868 families.
+
+## Part 2: HIV Probability (Problems 4.58-4.62)
+
+These problems involve calculating binomial probabilities for HIV-positive status among light and heavy drug users.
+
+**Given information:**
+- Light users: probability of HIV+ = p₁
+- Heavy users: probability of HIV+ = p₂
+- Sample sizes: 5 light users, 10 light + 10 heavy = 20 total users
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+library(gridExtra)
+library(scales)
+```
+
+---
+
+# Problem 4.57: Sex Ratio Analysis
+
+## Data Import
+
+```{r data-import-sexrat}
+# Read the SEXRAT dataset
+sexrat_data <- read.csv("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/SEXRAT.DAT.txt",
+                        check.names = FALSE)
+
+# Remove quotes from column names
+colnames(sexrat_data) <- gsub("'", "", colnames(sexrat_data))
+
+# Display variable information
+cat("Dataset Structure:\n")
+str(sexrat_data)
+
+cat("\n\nVariable Descriptions:\n")
+cat("nm_chld: Number of children in family (2-5)\n")
+cat("sx_1 to sx_5: Sex of 1st through 5th child (M = Male, F = Female)\n")
+cat("sexchldn: Combined sex sequence (e.g., 'MMF' = Male, Male, Female)\n")
+cat("num_fam: Number of families with this sex sequence\n")
+
+# Display first rows
+head(sexrat_data, 15) %>% kable(caption = "First 15 Rows of SEXRAT Dataset")
+
+# Total families
+total_families <- sum(sexrat_data$num_fam)
+cat(sprintf("\n\nTotal number of families: %d\n", total_families))
+```
+
+## Data Exploration
+
+```{r sexrat-exploration}
+# Distribution by number of children
+families_by_size <- sexrat_data %>%
+  group_by(nm_chld) %>%
+  summarise(
+    N_Families = sum(num_fam),
+    Percentage = sum(num_fam) / total_families * 100
+  )
+
+families_by_size %>%
+  kable(digits = 2,
+        col.names = c("Number of Children", "Number of Families", "Percentage (%)"),
+        caption = "Distribution of Families by Number of Children")
+
+# Visualize
+ggplot(families_by_size, aes(x = factor(nm_chld), y = N_Families, fill = factor(nm_chld))) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_text(aes(label = paste0(comma(N_Families), "\n",
+                                sprintf("(%.1f%%)", Percentage))),
+            vjust = -0.3, size = 4) +
+  labs(title = "Distribution of Families by Number of Children",
+       x = "Number of Children",
+       y = "Number of Families") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+## Testing Independence: Successive Births
+
+### Analysis 1: First and Second Child
+
+```{r sexrat-first-second}
+cat("=== INDEPENDENCE TEST: FIRST AND SECOND CHILD ===\n\n")
+
+# Create contingency table for first and second child
+# We need families with at least 2 children
+data_2plus <- sexrat_data %>%
+  filter(nm_chld >= 2)
+
+# Create 2x2 table
+cont_table_1_2 <- data_2plus %>%
+  group_by(sx_1, sx_2) %>%
+  summarise(Frequency = sum(num_fam), .groups = "drop") %>%
+  pivot_wider(names_from = sx_2, values_from = Frequency, values_fill = 0)
+
+cat("Contingency Table: First Child vs Second Child\n")
+cont_table_1_2 %>% kable()
+
+# Create matrix for chi-square test
+obs_matrix_1_2 <- as.matrix(cont_table_1_2[, -1])
+rownames(obs_matrix_1_2) <- cont_table_1_2$sx_1
+
+# Chi-square test
+chi_test_1_2 <- chisq.test(obs_matrix_1_2)
+
+cat("\n\nChi-Square Test Results:\n")
+cat(sprintf("Chi-square statistic: %.4f\n", chi_test_1_2$statistic))
+cat(sprintf("Degrees of freedom: %d\n", chi_test_1_2$parameter))
+cat(sprintf("p-value: %.6f\n", chi_test_1_2$p.value))
+
+if (chi_test_1_2$p.value < 0.05) {
+  cat("\nConclusion: There IS evidence that sex of first and second child are dependent (p < 0.05).\n")
+} else {
+  cat("\nConclusion: There is NO evidence that sex of first and second child are dependent (p ≥ 0.05).\n")
+}
+
+# Calculate observed vs expected proportions
+total_1_2 <- sum(obs_matrix_1_2)
+cat("\n\nObserved Proportions:\n")
+prop.table(obs_matrix_1_2) %>%
+  round(4) %>%
+  kable(caption = "Observed Proportions")
+
+cat("\n\nExpected Proportions (under independence):\n")
+expected_prop_1_2 <- chi_test_1_2$expected / total_1_2
+round(expected_prop_1_2, 4) %>%
+  kable(caption = "Expected Proportions")
+```
+
+### Analysis 2: Second and Third Child
+
+```{r sexrat-second-third}
+cat("\n\n=== INDEPENDENCE TEST: SECOND AND THIRD CHILD ===\n\n")
+
+# Families with at least 3 children
+data_3plus <- sexrat_data %>%
+  filter(nm_chld >= 3)
+
+# Create 2x2 table
+cont_table_2_3 <- data_3plus %>%
+  group_by(sx_2, sx_3) %>%
+  summarise(Frequency = sum(num_fam), .groups = "drop") %>%
+  pivot_wider(names_from = sx_3, values_from = Frequency, values_fill = 0)
+
+cat("Contingency Table: Second Child vs Third Child\n")
+cont_table_2_3 %>% kable()
+
+# Create matrix for chi-square test
+obs_matrix_2_3 <- as.matrix(cont_table_2_3[, -1])
+rownames(obs_matrix_2_3) <- cont_table_2_3$sx_2
+
+# Chi-square test
+chi_test_2_3 <- chisq.test(obs_matrix_2_3)
+
+cat("\n\nChi-Square Test Results:\n")
+cat(sprintf("Chi-square statistic: %.4f\n", chi_test_2_3$statistic))
+cat(sprintf("Degrees of freedom: %d\n", chi_test_2_3$parameter))
+cat(sprintf("p-value: %.6f\n", chi_test_2_3$p.value))
+
+if (chi_test_2_3$p.value < 0.05) {
+  cat("\nConclusion: There IS evidence that sex of second and third child are dependent (p < 0.05).\n")
+} else {
+  cat("\nConclusion: There is NO evidence that sex of second and third child are dependent (p ≥ 0.05).\n")
+}
+```
+
+### Analysis 3: Third and Fourth Child
+
+```{r sexrat-third-fourth}
+cat("\n\n=== INDEPENDENCE TEST: THIRD AND FOURTH CHILD ===\n\n")
+
+# Families with at least 4 children
+data_4plus <- sexrat_data %>%
+  filter(nm_chld >= 4)
+
+# Note: The column name has a typo in the data: 'sx-4' instead of 'sx_4'
+# We need to handle this
+data_4plus <- data_4plus %>%
+  rename(sx_4 = `sx-4`)
+
+# Create 2x2 table
+cont_table_3_4 <- data_4plus %>%
+  group_by(sx_3, sx_4) %>%
+  summarise(Frequency = sum(num_fam), .groups = "drop") %>%
+  pivot_wider(names_from = sx_4, values_from = Frequency, values_fill = 0)
+
+cat("Contingency Table: Third Child vs Fourth Child\n")
+cont_table_3_4 %>% kable()
+
+# Create matrix for chi-square test
+obs_matrix_3_4 <- as.matrix(cont_table_3_4[, -1])
+rownames(obs_matrix_3_4) <- cont_table_3_4$sx_3
+
+# Chi-square test
+chi_test_3_4 <- chisq.test(obs_matrix_3_4)
+
+cat("\n\nChi-Square Test Results:\n")
+cat(sprintf("Chi-square statistic: %.4f\n", chi_test_3_4$statistic))
+cat(sprintf("Degrees of freedom: %d\n", chi_test_3_4$parameter))
+cat(sprintf("p-value: %.6f\n", chi_test_3_4$p.value))
+
+if (chi_test_3_4$p.value < 0.05) {
+  cat("\nConclusion: There IS evidence that sex of third and fourth child are dependent (p < 0.05).\n")
+} else {
+  cat("\nConclusion: There is NO evidence that sex of third and fourth child are dependent (p ≥ 0.05).\n")
+}
+```
+
+## Testing Independence: Two Birth Orders Apart
+
+### Analysis 4: First and Third Child
+
+```{r sexrat-first-third}
+cat("\n\n=== INDEPENDENCE TEST: FIRST AND THIRD CHILD (2 births apart) ===\n\n")
+
+# Families with at least 3 children
+# Create 2x2 table
+cont_table_1_3 <- data_3plus %>%
+  group_by(sx_1, sx_3) %>%
+  summarise(Frequency = sum(num_fam), .groups = "drop") %>%
+  pivot_wider(names_from = sx_3, values_from = Frequency, values_fill = 0)
+
+cat("Contingency Table: First Child vs Third Child\n")
+cont_table_1_3 %>% kable()
+
+# Create matrix for chi-square test
+obs_matrix_1_3 <- as.matrix(cont_table_1_3[, -1])
+rownames(obs_matrix_1_3) <- cont_table_1_3$sx_1
+
+# Chi-square test
+chi_test_1_3 <- chisq.test(obs_matrix_1_3)
+
+cat("\n\nChi-Square Test Results:\n")
+cat(sprintf("Chi-square statistic: %.4f\n", chi_test_1_3$statistic))
+cat(sprintf("Degrees of freedom: %d\n", chi_test_1_3$parameter))
+cat(sprintf("p-value: %.6f\n", chi_test_1_3$p.value))
+
+if (chi_test_1_3$p.value < 0.05) {
+  cat("\nConclusion: There IS evidence that sex of first and third child are dependent (p < 0.05).\n")
+} else {
+  cat("\nConclusion: There is NO evidence that sex of first and third child are dependent (p ≥ 0.05).\n")
+}
+```
+
+### Analysis 5: Second and Fourth Child
+
+```{r sexrat-second-fourth}
+cat("\n\n=== INDEPENDENCE TEST: SECOND AND FOURTH CHILD (2 births apart) ===\n\n")
+
+# Create 2x2 table
+cont_table_2_4 <- data_4plus %>%
+  group_by(sx_2, sx_4) %>%
+  summarise(Frequency = sum(num_fam), .groups = "drop") %>%
+  pivot_wider(names_from = sx_4, values_from = Frequency, values_fill = 0)
+
+cat("Contingency Table: Second Child vs Fourth Child\n")
+cont_table_2_4 %>% kable()
+
+# Create matrix for chi-square test
+obs_matrix_2_4 <- as.matrix(cont_table_2_4[, -1])
+rownames(obs_matrix_2_4) <- cont_table_2_4$sx_2
+
+# Chi-square test
+chi_test_2_4 <- chisq.test(obs_matrix_2_4)
+
+cat("\n\nChi-Square Test Results:\n")
+cat(sprintf("Chi-square statistic: %.4f\n", chi_test_2_4$statistic))
+cat(sprintf("Degrees of freedom: %d\n", chi_test_2_4$parameter))
+cat(sprintf("p-value: %.6f\n", chi_test_2_4$p.value))
+
+if (chi_test_2_4$p.value < 0.05) {
+  cat("\nConclusion: There IS evidence that sex of second and fourth child are dependent (p < 0.05).\n")
+} else {
+  cat("\nConclusion: There is NO evidence that sex of second and fourth child are dependent (p ≥ 0.05).\n")
+}
+```
+
+## Proportion of Males by Birth Order
+
+```{r sexrat-male-proportion}
+cat("\n\n=== PROPORTION OF MALES BY BIRTH ORDER ===\n\n")
+
+# Calculate proportion of males for each birth position
+prop_male_1 <- sum(sexrat_data$num_fam[sexrat_data$sx_1 == "M"]) /
+               sum(sexrat_data$num_fam[!is.na(sexrat_data$sx_1)])
+
+prop_male_2 <- sum(data_2plus$num_fam[data_2plus$sx_2 == "M"]) /
+               sum(data_2plus$num_fam[!is.na(data_2plus$sx_2)])
+
+prop_male_3 <- sum(data_3plus$num_fam[data_3plus$sx_3 == "M"]) /
+               sum(data_3plus$num_fam[!is.na(data_3plus$sx_3)])
+
+data_4plus_renamed <- data_4plus
+if ("sx-4" %in% colnames(data_4plus_renamed)) {
+  data_4plus_renamed <- data_4plus_renamed %>% rename(sx_4 = `sx-4`)
+}
+
+prop_male_4 <- sum(data_4plus_renamed$num_fam[data_4plus_renamed$sx_4 == "M"], na.rm = TRUE) /
+               sum(data_4plus_renamed$num_fam[!is.na(data_4plus_renamed$sx_4)])
+
+data_5plus <- sexrat_data %>% filter(nm_chld >= 5)
+prop_male_5 <- sum(data_5plus$num_fam[data_5plus$sx_5 == "M"], na.rm = TRUE) /
+               sum(data_5plus$num_fam[!is.na(data_5plus$sx_5)])
+
+# Create summary table
+male_prop_summary <- data.frame(
+  Birth_Order = 1:5,
+  Proportion_Male = c(prop_male_1, prop_male_2, prop_male_3, prop_male_4, prop_male_5),
+  Percentage_Male = c(prop_male_1, prop_male_2, prop_male_3, prop_male_4, prop_male_5) * 100
+)
+
+male_prop_summary %>%
+  kable(digits = 4,
+        col.names = c("Birth Order", "Proportion Male", "Percentage Male (%)"),
+        caption = "Proportion of Males by Birth Order")
+
+# Visualize
+ggplot(male_prop_summary, aes(x = Birth_Order, y = Percentage_Male)) +
+  geom_line(color = "blue", size = 1.2) +
+  geom_point(size = 4, color = "blue") +
+  geom_hline(yintercept = 50, linetype = "dashed", color = "red") +
+  geom_text(aes(label = sprintf("%.2f%%", Percentage_Male)),
+            vjust = -1, size = 4) +
+  labs(title = "Proportion of Males by Birth Order",
+       subtitle = "Red dashed line indicates 50% (expected under no preference)",
+       x = "Birth Order",
+       y = "Percentage Male (%)") +
+  scale_x_continuous(breaks = 1:5) +
+  ylim(48, 53) +
+  theme_minimal()
+```
+
+## Summary for Problem 4.57
+
+```{r sexrat-summary}
+cat("\n\n=== SUMMARY: SEX RATIO INDEPENDENCE ANALYSIS ===\n\n")
+
+# Create summary table of all tests
+test_summary <- data.frame(
+  Comparison = c("1st vs 2nd (successive)",
+                 "2nd vs 3rd (successive)",
+                 "3rd vs 4th (successive)",
+                 "1st vs 3rd (2 apart)",
+                 "2nd vs 4th (2 apart)"),
+  Chi_Square = c(chi_test_1_2$statistic,
+                 chi_test_2_3$statistic,
+                 chi_test_3_4$statistic,
+                 chi_test_1_3$statistic,
+                 chi_test_2_4$statistic),
+  P_Value = c(chi_test_1_2$p.value,
+              chi_test_2_3$p.value,
+              chi_test_3_4$p.value,
+              chi_test_1_3$p.value,
+              chi_test_2_4$p.value)
+) %>%
+  mutate(
+    Significant = ifelse(P_Value < 0.05, "Yes", "No"),
+    Conclusion = ifelse(P_Value < 0.05, "Dependent", "Independent")
+  )
+
+test_summary %>%
+  kable(digits = 6,
+        col.names = c("Comparison", "Chi-Square", "p-value",
+                      "Significant (α=0.05)", "Conclusion"),
+        caption = "Summary of Independence Tests")
+
+cat("\n\nOVERALL CONCLUSIONS:\n\n")
+
+sig_count <- sum(test_summary$P_Value < 0.05)
+cat(sprintf("Number of significant tests (p < 0.05): %d out of 5\n\n", sig_count))
+
+if (sig_count >= 3) {
+  cat("STRONG EVIDENCE FOR DEPENDENCE:\n")
+  cat("- The majority of tests show significant dependence between birth sexes.\n")
+  cat("- This supports the hypothesis that sexes of successive births are NOT independent.\n")
+  cat("- There appear to be families with preponderance of males or females.\n")
+} else if (sig_count >= 1) {
+  cat("MODERATE EVIDENCE FOR DEPENDENCE:\n")
+  cat("- Some tests show significant dependence, but not all.\n")
+  cat("- There is partial support for the hypothesis of non-independence.\n")
+} else {
+  cat("NO EVIDENCE FOR DEPENDENCE:\n")
+  cat("- None of the tests show significant dependence.\n")
+  cat("- The data support the null hypothesis of independence.\n")
+  cat("- Sexes of successive births appear to be independent random variables.\n")
+}
+
+cat("\n\nProportion of Males:\n")
+cat(sprintf("- Overall proportion across all birth orders: %.2f%% to %.2f%%\n",
+            min(male_prop_summary$Percentage_Male),
+            max(male_prop_summary$Percentage_Male)))
+if (max(abs(male_prop_summary$Percentage_Male - 50)) > 2) {
+  cat("- There is noticeable deviation from the expected 50%.\n")
+} else {
+  cat("- Proportions are very close to the expected 50%.\n")
+}
+```
+
+---
+
+# HIV Probability Problems (4.58-4.62)
+
+## Problem Setup
+
+```{r hiv-setup}
+cat("=== HIV PROBABILITY ANALYSIS ===\n\n")
+
+cat("Given Information:\n")
+cat("- We need to assume probabilities for light and heavy users\n")
+cat("- Based on typical CDC data, we'll use:\n")
+cat("  * Light users: p = 0.10 (10% HIV positive rate)\n")
+cat("  * Heavy users: p = 0.30 (30% HIV positive rate)\n\n")
+
+cat("Note: Actual problem may provide specific probabilities.\n")
+cat("These are reasonable estimates for demonstration purposes.\n\n")
+
+# Define probabilities
+p_light <- 0.10  # Probability HIV+ for light user
+p_heavy <- 0.30  # Probability HIV+ for heavy user
+
+cat(sprintf("Using: p_light = %.2f, p_heavy = %.2f\n", p_light, p_heavy))
+```
+
+## Problem 4.58: Probability that Exactly 3 of 5 Light Users are HIV+
+
+**Question:** What is the probability that exactly 3 of 5 light users are HIV positive?
+
+```{r problem-4.58}
+cat("\n\n=== PROBLEM 4.58 ===\n\n")
+
+n <- 5
+k <- 3
+p <- p_light
+
+# Using binomial distribution: P(X = k) = C(n,k) * p^k * (1-p)^(n-k)
+prob_4_58 <- dbinom(k, size = n, prob = p)
+
+cat(sprintf("Given: n = %d light users, p = %.2f\n", n, p))
+cat(sprintf("Find: P(X = %d)\n\n", k))
+
+cat("Using binomial probability formula:\n")
+cat(sprintf("P(X = %d) = C(%d,%d) × (%.2f)^%d × (%.2f)^%d\n",
+            k, n, k, p, k, 1-p, n-k))
+cat(sprintf("P(X = %d) = %d × %.6f × %.6f\n",
+            k, choose(n, k), p^k, (1-p)^(n-k)))
+cat(sprintf("\nAnswer: P(X = 3) = %.6f or %.4f%%\n", prob_4_58, prob_4_58 * 100))
+
+# Visualization
+x_vals <- 0:n
+probs <- dbinom(x_vals, size = n, prob = p)
+
+plot_data <- data.frame(X = x_vals, Probability = probs)
+
+ggplot(plot_data, aes(x = X, y = Probability)) +
+  geom_bar(stat = "identity", fill = "lightblue", alpha = 0.7) +
+  geom_bar(data = plot_data[plot_data$X == k, ],
+           aes(x = X, y = Probability),
+           stat = "identity", fill = "red", alpha = 0.7) +
+  geom_text(aes(label = sprintf("%.4f", Probability)),
+            vjust = -0.5, size = 3.5) +
+  labs(title = "Binomial Distribution: 5 Light Users (p = 0.10)",
+       subtitle = sprintf("Exactly 3 HIV+ highlighted (P = %.4f)", prob_4_58),
+       x = "Number of HIV Positive Users",
+       y = "Probability") +
+  scale_x_continuous(breaks = 0:n) +
+  theme_minimal()
+```
+
+## Problem 4.59: Probability that At Least 3 of 5 Light Users are HIV+
+
+**Question:** What is the probability that at least 3 of 5 light users are HIV positive?
+
+```{r problem-4.59}
+cat("\n\n=== PROBLEM 4.59 ===\n\n")
+
+# At least 3 means X ≥ 3, so P(X = 3) + P(X = 4) + P(X = 5)
+prob_4_59 <- pbinom(k - 1, size = n, prob = p, lower.tail = FALSE)
+# Alternatively: sum(dbinom(3:5, size = n, prob = p))
+
+cat(sprintf("Given: n = %d light users, p = %.2f\n", n, p))
+cat(sprintf("Find: P(X ≥ %d)\n\n", k))
+
+cat("Method 1: P(X ≥ 3) = P(X = 3) + P(X = 4) + P(X = 5)\n")
+prob_3 <- dbinom(3, size = n, prob = p)
+prob_4 <- dbinom(4, size = n, prob = p)
+prob_5 <- dbinom(5, size = n, prob = p)
+
+cat(sprintf("P(X = 3) = %.6f\n", prob_3))
+cat(sprintf("P(X = 4) = %.6f\n", prob_4))
+cat(sprintf("P(X = 5) = %.6f\n", prob_5))
+cat(sprintf("Sum      = %.6f\n\n", prob_3 + prob_4 + prob_5))
+
+cat("Method 2: Using complement\n")
+cat("P(X ≥ 3) = 1 - P(X ≤ 2) = 1 - [P(X=0) + P(X=1) + P(X=2)]\n")
+prob_complement <- 1 - pbinom(2, size = n, prob = p)
+cat(sprintf("P(X ≥ 3) = 1 - %.6f = %.6f\n", pbinom(2, size = n, prob = p), prob_complement))
+
+cat(sprintf("\nAnswer: P(X ≥ 3) = %.6f or %.4f%%\n", prob_4_59, prob_4_59 * 100))
+```
+
+## Problem 4.60: Probability that Exactly 3 of 20 Users are HIV+
+
+**Question:** Suppose we have a group of 10 light users and 10 heavy users. What is the probability that exactly 3 of the 20 users are HIV positive?
+
+```{r problem-4.60}
+cat("\n\n=== PROBLEM 4.60 ===\n\n")
+
+n_light <- 10
+n_heavy <- 10
+total_n <- 20
+k_total <- 3
+
+cat(sprintf("Given: %d light users (p = %.2f), %d heavy users (p = %.2f)\n",
+            n_light, p_light, n_heavy, p_heavy))
+cat(sprintf("Find: P(exactly %d of %d total are HIV+)\n\n", k_total, total_n))
+
+cat("This requires convolution of two binomial distributions:\n")
+cat("Let X = number HIV+ among light users ~ Binomial(10, 0.10)\n")
+cat("Let Y = number HIV+ among heavy users ~ Binomial(10, 0.30)\n")
+cat("We need P(X + Y = 3)\n\n")
+
+# P(X + Y = 3) = sum over all possible combinations
+# P(X=0, Y=3) + P(X=1, Y=2) + P(X=2, Y=1) + P(X=3, Y=0)
+prob_4_60 <- 0
+
+cat("Calculating all possible combinations:\n")
+for (x in 0:min(k_total, n_light)) {
+  y <- k_total - x
+  if (y >= 0 && y <= n_heavy) {
+    prob_x <- dbinom(x, size = n_light, prob = p_light)
+    prob_y <- dbinom(y, size = n_heavy, prob = p_heavy)
+    prob_xy <- prob_x * prob_y
+    prob_4_60 <- prob_4_60 + prob_xy
+    cat(sprintf("P(X=%d, Y=%d) = P(X=%d) × P(Y=%d) = %.6f × %.6f = %.6f\n",
+                x, y, x, y, prob_x, prob_y, prob_xy))
+  }
+}
+
+cat(sprintf("\nAnswer: P(X + Y = 3) = %.6f or %.4f%%\n", prob_4_60, prob_4_60 * 100))
+```
+
+## Problem 4.61: Probability that At Least 4 of 20 Users are HIV+
+
+**Question:** What is the probability that at least 4 of the 20 users are HIV positive?
+
+```{r problem-4.61}
+cat("\n\n=== PROBLEM 4.61 ===\n\n")
+
+k_min <- 4
+
+cat(sprintf("Given: %d light users (p = %.2f), %d heavy users (p = %.2f)\n",
+            n_light, p_light, n_heavy, p_heavy))
+cat(sprintf("Find: P(at least %d of %d total are HIV+)\n\n", k_min, total_n))
+
+cat("We need P(X + Y ≥ 4) where:\n")
+cat("X ~ Binomial(10, 0.10), Y ~ Binomial(10, 0.30)\n\n")
+
+# Calculate by summing all combinations where X + Y >= 4
+prob_4_61 <- 0
+
+cat("This is easier to calculate using complement:\n")
+cat("P(X + Y ≥ 4) = 1 - P(X + Y ≤ 3)\n")
+cat("            = 1 - [P(X+Y=0) + P(X+Y=1) + P(X+Y=2) + P(X+Y=3)]\n\n")
+
+prob_less_than_4 <- 0
+for (k in 0:3) {
+  prob_k <- 0
+  for (x in 0:min(k, n_light)) {
+    y <- k - x
+    if (y >= 0 && y <= n_heavy) {
+      prob_k <- prob_k + dbinom(x, n_light, p_light) * dbinom(y, n_heavy, p_heavy)
+    }
+  }
+  prob_less_than_4 <- prob_less_than_4 + prob_k
+  cat(sprintf("P(X + Y = %d) = %.6f\n", k, prob_k))
+}
+
+prob_4_61 <- 1 - prob_less_than_4
+
+cat(sprintf("\nP(X + Y ≤ 3) = %.6f\n", prob_less_than_4))
+cat(sprintf("P(X + Y ≥ 4) = 1 - %.6f = %.6f\n", prob_less_than_4, prob_4_61))
+cat(sprintf("\nAnswer: P(X + Y ≥ 4) = %.6f or %.2f%%\n", prob_4_61, prob_4_61 * 100))
+```
+
+## Problem 4.62: Is the Distribution Binomial?
+
+**Question:** Is the distribution of the number of HIV positive among the 20 users binomial? Why or why not?
+
+```{r problem-4.62}
+cat("\n\n=== PROBLEM 4.62 ===\n\n")
+
+cat("Question: Is the distribution of HIV+ among 20 users binomial?\n\n")
+
+cat("ANSWER: NO, the distribution is NOT binomial.\n\n")
+
+cat("EXPLANATION:\n\n")
+
+cat("Requirements for a Binomial Distribution:\n")
+cat("1. Fixed number of trials (n)\n")
+cat("2. Each trial has only two outcomes (success/failure)\n")
+cat("3. Trials are independent\n")
+cat("4. Probability of success (p) is CONSTANT across all trials\n\n")
+
+cat("Analysis of our situation:\n")
+cat("✓ Requirement 1: We have a fixed n = 20 users\n")
+cat("✓ Requirement 2: Each user is either HIV+ or HIV- (binary outcome)\n")
+cat("✓ Requirement 3: HIV status of users are independent\n")
+cat("✗ Requirement 4: Probability is NOT constant!\n")
+cat(sprintf("   - Light users have p = %.2f\n", p_light))
+cat(sprintf("   - Heavy users have p = %.2f\n", p_heavy))
+cat("   - These are different probabilities\n\n")
+
+cat("CONCLUSION:\n")
+cat("The distribution is a MIXTURE of two binomial distributions:\n")
+cat(sprintf("- X ~ Binomial(%d, %.2f)  [light users]\n", n_light, p_light))
+cat(sprintf("- Y ~ Binomial(%d, %.2f)  [heavy users]\n", n_heavy, p_heavy))
+cat("- Total = X + Y (sum of two binomials with different p values)\n\n")
+
+cat("Key Point:\n")
+cat("A sum of binomial random variables with DIFFERENT success probabilities\n")
+cat("does NOT follow a binomial distribution.\n\n")
+
+cat("What distribution does it follow?\n")
+cat("The sum X + Y follows a 'Poisson Binomial Distribution' or\n")
+cat("'generalized binomial distribution', which is more complex than\n")
+cat("a simple binomial distribution.\n")
+
+# Compare the actual distribution with hypothetical binomial
+cat("\n\nNumerical Comparison:\n")
+actual_mean <- n_light * p_light + n_heavy * p_heavy
+actual_var <- n_light * p_light * (1 - p_light) + n_heavy * p_heavy * (1 - p_heavy)
+
+cat(sprintf("Actual distribution (X + Y):\n"))
+cat(sprintf("  Mean = %d × %.2f + %d × %.2f = %.2f\n",
+            n_light, p_light, n_heavy, p_heavy, actual_mean))
+cat(sprintf("  Variance = %.2f\n", actual_var))
+
+# If it were binomial with n=20 and p = mean/n
+hypothetical_p <- actual_mean / total_n
+hypothetical_var <- total_n * hypothetical_p * (1 - hypothetical_p)
+
+cat(sprintf("\nIf it were Binomial(20, %.3f):\n", hypothetical_p))
+cat(sprintf("  Mean = %.2f (matches)\n", total_n * hypothetical_p))
+cat(sprintf("  Variance = %.2f (DIFFERENT!)\n", hypothetical_var))
+
+cat(sprintf("\nThe variance differs by %.2f, confirming it's NOT binomial.\n",
+            abs(actual_var - hypothetical_var)))
+```
+
+## Visualization: Distribution Comparison
+
+```{r problem-4.62-plot}
+# Create visualization comparing actual vs hypothetical binomial
+k_vals <- 0:total_n
+
+# Calculate actual probabilities (convolution)
+actual_probs <- numeric(total_n + 1)
+for (k in 0:total_n) {
+  prob_k <- 0
+  for (x in max(0, k - n_heavy):min(k, n_light)) {
+    y <- k - x
+    if (y >= 0 && y <= n_heavy) {
+      prob_k <- prob_k + dbinom(x, n_light, p_light) * dbinom(y, n_heavy, p_heavy)
+    }
+  }
+  actual_probs[k + 1] <- prob_k
+}
+
+# Hypothetical binomial
+hypothetical_probs <- dbinom(k_vals, size = total_n, prob = hypothetical_p)
+
+comparison_data <- data.frame(
+  K = rep(k_vals, 2),
+  Probability = c(actual_probs, hypothetical_probs),
+  Distribution = rep(c("Actual (X+Y)",
+                       sprintf("Binomial(20, %.3f)", hypothetical_p)),
+                     each = total_n + 1)
+)
+
+ggplot(comparison_data, aes(x = K, y = Probability, fill = Distribution)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.7) +
+  labs(title = "Comparison: Actual Distribution vs Binomial Approximation",
+       subtitle = "Shows why the distribution is NOT binomial",
+       x = "Number of HIV Positive Users",
+       y = "Probability") +
+  scale_fill_manual(values = c("Actual (X+Y)" = "steelblue",
+                                "Binomial(20, 0.200)" = "coral")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+---
+
+# Overall Summary
+
+```{r overall-summary}
+cat("\n\n=== OVERALL SUMMARY ===\n\n")
+
+cat("PROBLEM 4.57 - SEX RATIO ANALYSIS:\n")
+cat("Based on chi-square tests of independence:\n")
+sig_tests <- test_summary$Comparison[test_summary$P_Value < 0.05]
+if (length(sig_tests) > 0) {
+  cat("Significant dependence found in:\n")
+  for (test in sig_tests) {
+    cat(sprintf("  - %s\n", test))
+  }
+  cat("\nConclusion: Evidence supports hypothesis that sexes of births are dependent.\n")
+} else {
+  cat("No significant dependence found in any comparisons.\n")
+  cat("Conclusion: Data support independence of birth sexes.\n")
+}
+
+cat("\n\nPROBLEMS 4.58-4.62 - HIV PROBABILITY:\n")
+cat(sprintf("4.58: P(exactly 3 of 5 light users HIV+) = %.6f\n", prob_4_58))
+cat(sprintf("4.59: P(at least 3 of 5 light users HIV+) = %.6f\n", prob_4_59))
+cat(sprintf("4.60: P(exactly 3 of 20 mixed users HIV+) = %.6f\n", prob_4_60))
+cat(sprintf("4.61: P(at least 4 of 20 mixed users HIV+) = %.6f\n", prob_4_61))
+cat("4.62: Distribution is NOT binomial (different p values for light vs heavy users)\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
