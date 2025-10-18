@@ -1,0 +1,856 @@
+---
+title: "Otolaryngology Case Study: Antibiotic Treatment for Acute Otitis Media"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.width = 10, fig.height = 6)
+```
+
+# Background
+
+This analysis is based on a randomized clinical trial involving 214 children with acute otitis media (otitis media with effusion, or OME). Each child had OME at the beginning of the study in either one (unilateral cases) or both (bilateral cases) ears and was randomly assigned to receive a 14-day course of one of two antibiotics: either cefaclor (CEF) or amoxicillin (AMO). The data concern 203 children whose middle-ear status was determined during a 14-day follow-up visit.
+
+The study aims to:
+1. Compare the effectiveness of two antibiotics (Cefaclor vs. Amoxicillin) on clearance of otitis media
+2. Examine the role of age as a factor in treatment outcome
+3. Provide an age-adjusted comparison of antibiotic effectiveness
+4. Investigate the dependence between ears in bilateral cases
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)
+library(knitr)
+library(gridExtra)
+library(scales)
+library(epitools)
+```
+
+# Data Import
+
+```{r data-import}
+# Read the EAR dataset
+ear_data <- read.csv("EAR.DAT.txt", check.names = FALSE)
+
+# Remove quotes from column names
+colnames(ear_data) <- gsub("'", "", colnames(ear_data))
+
+# Display variable information
+cat("Dataset Structure:\n")
+str(ear_data)
+
+cat("\n\nVariable Descriptions:\n")
+cat("Id: Subject identification number\n")
+cat("Clear: Clearance status (1 = cleared, 0 = not cleared)\n")
+cat("Antibo: Antibiotic type (1 = Cefaclor/CEF, 2 = Amoxicillin/AMO)\n")
+cat("Age: Age group (1 = youngest, 2 = middle, 3 = oldest)\n")
+cat("Ear: Ear indicator (1 = left or only ear, 2 = right ear for bilateral cases)\n")
+
+# Create labeled factors
+ear_data <- ear_data %>%
+  mutate(
+    Clearance = factor(Clear, levels = c(0, 1), labels = c("Not Cleared", "Cleared")),
+    Antibiotic = factor(Antibo, levels = c(1, 2), labels = c("Cefaclor", "Amoxicillin")),
+    Age_Group = factor(Age, levels = c(1, 2, 3), labels = c("Youngest", "Middle", "Oldest")),
+    Ear_Type = factor(Ear, levels = c(1, 2), labels = c("Unilateral/Left", "Right"))
+  )
+
+# Display first few rows
+head(ear_data, 15) %>% kable(caption = "First 15 Rows of EAR Dataset")
+```
+
+# Data Exploration
+
+```{r data-exploration}
+# Identify bilateral cases (subjects with two rows)
+bilateral_ids <- ear_data %>%
+  group_by(Id) %>%
+  summarise(n_ears = n()) %>%
+  filter(n_ears == 2) %>%
+  pull(Id)
+
+# Create case type variable
+ear_data <- ear_data %>%
+  mutate(Case_Type = ifelse(Id %in% bilateral_ids, "Bilateral", "Unilateral"))
+
+# Summary by case type
+cat("Distribution of Cases:\n")
+ear_data %>%
+  distinct(Id, .keep_all = TRUE) %>%
+  count(Case_Type) %>%
+  kable(col.names = c("Case Type", "Number of Children"))
+
+# Summary by antibiotic
+cat("\n\nDistribution by Antibiotic:\n")
+ear_data %>%
+  distinct(Id, .keep_all = TRUE) %>%
+  count(Antibiotic) %>%
+  kable(col.names = c("Antibiotic", "Number of Children"))
+
+# Summary by age group
+cat("\n\nDistribution by Age Group:\n")
+ear_data %>%
+  distinct(Id, .keep_all = TRUE) %>%
+  count(Age_Group) %>%
+  kable(col.names = c("Age Group", "Number of Children"))
+```
+
+---
+
+# Problem 3.75: Antibiotic Effectiveness Comparison
+
+**Question:** Does there seem to be any difference in the effect of the antibiotics on clearance of otitis media? Express your results in terms of relative risk (RR). Consider separate analyses for unilateral and bilateral cases. Also consider an analysis combining the two types of cases.
+
+## Analysis Approach
+
+We will calculate the relative risk (RR) comparing Cefaclor to Amoxicillin:
+- RR = (Risk of clearance with Cefaclor) / (Risk of clearance with Amoxicillin)
+- RR > 1: Cefaclor is more effective
+- RR < 1: Amoxicillin is more effective
+- RR = 1: No difference in effectiveness
+
+## Unilateral Cases Analysis
+
+```{r problem-3.75-unilateral}
+# Filter unilateral cases only
+unilateral_data <- ear_data %>%
+  filter(Case_Type == "Unilateral")
+
+# Create contingency table for unilateral cases
+table_uni <- table(unilateral_data$Antibiotic, unilateral_data$Clearance)
+
+cat("Contingency Table - Unilateral Cases:\n")
+print(table_uni)
+addmargins(table_uni) %>% kable(caption = "Unilateral Cases: Antibiotic vs Clearance")
+
+# Calculate clearance rates
+clearance_uni <- unilateral_data %>%
+  group_by(Antibiotic) %>%
+  summarise(
+    Total = n(),
+    Cleared = sum(Clear == 1),
+    Not_Cleared = sum(Clear == 0),
+    Clearance_Rate = (Cleared / Total) * 100
+  )
+
+clearance_uni %>%
+  kable(digits = 2, caption = "Clearance Rates by Antibiotic - Unilateral Cases")
+
+# Calculate Relative Risk
+risk_cef_uni <- clearance_uni$Cleared[clearance_uni$Antibiotic == "Cefaclor"] /
+                clearance_uni$Total[clearance_uni$Antibiotic == "Cefaclor"]
+risk_amo_uni <- clearance_uni$Cleared[clearance_uni$Antibiotic == "Amoxicillin"] /
+                clearance_uni$Total[clearance_uni$Antibiotic == "Amoxicillin"]
+rr_uni <- risk_cef_uni / risk_amo_uni
+
+cat("\n\nRelative Risk (Cefaclor vs Amoxicillin) - Unilateral Cases:\n")
+cat(sprintf("Risk of clearance with Cefaclor: %.4f (%.2f%%)\n", risk_cef_uni, risk_cef_uni * 100))
+cat(sprintf("Risk of clearance with Amoxicillin: %.4f (%.2f%%)\n", risk_amo_uni, risk_amo_uni * 100))
+cat(sprintf("Relative Risk (RR): %.4f\n", rr_uni))
+
+# Interpretation
+if (rr_uni > 1) {
+  cat(sprintf("\nInterpretation: Cefaclor is %.2f times more likely to clear OME compared to Amoxicillin in unilateral cases.\n", rr_uni))
+} else if (rr_uni < 1) {
+  cat(sprintf("\nInterpretation: Amoxicillin is %.2f times more likely to clear OME compared to Cefaclor in unilateral cases.\n", 1/rr_uni))
+} else {
+  cat("\nInterpretation: No difference in clearance rates between the two antibiotics in unilateral cases.\n")
+}
+```
+
+## Bilateral Cases Analysis
+
+```{r problem-3.75-bilateral}
+# Filter bilateral cases only (use ear-level data)
+bilateral_data <- ear_data %>%
+  filter(Case_Type == "Bilateral")
+
+# Create contingency table for bilateral cases
+table_bi <- table(bilateral_data$Antibiotic, bilateral_data$Clearance)
+
+cat("Contingency Table - Bilateral Cases (Ear-level):\n")
+print(table_bi)
+addmargins(table_bi) %>% kable(caption = "Bilateral Cases: Antibiotic vs Clearance (Ear-level)")
+
+# Calculate clearance rates at ear level
+clearance_bi <- bilateral_data %>%
+  group_by(Antibiotic) %>%
+  summarise(
+    Total_Ears = n(),
+    Cleared = sum(Clear == 1),
+    Not_Cleared = sum(Clear == 0),
+    Clearance_Rate = (Cleared / Total_Ears) * 100
+  )
+
+clearance_bi %>%
+  kable(digits = 2, caption = "Clearance Rates by Antibiotic - Bilateral Cases (Ear-level)")
+
+# Calculate Relative Risk
+risk_cef_bi <- clearance_bi$Cleared[clearance_bi$Antibiotic == "Cefaclor"] /
+               clearance_bi$Total_Ears[clearance_bi$Antibiotic == "Cefaclor"]
+risk_amo_bi <- clearance_bi$Cleared[clearance_bi$Antibiotic == "Amoxicillin"] /
+               clearance_bi$Total_Ears[clearance_bi$Antibiotic == "Amoxicillin"]
+rr_bi <- risk_cef_bi / risk_amo_bi
+
+cat("\n\nRelative Risk (Cefaclor vs Amoxicillin) - Bilateral Cases:\n")
+cat(sprintf("Risk of clearance with Cefaclor: %.4f (%.2f%%)\n", risk_cef_bi, risk_cef_bi * 100))
+cat(sprintf("Risk of clearance with Amoxicillin: %.4f (%.2f%%)\n", risk_amo_bi, risk_amo_bi * 100))
+cat(sprintf("Relative Risk (RR): %.4f\n", rr_bi))
+
+# Interpretation
+if (rr_bi > 1) {
+  cat(sprintf("\nInterpretation: Cefaclor is %.2f times more likely to clear OME compared to Amoxicillin in bilateral cases.\n", rr_bi))
+} else if (rr_bi < 1) {
+  cat(sprintf("\nInterpretation: Amoxicillin is %.2f times more likely to clear OME compared to Cefaclor in bilateral cases.\n", 1/rr_bi))
+} else {
+  cat("\nInterpretation: No difference in clearance rates between the two antibiotics in bilateral cases.\n")
+}
+```
+
+## Combined Analysis (All Cases)
+
+```{r problem-3.75-combined}
+# Combined analysis using all ear-level data
+table_combined <- table(ear_data$Antibiotic, ear_data$Clearance)
+
+cat("Contingency Table - All Cases Combined:\n")
+print(table_combined)
+addmargins(table_combined) %>% kable(caption = "All Cases: Antibiotic vs Clearance")
+
+# Calculate clearance rates
+clearance_combined <- ear_data %>%
+  group_by(Antibiotic) %>%
+  summarise(
+    Total_Ears = n(),
+    Cleared = sum(Clear == 1),
+    Not_Cleared = sum(Clear == 0),
+    Clearance_Rate = (Cleared / Total_Ears) * 100
+  )
+
+clearance_combined %>%
+  kable(digits = 2, caption = "Clearance Rates by Antibiotic - All Cases Combined")
+
+# Calculate Relative Risk
+risk_cef_combined <- clearance_combined$Cleared[clearance_combined$Antibiotic == "Cefaclor"] /
+                     clearance_combined$Total_Ears[clearance_combined$Antibiotic == "Cefaclor"]
+risk_amo_combined <- clearance_combined$Cleared[clearance_combined$Antibiotic == "Amoxicillin"] /
+                     clearance_combined$Total_Ears[clearance_combined$Antibiotic == "Amoxicillin"]
+rr_combined <- risk_cef_combined / risk_amo_combined
+
+cat("\n\nRelative Risk (Cefaclor vs Amoxicillin) - All Cases Combined:\n")
+cat(sprintf("Risk of clearance with Cefaclor: %.4f (%.2f%%)\n", risk_cef_combined, risk_cef_combined * 100))
+cat(sprintf("Risk of clearance with Amoxicillin: %.4f (%.2f%%)\n", risk_amo_combined, risk_amo_combined * 100))
+cat(sprintf("Relative Risk (RR): %.4f\n", rr_combined))
+
+# Interpretation
+if (rr_combined > 1) {
+  cat(sprintf("\nInterpretation: Overall, Cefaclor is %.2f times more likely to clear OME compared to Amoxicillin.\n", rr_combined))
+} else if (rr_combined < 1) {
+  cat(sprintf("\nInterpretation: Overall, Amoxicillin is %.2f times more likely to clear OME compared to Cefaclor.\n", 1/rr_combined))
+} else {
+  cat("\nInterpretation: No overall difference in clearance rates between the two antibiotics.\n")
+}
+```
+
+## Visualization
+
+```{r problem-3.75-plot, fig.height=8}
+# Create comparison plots
+p1 <- ggplot(clearance_uni, aes(x = Antibiotic, y = Clearance_Rate, fill = Antibiotic)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_text(aes(label = sprintf("%.1f%%", Clearance_Rate)), vjust = -0.5, size = 4) +
+  labs(title = "Clearance Rates - Unilateral Cases",
+       x = "Antibiotic", y = "Clearance Rate (%)") +
+  scale_fill_manual(values = c("Cefaclor" = "steelblue", "Amoxicillin" = "coral")) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  ylim(0, 100)
+
+p2 <- ggplot(clearance_bi, aes(x = Antibiotic, y = Clearance_Rate, fill = Antibiotic)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_text(aes(label = sprintf("%.1f%%", Clearance_Rate)), vjust = -0.5, size = 4) +
+  labs(title = "Clearance Rates - Bilateral Cases",
+       x = "Antibiotic", y = "Clearance Rate (%)") +
+  scale_fill_manual(values = c("Cefaclor" = "steelblue", "Amoxicillin" = "coral")) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  ylim(0, 100)
+
+p3 <- ggplot(clearance_combined, aes(x = Antibiotic, y = Clearance_Rate, fill = Antibiotic)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_text(aes(label = sprintf("%.1f%%", Clearance_Rate)), vjust = -0.5, size = 4) +
+  labs(title = "Clearance Rates - All Cases Combined",
+       x = "Antibiotic", y = "Clearance Rate (%)") +
+  scale_fill_manual(values = c("Cefaclor" = "steelblue", "Amoxicillin" = "coral")) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  ylim(0, 100)
+
+grid.arrange(p1, p2, p3, ncol = 1)
+```
+
+## Summary for Problem 3.75
+
+```{r problem-3.75-summary}
+summary_3.75 <- data.frame(
+  Case_Type = c("Unilateral", "Bilateral", "Combined"),
+  RR = c(rr_uni, rr_bi, rr_combined),
+  CEF_Rate = c(risk_cef_uni * 100, risk_cef_bi * 100, risk_cef_combined * 100),
+  AMO_Rate = c(risk_amo_uni * 100, risk_amo_bi * 100, risk_amo_combined * 100)
+)
+
+summary_3.75 %>%
+  kable(digits = 3,
+        col.names = c("Case Type", "Relative Risk (RR)",
+                      "Cefaclor Rate (%)", "Amoxicillin Rate (%)"),
+        caption = "Summary of Relative Risk Analysis by Case Type")
+```
+
+---
+
+# Problem 3.76: Age as a Factor in Outcome
+
+**Question:** The investigators recorded the ages of the children because they felt this might be an important factor in determining outcome. Were they right? Try to express your results in terms of RR.
+
+## Analysis Approach
+
+We will:
+1. Calculate clearance rates by age group
+2. Calculate relative risks comparing different age groups
+3. Examine age-specific clearance patterns for each antibiotic
+
+```{r problem-3.76}
+# Calculate clearance rates by age group (across all ears)
+clearance_by_age <- ear_data %>%
+  group_by(Age_Group) %>%
+  summarise(
+    Total_Ears = n(),
+    Cleared = sum(Clear == 1),
+    Not_Cleared = sum(Clear == 0),
+    Clearance_Rate = (Cleared / Total_Ears) * 100
+  )
+
+clearance_by_age %>%
+  kable(digits = 2, caption = "Clearance Rates by Age Group")
+
+# Calculate relative risks comparing age groups
+risk_age1 <- clearance_by_age$Cleared[1] / clearance_by_age$Total_Ears[1]
+risk_age2 <- clearance_by_age$Cleared[2] / clearance_by_age$Total_Ears[2]
+risk_age3 <- clearance_by_age$Cleared[3] / clearance_by_age$Total_Ears[3]
+
+# RR comparing different age groups
+rr_age2_vs_1 <- risk_age2 / risk_age1
+rr_age3_vs_1 <- risk_age3 / risk_age1
+rr_age3_vs_2 <- risk_age3 / risk_age2
+
+cat("\nRelative Risk Comparisons by Age:\n")
+cat(sprintf("RR (Middle vs Youngest): %.4f\n", rr_age2_vs_1))
+cat(sprintf("RR (Oldest vs Youngest): %.4f\n", rr_age3_vs_1))
+cat(sprintf("RR (Oldest vs Middle): %.4f\n", rr_age3_vs_2))
+
+# Interpretation
+cat("\n\nInterpretation:\n")
+if (rr_age2_vs_1 > 1) {
+  cat(sprintf("- Middle age group is %.2f times more likely to clear OME compared to youngest.\n", rr_age2_vs_1))
+} else {
+  cat(sprintf("- Youngest age group is %.2f times more likely to clear OME compared to middle.\n", 1/rr_age2_vs_1))
+}
+
+if (rr_age3_vs_1 > 1) {
+  cat(sprintf("- Oldest age group is %.2f times more likely to clear OME compared to youngest.\n", rr_age3_vs_1))
+} else {
+  cat(sprintf("- Youngest age group is %.2f times more likely to clear OME compared to oldest.\n", 1/rr_age3_vs_1))
+}
+
+# Age-stratified analysis by antibiotic
+clearance_age_antibo <- ear_data %>%
+  group_by(Age_Group, Antibiotic) %>%
+  summarise(
+    Total_Ears = n(),
+    Cleared = sum(Clear == 1),
+    Clearance_Rate = (Cleared / Total_Ears) * 100,
+    .groups = "drop"
+  )
+
+clearance_age_antibo %>%
+  kable(digits = 2, caption = "Clearance Rates by Age Group and Antibiotic")
+```
+
+## Visualization
+
+```{r problem-3.76-plot}
+# Plot clearance rates by age
+p1 <- ggplot(clearance_by_age, aes(x = Age_Group, y = Clearance_Rate, fill = Age_Group)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_text(aes(label = sprintf("%.1f%%", Clearance_Rate)), vjust = -0.5, size = 4) +
+  labs(title = "Clearance Rates by Age Group",
+       x = "Age Group", y = "Clearance Rate (%)") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  ylim(0, 100)
+
+# Plot age-stratified rates by antibiotic
+p2 <- ggplot(clearance_age_antibo, aes(x = Age_Group, y = Clearance_Rate, fill = Antibiotic)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.7) +
+  geom_text(aes(label = sprintf("%.1f%%", Clearance_Rate)),
+            position = position_dodge(width = 0.9), vjust = -0.5, size = 3.5) +
+  labs(title = "Clearance Rates by Age Group and Antibiotic",
+       x = "Age Group", y = "Clearance Rate (%)") +
+  scale_fill_manual(values = c("Cefaclor" = "steelblue", "Amoxicillin" = "coral")) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  ylim(0, 100)
+
+grid.arrange(p1, p2, ncol = 1)
+```
+
+## Summary for Problem 3.76
+
+```{r problem-3.76-summary}
+summary_3.76 <- data.frame(
+  Comparison = c("Middle vs Youngest", "Oldest vs Youngest", "Oldest vs Middle"),
+  RR = c(rr_age2_vs_1, rr_age3_vs_1, rr_age3_vs_2),
+  Interpretation = c(
+    ifelse(rr_age2_vs_1 > 1,
+           sprintf("Middle %.2fx more likely to clear", rr_age2_vs_1),
+           sprintf("Youngest %.2fx more likely to clear", 1/rr_age2_vs_1)),
+    ifelse(rr_age3_vs_1 > 1,
+           sprintf("Oldest %.2fx more likely to clear", rr_age3_vs_1),
+           sprintf("Youngest %.2fx more likely to clear", 1/rr_age3_vs_1)),
+    ifelse(rr_age3_vs_2 > 1,
+           sprintf("Oldest %.2fx more likely to clear", rr_age3_vs_2),
+           sprintf("Middle %.2fx more likely to clear", 1/rr_age3_vs_2))
+  )
+)
+
+summary_3.76 %>%
+  kable(digits = 3, caption = "Summary of Age Effect on Clearance")
+
+cat("\n\nConclusion: Were the investigators right about age being an important factor?\n")
+max_diff <- max(abs(c(rr_age2_vs_1 - 1, rr_age3_vs_1 - 1, rr_age3_vs_2 - 1)))
+if (max_diff > 0.2) {
+  cat("YES - Age appears to be an important factor in clearance outcome.\n")
+  cat("There are substantial differences in clearance rates across age groups.\n")
+} else {
+  cat("The effect of age on clearance is modest.\n")
+  cat("While there are some differences, the effect size is relatively small.\n")
+}
+```
+
+---
+
+# Problem 3.77: Age-Adjusted Antibiotic Comparison
+
+**Question:** While controlling for age, propose an analysis comparing the effectiveness of the two antibiotics. Express your results in terms of RR.
+
+## Analysis Approach
+
+We will use the Mantel-Haenszel method to calculate an age-adjusted relative risk. This method:
+1. Calculates RR within each age stratum
+2. Combines the stratum-specific RRs using appropriate weights
+3. Provides an overall age-adjusted RR estimate
+
+```{r problem-3.77}
+# Calculate stratum-specific (age-specific) RRs
+age_stratified <- ear_data %>%
+  group_by(Age_Group, Antibiotic) %>%
+  summarise(
+    Total = n(),
+    Cleared = sum(Clear == 1),
+    Risk = Cleared / Total,
+    .groups = "drop"
+  ) %>%
+  pivot_wider(names_from = Antibiotic, values_from = c(Total, Cleared, Risk))
+
+age_stratified <- age_stratified %>%
+  mutate(
+    RR_stratum = Risk_Cefaclor / Risk_Amoxicillin,
+    a = Cleared_Cefaclor,
+    b = Total_Cefaclor - Cleared_Cefaclor,
+    c = Cleared_Amoxicillin,
+    d = Total_Amoxicillin - Cleared_Amoxicillin,
+    n = Total_Cefaclor + Total_Amoxicillin,
+    weight = (c * (a + b)) / n
+  )
+
+cat("Age-Stratified Analysis:\n")
+age_stratified %>%
+  select(Age_Group, Total_Cefaclor, Cleared_Cefaclor, Risk_Cefaclor,
+         Total_Amoxicillin, Cleared_Amoxicillin, Risk_Amoxicillin, RR_stratum) %>%
+  kable(digits = 4, caption = "Stratum-Specific Relative Risks by Age Group")
+
+# Calculate Mantel-Haenszel adjusted RR
+# MH RR = sum(a_i * n_0i / n_i) / sum(c_i * n_1i / n_i)
+# where a_i = cleared in exposed (CEF), c_i = cleared in unexposed (AMO)
+# n_1i = total in exposed, n_0i = total in unexposed, n_i = total
+
+mh_numerator <- sum((age_stratified$Cleared_Cefaclor * age_stratified$Total_Amoxicillin) /
+                    age_stratified$n)
+mh_denominator <- sum((age_stratified$Cleared_Amoxicillin * age_stratified$Total_Cefaclor) /
+                      age_stratified$n)
+mh_rr <- mh_numerator / mh_denominator
+
+cat("\n\nMantel-Haenszel Age-Adjusted Relative Risk:\n")
+cat(sprintf("MH RR (Cefaclor vs Amoxicillin, adjusted for age): %.4f\n", mh_rr))
+
+# Compare with crude (unadjusted) RR
+cat(sprintf("\nCrude (unadjusted) RR: %.4f\n", rr_combined))
+cat(sprintf("Age-adjusted MH RR: %.4f\n", mh_rr))
+cat(sprintf("Difference: %.4f\n", mh_rr - rr_combined))
+
+# Interpretation
+cat("\n\nInterpretation:\n")
+if (mh_rr > 1) {
+  cat(sprintf("After adjusting for age, Cefaclor is %.2f times more likely to clear OME compared to Amoxicillin.\n", mh_rr))
+} else if (mh_rr < 1) {
+  cat(sprintf("After adjusting for age, Amoxicillin is %.2f times more likely to clear OME compared to Cefaclor.\n", 1/mh_rr))
+} else {
+  cat("After adjusting for age, there is no difference between the two antibiotics.\n")
+}
+
+if (abs(mh_rr - rr_combined) > 0.05) {
+  cat("\nAge appears to be a confounding factor, as the adjusted and unadjusted RRs differ substantially.\n")
+} else {
+  cat("\nAge does not appear to be a strong confounding factor, as the adjusted and unadjusted RRs are similar.\n")
+}
+```
+
+## Visualization
+
+```{r problem-3.77-plot}
+# Plot stratum-specific RRs with MH adjusted RR
+rr_comparison <- data.frame(
+  Stratum = c(as.character(age_stratified$Age_Group), "MH Adjusted", "Crude"),
+  RR = c(age_stratified$RR_stratum, mh_rr, rr_combined),
+  Type = c(rep("Age-Specific", 3), "Adjusted", "Unadjusted")
+)
+
+ggplot(rr_comparison, aes(x = Stratum, y = RR, fill = Type)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "red", size = 1) +
+  geom_text(aes(label = sprintf("%.3f", RR)), vjust = -0.5, size = 4) +
+  labs(title = "Relative Risk Comparison: Age-Specific vs Adjusted vs Crude",
+       subtitle = "Reference line at RR = 1 (no difference)",
+       x = "Analysis Stratum", y = "Relative Risk (Cefaclor vs Amoxicillin)") +
+  scale_fill_manual(values = c("Age-Specific" = "lightblue",
+                                "Adjusted" = "darkgreen",
+                                "Unadjusted" = "orange")) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Summary for Problem 3.77
+
+```{r problem-3.77-summary}
+summary_3.77 <- data.frame(
+  Analysis = c("Crude (Unadjusted)", "Age-Adjusted (MH)", "Youngest Age Group",
+               "Middle Age Group", "Oldest Age Group"),
+  RR = c(rr_combined, mh_rr, age_stratified$RR_stratum)
+)
+
+summary_3.77 %>%
+  kable(digits = 4, caption = "Summary of Age-Adjusted Analysis")
+```
+
+---
+
+# Problem 3.78: Ear Dependence in Bilateral Cases
+
+**Question:** Another issue in this trial is the possible dependence between ears for the bilateral cases. Comment on this issue based on the data collected.
+
+## Analysis Approach
+
+We will examine ear dependence by:
+1. Analyzing concordance between ears (both cleared vs both not cleared vs discordant)
+2. Calculating correlation between left and right ear outcomes
+3. Comparing clearance rates assuming independence vs observed rates
+4. Conducting McNemar's test for paired data
+
+```{r problem-3.78}
+# Filter bilateral cases and reshape to wide format
+bilateral_wide <- ear_data %>%
+  filter(Case_Type == "Bilateral") %>%
+  select(Id, Clear, Antibiotic, Age_Group, Ear) %>%
+  mutate(Ear_Side = ifelse(Ear == 1, "Left", "Right")) %>%
+  select(-Ear) %>%
+  pivot_wider(names_from = Ear_Side, values_from = Clear)
+
+# Check for any missing values
+bilateral_wide <- bilateral_wide %>%
+  filter(!is.na(Left) & !is.na(Right))
+
+cat("Bilateral Cases Data Structure:\n")
+cat(sprintf("Number of children with bilateral OME: %d\n", nrow(bilateral_wide)))
+
+# Create concordance table
+concordance_table <- table(bilateral_wide$Left, bilateral_wide$Right)
+rownames(concordance_table) <- c("Left Not Cleared", "Left Cleared")
+colnames(concordance_table) <- c("Right Not Cleared", "Right Cleared")
+
+cat("\n\nConcordance Table - Bilateral Cases:\n")
+print(concordance_table)
+addmargins(concordance_table) %>%
+  kable(caption = "Ear Concordance in Bilateral Cases")
+
+# Calculate concordance measures
+both_cleared <- concordance_table[2, 2]
+neither_cleared <- concordance_table[1, 1]
+left_only <- concordance_table[2, 1]
+right_only <- concordance_table[1, 2]
+total <- sum(concordance_table)
+
+concordance_rate <- (both_cleared + neither_cleared) / total * 100
+discordance_rate <- (left_only + right_only) / total * 100
+
+cat("\n\nConcordance Analysis:\n")
+cat(sprintf("Both ears cleared: %d (%.1f%%)\n", both_cleared, both_cleared/total*100))
+cat(sprintf("Neither ear cleared: %d (%.1f%%)\n", neither_cleared, neither_cleared/total*100))
+cat(sprintf("Concordant pairs (same outcome): %d (%.1f%%)\n",
+            both_cleared + neither_cleared, concordance_rate))
+cat(sprintf("\nLeft only cleared: %d (%.1f%%)\n", left_only, left_only/total*100))
+cat(sprintf("Right only cleared: %d (%.1f%%)\n", right_only, right_only/total*100))
+cat(sprintf("Discordant pairs (different outcome): %d (%.1f%%)\n",
+            left_only + right_only, discordance_rate))
+
+# Calculate correlation
+cor_bilateral <- cor(bilateral_wide$Left, bilateral_wide$Right)
+cat(sprintf("\n\nCorrelation between left and right ear outcomes: %.4f\n", cor_bilateral))
+
+# Expected concordance under independence
+p_clear <- mean(c(bilateral_wide$Left, bilateral_wide$Right))
+expected_both_clear <- p_clear^2 * total
+expected_both_not_clear <- (1 - p_clear)^2 * total
+expected_concordance <- (expected_both_clear + expected_both_not_clear) / total * 100
+
+cat("\n\nComparison with Independence:\n")
+cat(sprintf("Overall clearance rate in bilateral cases: %.1f%%\n", p_clear * 100))
+cat(sprintf("Expected concordance under independence: %.1f%%\n", expected_concordance))
+cat(sprintf("Observed concordance: %.1f%%\n", concordance_rate))
+cat(sprintf("Difference: %.1f%%\n", concordance_rate - expected_concordance))
+
+# McNemar's test for paired data
+mcnemar_result <- mcnemar.test(concordance_table)
+cat("\n\nMcNemar's Test for Paired Data:\n")
+cat(sprintf("Chi-square statistic: %.4f\n", mcnemar_result$statistic))
+cat(sprintf("p-value: %.4f\n", mcnemar_result$p.value))
+if (mcnemar_result$p.value < 0.05) {
+  cat("There is significant asymmetry in discordant pairs.\n")
+} else {
+  cat("No significant asymmetry in discordant pairs.\n")
+}
+
+# Stratify by antibiotic
+cat("\n\n=== Concordance by Antibiotic ===\n")
+
+for (antib in c("Cefaclor", "Amoxicillin")) {
+  cat(sprintf("\n%s:\n", antib))
+  bilateral_antib <- bilateral_wide %>% filter(Antibiotic == antib)
+
+  if (nrow(bilateral_antib) > 0) {
+    conc_antib <- table(bilateral_antib$Left, bilateral_antib$Right)
+
+    both_clear_a <- ifelse(nrow(conc_antib) >= 2 && ncol(conc_antib) >= 2, conc_antib[2, 2], 0)
+    neither_clear_a <- ifelse(nrow(conc_antib) >= 1 && ncol(conc_antib) >= 1, conc_antib[1, 1], 0)
+    total_a <- nrow(bilateral_antib)
+    conc_rate_a <- (both_clear_a + neither_clear_a) / total_a * 100
+
+    print(addmargins(conc_antib))
+    cat(sprintf("Concordance rate: %.1f%%\n", conc_rate_a))
+    cat(sprintf("Correlation: %.4f\n", cor(bilateral_antib$Left, bilateral_antib$Right)))
+  }
+}
+```
+
+## Visualization
+
+```{r problem-3.78-plot, fig.height=8}
+# Create mosaic-style plot for concordance
+concordance_df <- as.data.frame(concordance_table)
+colnames(concordance_df) <- c("Left_Ear", "Right_Ear", "Freq")
+
+p1 <- ggplot(concordance_df, aes(x = Left_Ear, y = Right_Ear, fill = Freq)) +
+  geom_tile(color = "white", size = 1) +
+  geom_text(aes(label = Freq), size = 8, color = "white", fontface = "bold") +
+  scale_fill_gradient(low = "lightblue", high = "darkblue") +
+  labs(title = "Concordance Pattern in Bilateral Cases",
+       x = "Left Ear Outcome", y = "Right Ear Outcome") +
+  theme_minimal() +
+  theme(legend.position = "right",
+        axis.text = element_text(size = 10))
+
+# Bar plot comparing concordance rates
+concordance_summary <- data.frame(
+  Outcome = c("Both Cleared", "Neither Cleared", "Left Only", "Right Only"),
+  Count = c(both_cleared, neither_cleared, left_only, right_only),
+  Percentage = c(both_cleared, neither_cleared, left_only, right_only) / total * 100,
+  Type = c("Concordant", "Concordant", "Discordant", "Discordant")
+)
+
+p2 <- ggplot(concordance_summary, aes(x = Outcome, y = Percentage, fill = Type)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_text(aes(label = sprintf("n=%d\n%.1f%%", Count, Percentage)),
+            vjust = -0.3, size = 4) +
+  labs(title = "Distribution of Concordance Outcomes",
+       x = "Outcome", y = "Percentage of Bilateral Cases") +
+  scale_fill_manual(values = c("Concordant" = "darkgreen", "Discordant" = "orange")) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ylim(0, max(concordance_summary$Percentage) * 1.15)
+
+# Comparison of observed vs expected concordance
+comparison_df <- data.frame(
+  Type = c("Observed", "Expected\n(if independent)"),
+  Concordance = c(concordance_rate, expected_concordance)
+)
+
+p3 <- ggplot(comparison_df, aes(x = Type, y = Concordance, fill = Type)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_text(aes(label = sprintf("%.1f%%", Concordance)), vjust = -0.5, size = 5) +
+  labs(title = "Observed vs Expected Concordance",
+       subtitle = "Testing for Ear Dependence",
+       x = "", y = "Concordance Rate (%)") +
+  scale_fill_manual(values = c("Observed" = "steelblue",
+                                "Expected\n(if independent)" = "coral")) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  ylim(0, 100)
+
+grid.arrange(p1, p2, p3, ncol = 1)
+```
+
+## Summary for Problem 3.78
+
+```{r problem-3.78-summary}
+cat("\n=== CONCLUSION ON EAR DEPENDENCE ===\n\n")
+
+cat("Evidence for ear dependence:\n")
+cat(sprintf("1. Concordance rate: %.1f%% (%.1f%% expected under independence)\n",
+            concordance_rate, expected_concordance))
+cat(sprintf("   - Excess concordance: %.1f%%\n", concordance_rate - expected_concordance))
+
+cat(sprintf("\n2. Correlation coefficient: %.4f\n", cor_bilateral))
+if (cor_bilateral > 0.3) {
+  cat("   - Moderate to strong positive correlation suggests dependence\n")
+} else if (cor_bilateral > 0.1) {
+  cat("   - Weak to moderate positive correlation suggests some dependence\n")
+} else {
+  cat("   - Weak correlation suggests minimal dependence\n")
+}
+
+cat(sprintf("\n3. McNemar's test p-value: %.4f\n", mcnemar_result$p.value))
+if (mcnemar_result$p.value < 0.05) {
+  cat("   - Significant asymmetry in discordant pairs\n")
+} else {
+  cat("   - No significant asymmetry in discordant pairs\n")
+}
+
+cat("\nClinical Implications:\n")
+if (concordance_rate > expected_concordance + 10) {
+  cat("- Strong evidence of ear dependence in bilateral cases\n")
+  cat("- Treatment of one ear may influence outcome in the other ear\n")
+  cat("- Statistical analyses should account for within-subject correlation\n")
+  cat("- Each ear should NOT be treated as an independent observation\n")
+} else if (concordance_rate > expected_concordance + 5) {
+  cat("- Moderate evidence of ear dependence in bilateral cases\n")
+  cat("- Some correlation between ears should be considered in analysis\n")
+  cat("- Sensitivity analyses accounting for clustering may be warranted\n")
+} else {
+  cat("- Limited evidence of strong ear dependence\n")
+  cat("- Ears may be approximately independent for analysis purposes\n")
+}
+
+# Summary table
+summary_3.78 <- data.frame(
+  Measure = c("Concordance Rate", "Expected (Independence)", "Difference",
+              "Correlation", "McNemar p-value"),
+  Value = c(sprintf("%.1f%%", concordance_rate),
+            sprintf("%.1f%%", expected_concordance),
+            sprintf("%.1f%%", concordance_rate - expected_concordance),
+            sprintf("%.4f", cor_bilateral),
+            sprintf("%.4f", mcnemar_result$p.value))
+)
+
+summary_3.78 %>%
+  kable(caption = "Summary of Ear Dependence Analysis")
+```
+
+---
+
+# Overall Study Conclusions
+
+```{r overall-conclusions}
+cat("=== OVERALL STUDY CONCLUSIONS ===\n\n")
+
+cat("1. ANTIBIOTIC EFFECTIVENESS (Problem 3.75):\n")
+cat(sprintf("   - Cefaclor clearance rate: %.1f%%\n", risk_cef_combined * 100))
+cat(sprintf("   - Amoxicillin clearance rate: %.1f%%\n", risk_amo_combined * 100))
+cat(sprintf("   - Relative Risk: %.3f\n", rr_combined))
+if (rr_combined > 1.1) {
+  cat("   - Cefaclor shows better effectiveness\n")
+} else if (rr_combined < 0.9) {
+  cat("   - Amoxicillin shows better effectiveness\n")
+} else {
+  cat("   - Both antibiotics show similar effectiveness\n")
+}
+
+cat("\n2. AGE EFFECT (Problem 3.76):\n")
+cat(sprintf("   - Youngest group clearance: %.1f%%\n",
+            clearance_by_age$Clearance_Rate[1]))
+cat(sprintf("   - Middle group clearance: %.1f%%\n",
+            clearance_by_age$Clearance_Rate[2]))
+cat(sprintf("   - Oldest group clearance: %.1f%%\n",
+            clearance_by_age$Clearance_Rate[3]))
+if (max(clearance_by_age$Clearance_Rate) - min(clearance_by_age$Clearance_Rate) > 15) {
+  cat("   - Age is an important factor in treatment outcome\n")
+} else {
+  cat("   - Age shows modest effect on treatment outcome\n")
+}
+
+cat("\n3. AGE-ADJUSTED COMPARISON (Problem 3.77):\n")
+cat(sprintf("   - Crude RR: %.3f\n", rr_combined))
+cat(sprintf("   - Age-adjusted RR: %.3f\n", mh_rr))
+if (abs(mh_rr - rr_combined) > 0.1) {
+  cat("   - Age is a confounding factor\n")
+  cat("   - Age-adjusted estimate should be preferred\n")
+} else {
+  cat("   - Age is not a strong confounder\n")
+  cat("   - Crude and adjusted estimates are similar\n")
+}
+
+cat("\n4. EAR DEPENDENCE (Problem 3.78):\n")
+cat(sprintf("   - Concordance rate: %.1f%%\n", concordance_rate))
+cat(sprintf("   - Correlation: %.3f\n", cor_bilateral))
+if (concordance_rate > expected_concordance + 10) {
+  cat("   - Strong ear dependence detected\n")
+  cat("   - Within-subject correlation should be accounted for in analysis\n")
+} else {
+  cat("   - Ear dependence is not strong\n")
+}
+
+cat("\n5. CLINICAL RECOMMENDATIONS:\n")
+cat("   - Based on this randomized trial, clinicians should consider:\n")
+cat("     * Antibiotic effectiveness differences between CEF and AMO\n")
+cat("     * Patient age when predicting treatment success\n")
+cat("     * Bilateral cases may show correlated outcomes\n")
+cat("     * Further studies with larger samples may be beneficial\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
