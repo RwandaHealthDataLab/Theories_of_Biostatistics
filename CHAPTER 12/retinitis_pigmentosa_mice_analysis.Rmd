@@ -1,0 +1,754 @@
+---
+title: "Ophthalmology: Retinitis Pigmentosa and Sunlight Exposure"
+subtitle: "Problem 12.57 - Analysis of ERG Amplitudes in RP Mice"
+author: "Your Name"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Background
+
+## Retinitis Pigmentosa (RP)
+
+Retinitis pigmentosa refers to hereditary retinal pigmentary degenerations causing:
+- Night blindness
+- Loss of visual field (ages 10-40 years)
+- Progressive vision loss
+- Some patients become legally blind by age 30; others retain vision past 60
+
+## Electroretinogram (ERG)
+
+- **Most reliable method** to follow RP progression
+- Measures electrical activity in the retina
+- **ERG amplitude declines** as disease progresses
+- Strongly related to ability to perform routine activities (driving, walking at night)
+
+## Sunlight Hypothesis
+
+**Hypothesis**: Direct sunlight exposure is harmful to RP patients
+
+## Study Design
+
+- **RP mice**: Mice with RP gene introduced and bred over generations
+- **Lighting conditions** (random assignment from birth):
+  - **Group A**: Light
+  - **Group B**: Dim
+  - **Group C**: Dark
+- **Control**: Normal mice also randomized to same conditions
+- **Measurements**: ERG amplitudes at 15, 20, and 35 days of life
+  - **BAMP** (B-wave amplitude): Measured in both RP and normal mice
+  - **AAMP** (A-wave amplitude): Measured only in RP mice
+
+## Research Question
+
+**Problem 12.57**: Does lighting condition affect ERG amplitude decline in RP mice?
+
+# Load Required Libraries
+
+```{r load-libraries}
+library(tidyverse)
+library(knitr)
+library(ggplot2)
+library(car)
+library(MASS)
+library(gridExtra)
+library(broom)
+```
+
+# Load and Prepare Data
+
+```{r load-data}
+# Read the MICE.DAT file
+mice_data <- read.table("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-tab/MICE.DAT.txt",
+                        header = TRUE,
+                        sep = "\t",
+                        quote = "'\"",
+                        strip.white = TRUE)
+
+# Display structure
+str(mice_data)
+
+cat("\nDataset dimensions:", nrow(mice_data), "observations\n")
+
+# Replace missing value code (9999) with NA
+mice_data <- mice_data %>%
+  dplyr::mutate(
+    B_amp = ifelse(B_amp == 9999, NA, B_amp),
+    A_amp = ifelse(A_amp == 9999, NA, A_amp),
+    # Create descriptive labels
+    mouse_type = factor(Group,
+                       levels = c(1, 2),
+                       labels = c("RP Mice", "Normal Mice")),
+    lighting = factor(Trtgrp,
+                     levels = c("A", "B", "C"),
+                     labels = c("Light", "Dim", "Dark"))
+  )
+
+# Summary
+cat("\nSample sizes:\n")
+mice_data %>%
+  dplyr::distinct(Id, mouse_type, lighting) %>%
+  dplyr::group_by(mouse_type, lighting) %>%
+  dplyr::summarise(N = n(), .groups = 'drop') %>%
+  kable(caption = "Number of Mice by Type and Lighting Condition")
+
+cat("\nData availability:\n")
+cat("B_amp (BAMP) measurements:", sum(!is.na(mice_data$B_amp)), "\n")
+cat("A_amp (AAMP) measurements:", sum(!is.na(mice_data$A_amp)), "\n")
+cat("RP mice only:", sum(!is.na(mice_data$A_amp) & mice_data$Group == 1), "\n")
+```
+
+# Exploratory Data Analysis
+
+## Overall Distribution
+
+```{r eda-distribution}
+# Summary statistics
+summary_stats <- mice_data %>%
+  dplyr::filter(!is.na(B_amp)) %>%
+  dplyr::group_by(mouse_type, lighting, Age) %>%
+  dplyr::summarise(
+    N = n(),
+    Mean_BAMP = mean(B_amp),
+    SD_BAMP = sd(B_amp),
+    Median_BAMP = median(B_amp),
+    .groups = 'drop'
+  )
+
+kable(summary_stats, digits = 1,
+      caption = "Summary Statistics for BAMP by Mouse Type, Lighting, and Age")
+```
+
+## Visualization of Raw Data
+
+```{r eda-plots}
+# BAMP over time by group
+ggplot(mice_data %>% dplyr::filter(!is.na(B_amp)),
+       aes(x = Age, y = B_amp, color = lighting, group = Id)) +
+  geom_line(alpha = 0.3) +
+  geom_point(alpha = 0.5, size = 2) +
+  stat_summary(aes(group = lighting), fun = mean, geom = "line",
+               linewidth = 2, alpha = 0.8) +
+  stat_summary(aes(group = lighting), fun = mean, geom = "point",
+               size = 4, shape = 18) +
+  facet_wrap(~ mouse_type, scales = "free_y") +
+  labs(title = "B-Wave Amplitude (BAMP) Over Time",
+       subtitle = "Individual trajectories (thin lines) and group means (thick lines)",
+       x = "Age (days)",
+       y = "B-Wave Amplitude",
+       color = "Lighting") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# AAMP for RP mice only
+rp_mice <- mice_data %>% dplyr::filter(Group == 1, !is.na(A_amp))
+
+if (nrow(rp_mice) > 0) {
+  ggplot(rp_mice, aes(x = Age, y = A_amp, color = lighting, group = Id)) +
+    geom_line(alpha = 0.3) +
+    geom_point(alpha = 0.5, size = 2) +
+    stat_summary(aes(group = lighting), fun = mean, geom = "line",
+                 linewidth = 2, alpha = 0.8) +
+    stat_summary(aes(group = lighting), fun = mean, geom = "point",
+                 size = 4, shape = 18) +
+    labs(title = "A-Wave Amplitude (AAMP) Over Time - RP Mice Only",
+         subtitle = "Individual trajectories (thin lines) and group means (thick lines)",
+         x = "Age (days)",
+         y = "A-Wave Amplitude",
+         color = "Lighting") +
+    theme_minimal() +
+    theme(legend.position = "bottom")
+}
+```
+
+# Individual Regression Analysis
+
+## Fit Individual Slopes for Each Mouse
+
+```{r individual-regressions}
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("INDIVIDUAL REGRESSION ANALYSIS\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# BAMP: Fit individual regression lines
+bamp_slopes <- mice_data %>%
+  dplyr::filter(!is.na(B_amp)) %>%
+  dplyr::group_by(Id, mouse_type, lighting) %>%
+  dplyr::filter(n() >= 2) %>%  # Need at least 2 points
+  dplyr::do({
+    model <- lm(B_amp ~ Age, data = .)
+    data.frame(
+      intercept_bamp = coef(model)[1],
+      slope_bamp = coef(model)[2],
+      n_obs_bamp = nobs(model)
+    )
+  }) %>%
+  dplyr::ungroup()
+
+cat("Number of mice with BAMP slopes:", nrow(bamp_slopes), "\n\n")
+
+# AAMP: Fit individual regression lines (RP mice only)
+aamp_slopes <- mice_data %>%
+  dplyr::filter(Group == 1, !is.na(A_amp)) %>%
+  dplyr::group_by(Id, mouse_type, lighting) %>%
+  dplyr::filter(n() >= 2) %>%
+  dplyr::do({
+    model <- lm(A_amp ~ Age, data = .)
+    data.frame(
+      intercept_aamp = coef(model)[1],
+      slope_aamp = coef(model)[2],
+      n_obs_aamp = nobs(model)
+    )
+  }) %>%
+  dplyr::ungroup()
+
+cat("Number of RP mice with AAMP slopes:", nrow(aamp_slopes), "\n\n")
+
+# Summary of slopes
+slope_summary_bamp <- bamp_slopes %>%
+  dplyr::group_by(mouse_type, lighting) %>%
+  dplyr::summarise(
+    N = n(),
+    Mean_Slope = mean(slope_bamp),
+    SD_Slope = sd(slope_bamp),
+    Median_Slope = median(slope_bamp),
+    Min_Slope = min(slope_bamp),
+    Max_Slope = max(slope_bamp),
+    .groups = 'drop'
+  )
+
+kable(slope_summary_bamp, digits = 3,
+      caption = "Summary of Individual BAMP Slopes (change per day)")
+
+if (nrow(aamp_slopes) > 0) {
+  slope_summary_aamp <- aamp_slopes %>%
+    dplyr::group_by(lighting) %>%
+    dplyr::summarise(
+      N = n(),
+      Mean_Slope = mean(slope_aamp),
+      SD_Slope = sd(slope_aamp),
+      Median_Slope = median(slope_aamp),
+      Min_Slope = min(slope_aamp),
+      Max_Slope = max(slope_aamp),
+      .groups = 'drop'
+    )
+
+  kable(slope_summary_aamp, digits = 3,
+        caption = "Summary of Individual AAMP Slopes for RP Mice (change per day)")
+}
+```
+
+## Visualization of Slopes
+
+```{r slope-distributions}
+# BAMP slopes
+ggplot(bamp_slopes, aes(x = lighting, y = slope_bamp, fill = lighting)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "blue", linewidth = 1) +
+  facet_wrap(~ mouse_type, scales = "free_y") +
+  labs(title = "Distribution of Individual BAMP Slopes by Lighting Condition",
+       subtitle = "Dashed line at zero indicates no change",
+       x = "Lighting Condition",
+       y = "Slope (change in BAMP per day)",
+       fill = "Lighting") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# AAMP slopes (RP mice only)
+if (nrow(aamp_slopes) > 0) {
+  ggplot(aamp_slopes, aes(x = lighting, y = slope_aamp, fill = lighting)) +
+    geom_boxplot(alpha = 0.7, outlier.shape = 16) +
+    geom_jitter(width = 0.2, alpha = 0.4, size = 2) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "blue", linewidth = 1) +
+    labs(title = "Distribution of Individual AAMP Slopes - RP Mice",
+         subtitle = "Dashed line at zero indicates no change",
+         x = "Lighting Condition",
+         y = "Slope (change in AAMP per day)",
+         fill = "Lighting") +
+    theme_minimal() +
+    theme(legend.position = "none")
+}
+```
+
+# Check Normality and Consider Transformations
+
+## Assess Normality of Slopes
+
+```{r normality-check}
+cat("\n### Normality Assessment for BAMP Slopes ###\n\n")
+
+# Shapiro-Wilk tests by group
+cat("Shapiro-Wilk Tests by Mouse Type and Lighting:\n")
+cat("----------------------------------------------\n")
+
+for (mtype in levels(bamp_slopes$mouse_type)) {
+  for (light in levels(bamp_slopes$lighting)) {
+    subset_data <- bamp_slopes %>%
+      dplyr::filter(mouse_type == mtype, lighting == light)
+
+    if (nrow(subset_data) >= 3) {
+      sw_test <- shapiro.test(subset_data$slope_bamp)
+      cat(sprintf("%s - %s: W = %.4f, p = %.4f\n",
+                  mtype, light, sw_test$statistic, sw_test$p.value))
+    }
+  }
+}
+
+# Q-Q plots
+par(mfrow = c(2, 3))
+for (mtype in levels(bamp_slopes$mouse_type)) {
+  for (light in levels(bamp_slopes$lighting)) {
+    subset_data <- bamp_slopes %>%
+      dplyr::filter(mouse_type == mtype, lighting == light)
+
+    if (nrow(subset_data) >= 3) {
+      qqnorm(subset_data$slope_bamp,
+             main = paste(mtype, "-", light))
+      qqline(subset_data$slope_bamp, col = "red")
+    }
+  }
+}
+par(mfrow = c(1, 1))
+
+# Check if transformation is needed
+cat("\n\nAssessing need for transformation...\n")
+cat("Looking at skewness and distribution shape.\n\n")
+
+# Histogram overlay
+ggplot(bamp_slopes, aes(x = slope_bamp, fill = lighting)) +
+  geom_histogram(alpha = 0.6, bins = 15, position = "identity") +
+  facet_wrap(~ mouse_type, scales = "free") +
+  labs(title = "Distribution of BAMP Slopes",
+       x = "Slope (BAMP change per day)",
+       y = "Frequency") +
+  theme_minimal()
+```
+
+## Log Transformation (if needed)
+
+```{r transformations}
+cat("\n### Considering Log Transformation ###\n\n")
+
+# Note: For slopes that can be negative, we may need different approach
+# Check if slopes are predominantly positive
+
+cat("BAMP Slope Summary:\n")
+cat("Negative slopes:", sum(bamp_slopes$slope_bamp < 0), "\n")
+cat("Zero slopes:", sum(bamp_slopes$slope_bamp == 0), "\n")
+cat("Positive slopes:", sum(bamp_slopes$slope_bamp > 0), "\n\n")
+
+# For analysis, we'll work with raw slopes but note transformation options
+# If most slopes are positive, we could use log transformation
+# For now, proceed with raw slopes and note in results
+
+cat("Proceeding with raw slopes for primary analysis.\n")
+cat("Will note if violations of normality affect conclusions.\n")
+```
+
+# Analysis 1: BAMP - RP Mice
+
+```{r bamp-rp-analysis}
+cat("\n\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("ANALYSIS 1: BAMP SLOPES - RP MICE\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Filter for RP mice only
+bamp_rp <- bamp_slopes %>% dplyr::filter(mouse_type == "RP Mice")
+
+cat("Sample sizes:\n")
+table(bamp_rp$lighting) %>% print()
+
+# Descriptive statistics
+desc_bamp_rp <- bamp_rp %>%
+  dplyr::group_by(lighting) %>%
+  dplyr::summarise(
+    N = n(),
+    Mean = mean(slope_bamp),
+    SD = sd(slope_bamp),
+    SE = sd(slope_bamp) / sqrt(n()),
+    Median = median(slope_bamp),
+    .groups = 'drop'
+  )
+
+kable(desc_bamp_rp, digits = 3,
+      caption = "BAMP Slope Statistics for RP Mice by Lighting Condition")
+
+# One-way ANOVA
+anova_bamp_rp <- aov(slope_bamp ~ lighting, data = bamp_rp)
+anova_summary_bamp_rp <- summary(anova_bamp_rp)
+
+cat("\n### One-Way ANOVA Results ###\n\n")
+print(anova_summary_bamp_rp)
+
+# Levene's test
+levene_bamp_rp <- leveneTest(slope_bamp ~ lighting, data = bamp_rp)
+cat("\n### Levene's Test for Homogeneity of Variance ###\n")
+print(levene_bamp_rp)
+
+# Extract statistics
+f_bamp_rp <- anova_summary_bamp_rp[[1]]$`F value`[1]
+p_bamp_rp <- anova_summary_bamp_rp[[1]]$`Pr(>F)`[1]
+
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("INTERPRETATION - BAMP in RP Mice:\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("F-statistic:", round(f_bamp_rp, 3), "\n")
+cat("p-value:", format.pval(p_bamp_rp, digits = 4), "\n\n")
+
+if (p_bamp_rp < 0.05) {
+  cat("CONCLUSION: Lighting condition SIGNIFICANTLY affects the rate of\n")
+  cat("B-wave amplitude change in RP mice (p < 0.05).\n")
+} else {
+  cat("CONCLUSION: Lighting condition does NOT significantly affect the rate of\n")
+  cat("B-wave amplitude change in RP mice (p >= 0.05).\n")
+}
+
+# Effect size
+ss_group <- anova_summary_bamp_rp[[1]]$`Sum Sq`[1]
+ss_total <- sum(anova_summary_bamp_rp[[1]]$`Sum Sq`)
+eta_sq_bamp_rp <- ss_group / ss_total
+cat("\nEffect size (η²):", round(eta_sq_bamp_rp, 4))
+cat(" (", round(eta_sq_bamp_rp * 100, 2), "% of variance)\n", sep = "")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+
+# Tukey's HSD
+cat("\n### Post-hoc Pairwise Comparisons (Tukey's HSD) ###\n\n")
+tukey_bamp_rp <- TukeyHSD(anova_bamp_rp)
+print(tukey_bamp_rp)
+```
+
+# Analysis 2: BAMP - Normal Mice
+
+```{r bamp-normal-analysis}
+cat("\n\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("ANALYSIS 2: BAMP SLOPES - NORMAL MICE\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Filter for Normal mice only
+bamp_normal <- bamp_slopes %>% dplyr::filter(mouse_type == "Normal Mice")
+
+cat("Sample sizes:\n")
+table(bamp_normal$lighting) %>% print()
+
+# Descriptive statistics
+desc_bamp_normal <- bamp_normal %>%
+  dplyr::group_by(lighting) %>%
+  dplyr::summarise(
+    N = n(),
+    Mean = mean(slope_bamp),
+    SD = sd(slope_bamp),
+    SE = sd(slope_bamp) / sqrt(n()),
+    Median = median(slope_bamp),
+    .groups = 'drop'
+  )
+
+kable(desc_bamp_normal, digits = 3,
+      caption = "BAMP Slope Statistics for Normal Mice by Lighting Condition")
+
+# One-way ANOVA
+anova_bamp_normal <- aov(slope_bamp ~ lighting, data = bamp_normal)
+anova_summary_bamp_normal <- summary(anova_bamp_normal)
+
+cat("\n### One-Way ANOVA Results ###\n\n")
+print(anova_summary_bamp_normal)
+
+# Extract statistics
+f_bamp_normal <- anova_summary_bamp_normal[[1]]$`F value`[1]
+p_bamp_normal <- anova_summary_bamp_normal[[1]]$`Pr(>F)`[1]
+
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("INTERPRETATION - BAMP in Normal Mice:\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("F-statistic:", round(f_bamp_normal, 3), "\n")
+cat("p-value:", format.pval(p_bamp_normal, digits = 4), "\n\n")
+
+if (p_bamp_normal < 0.05) {
+  cat("CONCLUSION: Lighting condition SIGNIFICANTLY affects the rate of\n")
+  cat("B-wave amplitude change in Normal mice (p < 0.05).\n")
+} else {
+  cat("CONCLUSION: Lighting condition does NOT significantly affect the rate of\n")
+  cat("B-wave amplitude change in Normal mice (p >= 0.05).\n")
+}
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+
+# Tukey's HSD
+cat("\n### Post-hoc Pairwise Comparisons (Tukey's HSD) ###\n\n")
+tukey_bamp_normal <- TukeyHSD(anova_bamp_normal)
+print(tukey_bamp_normal)
+```
+
+# Analysis 3: AAMP - RP Mice Only
+
+```{r aamp-analysis}
+cat("\n\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("ANALYSIS 3: AAMP SLOPES - RP MICE ONLY\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+if (nrow(aamp_slopes) > 0) {
+  cat("Sample sizes:\n")
+  table(aamp_slopes$lighting) %>% print()
+
+  # Descriptive statistics
+  desc_aamp <- aamp_slopes %>%
+    dplyr::group_by(lighting) %>%
+    dplyr::summarise(
+      N = n(),
+      Mean = mean(slope_aamp),
+      SD = sd(slope_aamp),
+      SE = sd(slope_aamp) / sqrt(n()),
+      Median = median(slope_aamp),
+      .groups = 'drop'
+    )
+
+  kable(desc_aamp, digits = 3,
+        caption = "AAMP Slope Statistics for RP Mice by Lighting Condition")
+
+  # One-way ANOVA
+  anova_aamp <- aov(slope_aamp ~ lighting, data = aamp_slopes)
+  anova_summary_aamp <- summary(anova_aamp)
+
+  cat("\n### One-Way ANOVA Results ###\n\n")
+  print(anova_summary_aamp)
+
+  # Levene's test
+  levene_aamp <- leveneTest(slope_aamp ~ lighting, data = aamp_slopes)
+  cat("\n### Levene's Test for Homogeneity of Variance ###\n")
+  print(levene_aamp)
+
+  # Extract statistics
+  f_aamp <- anova_summary_aamp[[1]]$`F value`[1]
+  p_aamp <- anova_summary_aamp[[1]]$`Pr(>F)`[1]
+
+  cat("\n")
+  cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+  cat("INTERPRETATION - AAMP in RP Mice:\n")
+  cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+  cat("F-statistic:", round(f_aamp, 3), "\n")
+  cat("p-value:", format.pval(p_aamp, digits = 4), "\n\n")
+
+  if (p_aamp < 0.05) {
+    cat("CONCLUSION: Lighting condition SIGNIFICANTLY affects the rate of\n")
+    cat("A-wave amplitude change in RP mice (p < 0.05).\n")
+  } else {
+    cat("CONCLUSION: Lighting condition does NOT significantly affect the rate of\n")
+    cat("A-wave amplitude change in RP mice (p >= 0.05).\n")
+  }
+
+  # Effect size
+  ss_group_aamp <- anova_summary_aamp[[1]]$`Sum Sq`[1]
+  ss_total_aamp <- sum(anova_summary_aamp[[1]]$`Sum Sq`)
+  eta_sq_aamp <- ss_group_aamp / ss_total_aamp
+  cat("\nEffect size (η²):", round(eta_sq_aamp, 4))
+  cat(" (", round(eta_sq_aamp * 100, 2), "% of variance)\n", sep = "")
+  cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+
+  # Tukey's HSD
+  cat("\n### Post-hoc Pairwise Comparisons (Tukey's HSD) ###\n\n")
+  tukey_aamp <- TukeyHSD(anova_aamp)
+  print(tukey_aamp)
+} else {
+  cat("Insufficient AAMP data for analysis.\n")
+}
+```
+
+# Comprehensive Visualization
+
+```{r comprehensive-plots, fig.height=10}
+# Create comparison plot
+p1 <- ggplot(desc_bamp_rp, aes(x = lighting, y = Mean, fill = lighting)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE),
+                width = 0.2, linewidth = 1) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "BAMP: RP Mice",
+       subtitle = paste("p =", format.pval(p_bamp_rp, digits = 3)),
+       x = "Lighting Condition",
+       y = "Mean Slope (change/day)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p2 <- ggplot(desc_bamp_normal, aes(x = lighting, y = Mean, fill = lighting)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE),
+                width = 0.2, linewidth = 1) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "BAMP: Normal Mice",
+       subtitle = paste("p =", format.pval(p_bamp_normal, digits = 3)),
+       x = "Lighting Condition",
+       y = "Mean Slope (change/day)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+if (nrow(aamp_slopes) > 0) {
+  p3 <- ggplot(desc_aamp, aes(x = lighting, y = Mean, fill = lighting)) +
+    geom_bar(stat = "identity", alpha = 0.7) +
+    geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE),
+                  width = 0.2, linewidth = 1) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+    labs(title = "AAMP: RP Mice",
+         subtitle = paste("p =", format.pval(p_aamp, digits = 3)),
+         x = "Lighting Condition",
+         y = "Mean Slope (change/day)") +
+    theme_minimal() +
+    theme(legend.position = "none")
+
+  grid.arrange(p1, p2, p3, ncol = 1)
+} else {
+  grid.arrange(p1, p2, ncol = 1)
+}
+```
+
+# Summary of Findings
+
+```{r summary}
+cat("\n\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("SUMMARY: TESTING THE SUNLIGHT HYPOTHESIS\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+cat("HYPOTHESIS: Direct sunlight exposure harms RP patients\n")
+cat("PREDICTION: Light-exposed RP mice should show faster ERG decline\n")
+cat("            (more negative slopes) than dim/dark-exposed mice\n\n")
+
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("RESULTS:\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+cat("1. BAMP - RP MICE:\n")
+cat("   ----------------\n")
+cat("   ANOVA p-value:", format.pval(p_bamp_rp, digits = 4), "\n")
+cat("   Result:", ifelse(p_bamp_rp < 0.05, "SIGNIFICANT", "NOT SIGNIFICANT"), "\n")
+cat("\n   Mean slopes (change per day):\n")
+for (i in 1:nrow(desc_bamp_rp)) {
+  cat(sprintf("   %s: %.3f ± %.3f\n",
+              desc_bamp_rp$lighting[i],
+              desc_bamp_rp$Mean[i],
+              desc_bamp_rp$SE[i]))
+}
+
+if (p_bamp_rp < 0.05) {
+  cat("\n   Significant pairwise differences (Tukey):\n")
+  tukey_df <- as.data.frame(tukey_bamp_rp$lighting)
+  sig_pairs <- tukey_df[tukey_df$`p adj` < 0.05, ]
+  if (nrow(sig_pairs) > 0) {
+    for (i in 1:nrow(sig_pairs)) {
+      cat("   ", rownames(sig_pairs)[i], ": p =",
+          format.pval(sig_pairs$`p adj`[i], digits = 3), "\n")
+    }
+  } else {
+    cat("   No pairwise differences significant after adjustment\n")
+  }
+}
+
+cat("\n2. BAMP - NORMAL MICE (Control):\n")
+cat("   -----------------------------\n")
+cat("   ANOVA p-value:", format.pval(p_bamp_normal, digits = 4), "\n")
+cat("   Result:", ifelse(p_bamp_normal < 0.05, "SIGNIFICANT", "NOT SIGNIFICANT"), "\n")
+cat("\n   Mean slopes (change per day):\n")
+for (i in 1:nrow(desc_bamp_normal)) {
+  cat(sprintf("   %s: %.3f ± %.3f\n",
+              desc_bamp_normal$lighting[i],
+              desc_bamp_normal$Mean[i],
+              desc_bamp_normal$SE[i]))
+}
+
+if (nrow(aamp_slopes) > 0) {
+  cat("\n3. AAMP - RP MICE:\n")
+  cat("   ---------------\n")
+  cat("   ANOVA p-value:", format.pval(p_aamp, digits = 4), "\n")
+  cat("   Result:", ifelse(p_aamp < 0.05, "SIGNIFICANT", "NOT SIGNIFICANT"), "\n")
+  cat("\n   Mean slopes (change per day):\n")
+  for (i in 1:nrow(desc_aamp)) {
+    cat(sprintf("   %s: %.3f ± %.3f\n",
+                desc_aamp$lighting[i],
+                desc_aamp$Mean[i],
+                desc_aamp$SE[i]))
+  }
+
+  if (p_aamp < 0.05) {
+    cat("\n   Significant pairwise differences (Tukey):\n")
+    tukey_df_aamp <- as.data.frame(tukey_aamp$lighting)
+    sig_pairs_aamp <- tukey_df_aamp[tukey_df_aamp$`p adj` < 0.05, ]
+    if (nrow(sig_pairs_aamp) > 0) {
+      for (i in 1:nrow(sig_pairs_aamp)) {
+        cat("   ", rownames(sig_pairs_aamp)[i], ": p =",
+            format.pval(sig_pairs_aamp$`p adj`[i], digits = 3), "\n")
+      }
+    } else {
+      cat("   No pairwise differences significant after adjustment\n")
+    }
+  }
+}
+
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("CONCLUSIONS:\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Determine overall conclusion
+support_hypothesis <- FALSE
+
+if (p_bamp_rp < 0.05) {
+  # Check if light exposure group has most negative slope
+  light_slope <- desc_bamp_rp %>%
+    dplyr::filter(lighting == "Light") %>%
+    dplyr::pull(Mean)
+  min_slope <- min(desc_bamp_rp$Mean)
+
+  if (light_slope == min_slope) {
+    support_hypothesis <- TRUE
+    cat("The sunlight hypothesis IS SUPPORTED by the data:\n\n")
+    cat("- Light-exposed RP mice show significantly different ERG decline\n")
+    cat("  patterns compared to dim/dark-exposed mice\n")
+    cat("- Light exposure is associated with the most rapid decline\n")
+    cat("- This suggests that sunlight may indeed be harmful to RP patients\n")
+    cat("- Recommendation: RP patients should consider wearing sunglasses\n")
+  } else {
+    cat("The data show significant lighting effects but DO NOT clearly support\n")
+    cat("the sunlight hypothesis:\n\n")
+    cat("- Lighting condition affects ERG amplitude changes in RP mice\n")
+    cat("- However, light exposure is NOT associated with the worst decline\n")
+    cat("- The relationship between lighting and ERG is more complex\n")
+  }
+} else {
+  cat("The sunlight hypothesis is NOT SUPPORTED by the data:\n\n")
+  cat("- No significant differences in ERG decline among lighting conditions\n")
+  cat("- Light, dim, and dark exposures produce similar rates of change\n")
+  cat("- These findings do not support the recommendation that RP patients\n")
+  cat("  must avoid sunlight exposure\n")
+}
+
+cat("\n\nIMPORTANT CONSIDERATIONS:\n")
+cat("- This is an animal model study; results may not directly translate to humans\n")
+cat("- ERG amplitude changes were measured over early life (15-35 days)\n")
+cat("- Longer-term effects of lighting exposure were not assessed\n")
+cat("- Individual variation in response to lighting was substantial\n")
+cat("- Normal mice showed",
+    ifelse(p_bamp_normal < 0.05, "significant", "no significant"),
+    "lighting effects\n")
+
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+```
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

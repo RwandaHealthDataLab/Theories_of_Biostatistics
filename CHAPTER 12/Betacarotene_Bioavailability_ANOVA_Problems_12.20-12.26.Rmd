@@ -1,0 +1,946 @@
+---
+title: "Chapter 12: Bioavailability - Beta-Carotene Preparations ANOVA (Problems 12.20-12.26)"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Background: Beta-Carotene Bioavailability Study
+
+## Study Overview
+
+This is a **randomized bioavailability study** comparing four different beta-carotene preparations to determine which raises plasma carotene levels most effectively.
+
+### Clinical Context
+
+**Beta-Carotene and Cancer Prevention:**
+- Observational studies suggested high dietary beta-carotene → decreased cancer incidence
+- Clinical trial planned to test beta-carotene supplementation
+- **Critical Question:** Which preparation is most effective at raising plasma levels?
+
+### Study Design
+
+**Participants:** 23 volunteers
+
+**Baseline Phase:**
+- Two consecutive-day fasting blood samples (Base1lvl, Base2lvl)
+
+**Intervention Phase:**
+- Randomized to one of four preparations
+- 1 pill every other day for 12 weeks
+- Blood samples at 6, 8, 10, and 12 weeks
+
+### Four Preparations
+
+1. **Solatene** (30 mg capsules)
+2. **Roche** (60 mg capsules)
+3. **BASF** (30 mg capsules)
+4. **BASF** (60 mg capsules)
+
+### Study Variables
+
+- **Prepar:** Preparation group (1-4)
+- **Id:** Participant identifier
+- **Base1lvl:** Baseline measurement 1 (plasma beta-carotene, μg/dL)
+- **Base2lvl:** Baseline measurement 2 (plasma beta-carotene, μg/dL)
+- **Wk6lvl:** Plasma level at 6 weeks
+- **Wk8lvl:** Plasma level at 8 weeks
+- **Wk10lvl:** Plasma level at 10 weeks
+- **Wk12lvl:** Plasma level at 12 weeks
+
+### Research Questions (Problems 12.20-12.26)
+
+**Problem 12.20:** Estimate **coefficient of variation (CV)** for plasma beta-carotene using two baseline measurements
+
+**Problems 12.21-12.24:** Compare bioavailability of four preparations at each time point (6, 8, 10, 12 weeks) vs. baseline
+
+**Problem 12.25:** Compare preparations based on **average** plasma levels (6-12 weeks) vs. baseline
+
+**Problem 12.26:** **Two-way ANOVA** - assess effects of preparation and time, including interaction
+
+---
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)   # Data manipulation and visualization
+library(knitr)       # For kable tables
+library(kableExtra)  # For enhanced table formatting
+library(ggplot2)     # Plotting
+library(gridExtra)   # Multiple plots
+library(broom)       # Tidy model outputs
+library(car)         # For ANOVA functions
+library(emmeans)     # For post-hoc comparisons
+```
+
+---
+
+# Data Import and Processing
+
+```{r data-import}
+# Load the BETACAR.DAT dataset
+data_path <- "../CHAPTER 11/Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/BETACAR.DAT.txt"
+
+# Read the data - handle quotes in column names
+betacar_data <- tryCatch({
+  read.csv(data_path, header = TRUE, strip.white = TRUE, quote = "'\"",
+           na.strings = c("", "NA", ".", "99", "999"))
+}, error = function(e) {
+  cat("Error loading data from primary path. Trying alternative path...\n")
+  read.csv("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/BETACAR.DAT.txt",
+           header = TRUE, strip.white = TRUE, quote = "'\"",
+           na.strings = c("", "NA", ".", "99", "999"))
+})
+
+# Clean column names (remove any quotes)
+colnames(betacar_data) <- gsub("'", "", colnames(betacar_data))
+colnames(betacar_data) <- gsub("\"", "", colnames(betacar_data))
+
+cat("Cleaned column names:\n")
+print(colnames(betacar_data))
+
+# Display structure
+cat("\nDataset Structure:\n")
+str(betacar_data)
+
+cat("\nFirst few rows:\n")
+head(betacar_data, 10) %>%
+  kable(caption = "First 10 Participants from BETACAR Dataset", digits = 1) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+# Data Processing
+
+```{r variable-processing}
+cat("=== BETA-CAROTENE BIOAVAILABILITY DATA PROCESSING ===\n\n")
+
+# Process data
+betacar_clean <- betacar_data %>%
+  mutate(
+    # Create factor for preparation
+    Preparation = factor(Prepar, levels = 1:4,
+                        labels = c("Solatene 30mg", "Roche 60mg",
+                                   "BASF 30mg", "BASF 60mg")),
+
+    # Ensure all measurements are numeric
+    Id = as.character(Id),
+    Base1lvl = as.numeric(Base1lvl),
+    Base2lvl = as.numeric(Base2lvl),
+    Wk6lvl = as.numeric(Wk6lvl),
+    Wk8lvl = as.numeric(Wk8lvl),
+    Wk10lvl = as.numeric(Wk10lvl),
+    Wk12lvl = as.numeric(Wk12lvl),
+
+    # Calculate baseline mean
+    Baseline_mean = (Base1lvl + Base2lvl) / 2,
+
+    # Calculate average follow-up level (6-12 weeks)
+    Followup_mean = (Wk6lvl + Wk8lvl + Wk10lvl + Wk12lvl) / 4,
+
+    # Calculate change from baseline for each time point
+    Change_6wk = Wk6lvl - Baseline_mean,
+    Change_8wk = Wk8lvl - Baseline_mean,
+    Change_10wk = Wk10lvl - Baseline_mean,
+    Change_12wk = Wk12lvl - Baseline_mean,
+    Change_avg = Followup_mean - Baseline_mean
+  )
+
+cat("Dataset processing completed.\n")
+cat("Total participants:", nrow(betacar_clean), "\n\n")
+
+# Distribution across preparations
+cat("=== PARTICIPANTS BY PREPARATION ===\n")
+table(betacar_clean$Preparation) %>%
+  kable(caption = "Number of Participants per Preparation",
+        col.names = c("Preparation", "N")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Summary statistics by preparation
+cat("\n=== SUMMARY STATISTICS BY PREPARATION ===\n")
+summary_prep <- betacar_clean %>%
+  group_by(Preparation) %>%
+  summarise(
+    N = n(),
+    Baseline_Mean = mean(Baseline_mean, na.rm = TRUE),
+    Baseline_SD = sd(Baseline_mean, na.rm = TRUE),
+    Wk6_Mean = mean(Wk6lvl, na.rm = TRUE),
+    Wk12_Mean = mean(Wk12lvl, na.rm = TRUE),
+    Change_avg_Mean = mean(Change_avg, na.rm = TRUE),
+    Change_avg_SD = sd(Change_avg, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+kable(summary_prep, digits = 1,
+      caption = "Summary Statistics by Preparation") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Check for missing values
+cat("\n=== MISSING VALUES ===\n")
+missing_summary <- betacar_clean %>%
+  summarise(
+    Base1_missing = sum(is.na(Base1lvl)),
+    Base2_missing = sum(is.na(Base2lvl)),
+    Wk6_missing = sum(is.na(Wk6lvl)),
+    Wk8_missing = sum(is.na(Wk8lvl)),
+    Wk10_missing = sum(is.na(Wk10lvl)),
+    Wk12_missing = sum(is.na(Wk12lvl))
+  )
+
+kable(t(missing_summary),
+      caption = "Missing Value Counts",
+      col.names = "Count") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+---
+
+# Problem 12.20: Coefficient of Variation from Baseline Measurements
+
+## Research Question
+
+Use ANOVA methods to estimate the **coefficient of variation (CV)** for plasma beta-carotene for the 23 participants, based on the two baseline measurements.
+
+### Method
+
+CV measures **within-subject variability** relative to the mean:
+
+**CV = (Within-subject SD / Overall mean) × 100%**
+
+Using one-way ANOVA with subject as the grouping factor:
+- **Between-subject variance** (σ²_B): Variability between individuals
+- **Within-subject variance** (σ²_W): Measurement error/variability
+- **CV = sqrt(σ²_W) / Overall mean × 100%**
+
+```{r problem-12.20}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 12.20: COEFFICIENT OF VARIATION FROM BASELINE\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Reshape baseline data to long format
+baseline_long <- betacar_clean %>%
+  dplyr::select(Id, Base1lvl, Base2lvl) %>%
+  pivot_longer(cols = c(Base1lvl, Base2lvl),
+               names_to = "Measurement",
+               values_to = "Level") %>%
+  filter(!is.na(Level))
+
+cat("Sample size: ", nrow(betacar_clean), "participants × 2 measurements = ",
+    nrow(baseline_long), "observations\n\n")
+
+# One-way ANOVA with subject (Id) as factor
+anova_baseline <- aov(Level ~ Id, data = baseline_long)
+
+cat("=== ONE-WAY ANOVA: BASELINE MEASUREMENTS ===\n\n")
+summary(anova_baseline)
+
+# Extract variance components
+anova_table <- summary(anova_baseline)[[1]]
+MS_between <- anova_table["Id", "Mean Sq"]
+MS_within <- anova_table["Residuals", "Mean Sq"]
+n_per_subject <- 2  # Two baseline measurements
+
+cat("\n=== VARIANCE COMPONENTS ===\n\n")
+cat(sprintf("Mean Square Between (MS_B): %.2f\n", MS_between))
+cat(sprintf("Mean Square Within (MS_W): %.2f\n", MS_within))
+
+# Within-subject variance = MS_within
+sigma2_within <- MS_within
+
+# Between-subject variance
+sigma2_between <- (MS_between - MS_within) / n_per_subject
+
+cat(sprintf("\nWithin-subject variance (σ²_W): %.2f\n", sigma2_within))
+cat(sprintf("Between-subject variance (σ²_B): %.2f\n", sigma2_between))
+
+# Standard deviations
+sd_within <- sqrt(sigma2_within)
+sd_between <- sqrt(max(sigma2_between, 0))  # Ensure non-negative
+
+cat(sprintf("\nWithin-subject SD: %.2f μg/dL\n", sd_within))
+cat(sprintf("Between-subject SD: %.2f μg/dL\n", sd_between))
+
+# Overall mean
+overall_mean <- mean(baseline_long$Level, na.rm = TRUE)
+cat(sprintf("\nOverall mean plasma beta-carotene: %.2f μg/dL\n", overall_mean))
+
+# Coefficient of Variation (CV)
+CV <- (sd_within / overall_mean) * 100
+
+cat("\n=== COEFFICIENT OF VARIATION ===\n\n")
+cat(sprintf("CV = (SD_within / Mean) × 100%%\n"))
+cat(sprintf("CV = (%.2f / %.2f) × 100%%\n", sd_within, overall_mean))
+cat(sprintf("CV = %.2f%%\n\n", CV))
+
+# Interpretation
+cat("INTERPRETATION:\n")
+cat(sprintf("  The within-subject coefficient of variation is %.1f%%.\n", CV))
+cat("  This represents the measurement variability relative to the mean.\n\n")
+
+if (CV < 10) {
+  cat("  EXCELLENT reproducibility (CV < 10%)\n")
+} else if (CV < 20) {
+  cat("  GOOD reproducibility (10% ≤ CV < 20%)\n")
+} else if (CV < 30) {
+  cat("  MODERATE reproducibility (20% ≤ CV < 30%)\n")
+} else {
+  cat("  POOR reproducibility (CV ≥ 30%)\n")
+}
+
+# Intraclass Correlation Coefficient (ICC)
+ICC <- sigma2_between / (sigma2_between + sigma2_within)
+cat(sprintf("\nINTRACLASS CORRELATION (ICC): %.3f\n", ICC))
+cat("  ICC measures the proportion of total variance due to between-subject differences.\n")
+```
+
+---
+
+# Problem 12.21: Bioavailability at 6 Weeks vs. Baseline
+
+## Research Question
+
+Is there a significant difference in bioavailability of the four different preparations? Use ANOVA methods based on **6-week data** in comparison with baseline.
+
+### Method
+
+One-way ANOVA on **change from baseline** at 6 weeks:
+- **Outcome:** Change_6wk = Wk6lvl - Baseline_mean
+- **Factor:** Preparation (4 groups)
+
+```{r problem-12.21}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 12.21: BIOAVAILABILITY AT 6 WEEKS vs. BASELINE\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Remove missing values
+data_6wk <- betacar_clean %>%
+  filter(!is.na(Change_6wk))
+
+cat("Sample size:", nrow(data_6wk), "participants\n\n")
+
+# Summary by preparation
+cat("=== CHANGE FROM BASELINE AT 6 WEEKS ===\n\n")
+summary_6wk <- data_6wk %>%
+  group_by(Preparation) %>%
+  summarise(
+    N = n(),
+    Mean_Change = mean(Change_6wk),
+    SD_Change = sd(Change_6wk),
+    SE_Change = sd(Change_6wk) / sqrt(n()),
+    .groups = "drop"
+  )
+
+kable(summary_6wk, digits = 2,
+      caption = "Change from Baseline at 6 Weeks by Preparation") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# One-way ANOVA
+anova_6wk <- aov(Change_6wk ~ Preparation, data = data_6wk)
+
+cat("\n=== ONE-WAY ANOVA ===\n\n")
+summary(anova_6wk)
+
+# Extract p-value
+anova_pval_6wk <- summary(anova_6wk)[[1]]["Preparation", "Pr(>F)"]
+
+cat("\n=== INTERPRETATION ===\n\n")
+cat(sprintf("F-statistic: %.3f\n", summary(anova_6wk)[[1]]["Preparation", "F value"]))
+cat(sprintf("p-value: %.4f\n\n", anova_pval_6wk))
+
+if (anova_pval_6wk < 0.05) {
+  cat("CONCLUSION: p < 0.05 - SIGNIFICANT\n")
+  cat("  There ARE significant differences in bioavailability among\n")
+  cat("  the four preparations at 6 weeks.\n\n")
+
+  # Post-hoc comparisons
+  cat("=== POST-HOC PAIRWISE COMPARISONS (Tukey HSD) ===\n\n")
+  tukey_6wk <- TukeyHSD(anova_6wk)
+  print(tukey_6wk)
+
+} else {
+  cat("CONCLUSION: p ≥ 0.05 - NOT SIGNIFICANT\n")
+  cat("  No significant differences in bioavailability among\n")
+  cat("  the four preparations at 6 weeks.\n")
+}
+
+# Check ANOVA assumptions
+cat("\n=== ANOVA ASSUMPTIONS ===\n\n")
+
+# Normality of residuals
+shapiro_6wk <- shapiro.test(residuals(anova_6wk))
+cat("Normality (Shapiro-Wilk):\n")
+cat(sprintf("  W = %.4f, p = %.4f\n", shapiro_6wk$statistic, shapiro_6wk$p.value))
+
+# Homogeneity of variance
+levene_6wk <- leveneTest(Change_6wk ~ Preparation, data = data_6wk)
+cat("\nHomogeneity of Variance (Levene's test):\n")
+cat(sprintf("  F = %.4f, p = %.4f\n", levene_6wk$`F value`[1], levene_6wk$`Pr(>F)`[1]))
+```
+
+---
+
+# Problem 12.22: Bioavailability at 8 Weeks vs. Baseline
+
+```{r problem-12.22}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 12.22: BIOAVAILABILITY AT 8 WEEKS vs. BASELINE\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+data_8wk <- betacar_clean %>%
+  filter(!is.na(Change_8wk))
+
+cat("Sample size:", nrow(data_8wk), "participants\n\n")
+
+summary_8wk <- data_8wk %>%
+  group_by(Preparation) %>%
+  summarise(
+    N = n(),
+    Mean_Change = mean(Change_8wk),
+    SD_Change = sd(Change_8wk),
+    SE_Change = sd(Change_8wk) / sqrt(n()),
+    .groups = "drop"
+  )
+
+kable(summary_8wk, digits = 2,
+      caption = "Change from Baseline at 8 Weeks by Preparation") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+anova_8wk <- aov(Change_8wk ~ Preparation, data = data_8wk)
+summary(anova_8wk)
+
+anova_pval_8wk <- summary(anova_8wk)[[1]]["Preparation", "Pr(>F)"]
+
+cat("\n=== INTERPRETATION ===\n")
+cat(sprintf("p-value: %.4f\n", anova_pval_8wk))
+if (anova_pval_8wk < 0.05) {
+  cat("SIGNIFICANT differences among preparations at 8 weeks\n")
+} else {
+  cat("NOT SIGNIFICANT\n")
+}
+```
+
+---
+
+# Problem 12.23: Bioavailability at 10 Weeks vs. Baseline
+
+```{r problem-12.23}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 12.23: BIOAVAILABILITY AT 10 WEEKS vs. BASELINE\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+data_10wk <- betacar_clean %>%
+  filter(!is.na(Change_10wk))
+
+cat("Sample size:", nrow(data_10wk), "participants\n\n")
+
+summary_10wk <- data_10wk %>%
+  group_by(Preparation) %>%
+  summarise(
+    N = n(),
+    Mean_Change = mean(Change_10wk),
+    SD_Change = sd(Change_10wk),
+    SE_Change = sd(Change_10wk) / sqrt(n()),
+    .groups = "drop"
+  )
+
+kable(summary_10wk, digits = 2,
+      caption = "Change from Baseline at 10 Weeks by Preparation") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+anova_10wk <- aov(Change_10wk ~ Preparation, data = data_10wk)
+summary(anova_10wk)
+
+anova_pval_10wk <- summary(anova_10wk)[[1]]["Preparation", "Pr(>F)"]
+
+cat("\n=== INTERPRETATION ===\n")
+cat(sprintf("p-value: %.4f\n", anova_pval_10wk))
+if (anova_pval_10wk < 0.05) {
+  cat("SIGNIFICANT differences among preparations at 10 weeks\n")
+} else {
+  cat("NOT SIGNIFICANT\n")
+}
+```
+
+---
+
+# Problem 12.24: Bioavailability at 12 Weeks vs. Baseline
+
+```{r problem-12.24}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 12.24: BIOAVAILABILITY AT 12 WEEKS vs. BASELINE\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+data_12wk <- betacar_clean %>%
+  filter(!is.na(Change_12wk))
+
+cat("Sample size:", nrow(data_12wk), "participants\n\n")
+
+summary_12wk <- data_12wk %>%
+  group_by(Preparation) %>%
+  summarise(
+    N = n(),
+    Mean_Change = mean(Change_12wk),
+    SD_Change = sd(Change_12wk),
+    SE_Change = sd(Change_12wk) / sqrt(n()),
+    .groups = "drop"
+  )
+
+kable(summary_12wk, digits = 2,
+      caption = "Change from Baseline at 12 Weeks by Preparation") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+anova_12wk <- aov(Change_12wk ~ Preparation, data = data_12wk)
+summary(anova_12wk)
+
+anova_pval_12wk <- summary(anova_12wk)[[1]]["Preparation", "Pr(>F)"]
+
+cat("\n=== INTERPRETATION ===\n")
+cat(sprintf("p-value: %.4f\n", anova_pval_12wk))
+if (anova_pval_12wk < 0.05) {
+  cat("SIGNIFICANT differences among preparations at 12 weeks\n")
+} else {
+  cat("NOT SIGNIFICANT\n")
+}
+```
+
+---
+
+# Problem 12.25: Average Bioavailability (6-12 Weeks) vs. Baseline
+
+## Research Question
+
+Compare the bioavailability of the four preparations based on the **average plasma beta-carotene** at (6, 8, 10, and 12 weeks) vs. baseline.
+
+```{r problem-12.25}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 12.25: AVERAGE BIOAVAILABILITY (6-12 WEEKS) vs. BASELINE\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+data_avg <- betacar_clean %>%
+  filter(!is.na(Change_avg))
+
+cat("Sample size:", nrow(data_avg), "participants\n\n")
+
+summary_avg <- data_avg %>%
+  group_by(Preparation) %>%
+  summarise(
+    N = n(),
+    Mean_Change = mean(Change_avg),
+    SD_Change = sd(Change_avg),
+    SE_Change = sd(Change_avg) / sqrt(n()),
+    .groups = "drop"
+  )
+
+kable(summary_avg, digits = 2,
+      caption = "Average Change from Baseline (6-12 Weeks) by Preparation") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+anova_avg <- aov(Change_avg ~ Preparation, data = data_avg)
+
+cat("\n=== ONE-WAY ANOVA ===\n\n")
+summary(anova_avg)
+
+anova_pval_avg <- summary(anova_avg)[[1]]["Preparation", "Pr(>F)"]
+
+cat("\n=== INTERPRETATION ===\n\n")
+cat(sprintf("p-value: %.4f\n\n", anova_pval_avg))
+
+if (anova_pval_avg < 0.05) {
+  cat("CONCLUSION: p < 0.05 - SIGNIFICANT\n")
+  cat("  There ARE significant differences in average bioavailability\n")
+  cat("  among the four preparations.\n\n")
+
+  # Post-hoc comparisons
+  cat("=== POST-HOC PAIRWISE COMPARISONS (Tukey HSD) ===\n\n")
+  tukey_avg <- TukeyHSD(anova_avg)
+  print(tukey_avg)
+
+  # Identify best preparation
+  cat("\n=== RANKING OF PREPARATIONS ===\n\n")
+  ranking <- summary_avg %>%
+    arrange(desc(Mean_Change)) %>%
+    mutate(Rank = row_number())
+
+  kable(ranking, digits = 2,
+        caption = "Preparations Ranked by Mean Change") %>%
+    kable_styling(bootstrap_options = c("striped", "hover"),
+                  full_width = FALSE)
+
+} else {
+  cat("CONCLUSION: p ≥ 0.05 - NOT SIGNIFICANT\n")
+  cat("  No significant differences in average bioavailability.\n")
+}
+```
+
+---
+
+# Problem 12.26: Two-Way ANOVA (Preparation × Time)
+
+## Research Question
+
+Perform a **two-way ANOVA** to jointly assess the effects of **preparation** and **follow-up time** on plasma-carotene levels. Is there any evidence that the effect of preparation differs by time period?
+
+### Method
+
+**Model:** Level = Preparation + Time + Preparation×Time
+
+- **Main effect of Preparation:** Overall difference among preparations
+- **Main effect of Time:** Overall trend over time
+- **Interaction (Preparation×Time):** Does the effect of preparation change over time?
+
+```{r problem-12.26}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 12.26: TWO-WAY ANOVA (PREPARATION × TIME)\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Reshape data to long format for two-way ANOVA
+betacar_long <- betacar_clean %>%
+  dplyr::select(Id, Preparation, Wk6lvl, Wk8lvl, Wk10lvl, Wk12lvl) %>%
+  pivot_longer(cols = c(Wk6lvl, Wk8lvl, Wk10lvl, Wk12lvl),
+               names_to = "Time",
+               values_to = "Level") %>%
+  mutate(
+    Time = factor(Time, levels = c("Wk6lvl", "Wk8lvl", "Wk10lvl", "Wk12lvl"),
+                  labels = c("6 weeks", "8 weeks", "10 weeks", "12 weeks"))
+  ) %>%
+  filter(!is.na(Level))
+
+cat("Sample size:", nrow(betacar_long), "observations\n")
+cat("  ", nrow(betacar_clean), "participants × 4 time points\n\n")
+
+# Two-way ANOVA with interaction
+anova_2way <- aov(Level ~ Preparation * Time, data = betacar_long)
+
+cat("=== TWO-WAY ANOVA ===\n\n")
+summary(anova_2way)
+
+# Extract p-values
+anova_summary <- summary(anova_2way)[[1]]
+
+# Safely extract p-values with error checking
+p_prep <- tryCatch({
+  anova_summary["Preparation", "Pr(>F)"]
+}, error = function(e) {
+  anova_summary[1, "Pr(>F)"]
+})
+
+p_time <- tryCatch({
+  anova_summary["Time", "Pr(>F)"]
+}, error = function(e) {
+  anova_summary[2, "Pr(>F)"]
+})
+
+p_interaction <- tryCatch({
+  anova_summary["Preparation:Time", "Pr(>F)"]
+}, error = function(e) {
+  anova_summary[3, "Pr(>F)"]
+})
+
+cat("\n=== INTERPRETATION ===\n\n")
+
+cat("MAIN EFFECT OF PREPARATION:\n")
+if (!is.na(p_prep)) {
+  cat(sprintf("  p-value = %.4f\n", p_prep))
+  if (p_prep < 0.05) {
+    cat("  SIGNIFICANT: Preparations differ overall\n\n")
+  } else {
+    cat("  NOT SIGNIFICANT: No overall difference among preparations\n\n")
+  }
+} else {
+  cat("  p-value could not be extracted\n\n")
+}
+
+cat("MAIN EFFECT OF TIME:\n")
+if (!is.na(p_time)) {
+  cat(sprintf("  p-value = %.4f\n", p_time))
+  if (p_time < 0.05) {
+    cat("  SIGNIFICANT: Plasma levels change over time\n\n")
+  } else {
+    cat("  NOT SIGNIFICANT: No significant change over time\n\n")
+  }
+} else {
+  cat("  p-value could not be extracted\n\n")
+}
+
+cat("INTERACTION (PREPARATION × TIME):\n")
+if (!is.na(p_interaction)) {
+  cat(sprintf("  p-value = %.4f\n", p_interaction))
+  if (p_interaction < 0.05) {
+    cat("  SIGNIFICANT INTERACTION: The effect of preparation\n")
+    cat("  DIFFERS by time period.\n")
+    cat("  → Different preparations show different patterns over time\n")
+  } else {
+    cat("  NO INTERACTION: The effect of preparation\n")
+    cat("  is CONSISTENT across time periods.\n")
+    cat("  → All preparations show similar patterns over time\n")
+  }
+} else {
+  cat("  p-value could not be extracted\n\n")
+}
+
+# Estimated marginal means
+cat("\n=== ESTIMATED MARGINAL MEANS ===\n\n")
+
+emm_prep <- emmeans(anova_2way, ~ Preparation)
+cat("By Preparation (averaged over time):\n")
+print(summary(emm_prep))
+
+emm_time <- emmeans(anova_2way, ~ Time)
+cat("\nBy Time (averaged over preparation):\n")
+print(summary(emm_time))
+
+# If interaction is significant, show means by Preparation×Time
+if (p_interaction < 0.05) {
+  cat("\nBy Preparation × Time:\n")
+  emm_interaction <- emmeans(anova_2way, ~ Preparation | Time)
+  print(summary(emm_interaction))
+}
+```
+
+---
+
+# Visualization
+
+## Time Course by Preparation
+
+```{r time-course-plot, fig.height=10}
+# Calculate means and SE for plotting
+plot_data <- betacar_long %>%
+  group_by(Preparation, Time) %>%
+  summarise(
+    Mean = mean(Level, na.rm = TRUE),
+    SE = sd(Level, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"
+  )
+
+# Line plot with error bars
+p1 <- ggplot(plot_data, aes(x = Time, y = Mean, color = Preparation, group = Preparation)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.2) +
+  labs(title = "Plasma Beta-Carotene Over Time by Preparation",
+       subtitle = "Mean ± SE",
+       x = "Time Point",
+       y = "Plasma Beta-Carotene (μg/dL)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(face = "bold", size = 14))
+
+# Individual trajectories
+p2 <- ggplot(betacar_long, aes(x = Time, y = Level, group = Id, color = Preparation)) +
+  geom_line(alpha = 0.4) +
+  geom_point(alpha = 0.4, size = 1) +
+  facet_wrap(~ Preparation, ncol = 2) +
+  labs(title = "Individual Trajectories by Preparation",
+       x = "Time Point",
+       y = "Plasma Beta-Carotene (μg/dL)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(face = "bold", size = 14),
+        legend.position = "none")
+
+grid.arrange(p1, p2, ncol = 1)
+```
+
+## Box Plots: Change from Baseline
+
+```{r boxplots-change, fig.height=10}
+# Create data for box plots
+change_data <- betacar_clean %>%
+  dplyr::select(Id, Preparation, Change_6wk, Change_8wk, Change_10wk, Change_12wk, Change_avg) %>%
+  pivot_longer(cols = starts_with("Change"),
+               names_to = "Time",
+               values_to = "Change") %>%
+  mutate(
+    Time = factor(Time,
+                  levels = c("Change_6wk", "Change_8wk", "Change_10wk",
+                            "Change_12wk", "Change_avg"),
+                  labels = c("6 weeks", "8 weeks", "10 weeks", "12 weeks", "Average"))
+  )
+
+ggplot(change_data, aes(x = Preparation, y = Change, fill = Preparation)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  facet_wrap(~ Time, ncol = 2) +
+  labs(title = "Change from Baseline by Preparation and Time",
+       x = "Preparation",
+       y = "Change in Plasma Beta-Carotene (μg/dL)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(face = "bold", size = 14),
+        legend.position = "bottom")
+```
+
+---
+
+# Summary of Results
+
+```{r summary-table}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("SUMMARY OF ALL ANALYSES\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Create comprehensive summary table
+summary_results <- data.frame(
+  Problem = c("12.20", "12.21", "12.22", "12.23", "12.24", "12.25", "12.26a", "12.26b", "12.26c"),
+  Analysis = c(
+    "CV from baseline",
+    "ANOVA at 6 weeks",
+    "ANOVA at 8 weeks",
+    "ANOVA at 10 weeks",
+    "ANOVA at 12 weeks",
+    "ANOVA average (6-12 wks)",
+    "Two-way: Preparation effect",
+    "Two-way: Time effect",
+    "Two-way: Interaction"
+  ),
+  Statistic = c(
+    sprintf("CV = %.1f%%", CV),
+    sprintf("F = %.2f", summary(anova_6wk)[[1]]["Preparation", "F value"]),
+    sprintf("F = %.2f", summary(anova_8wk)[[1]]["Preparation", "F value"]),
+    sprintf("F = %.2f", summary(anova_10wk)[[1]]["Preparation", "F value"]),
+    sprintf("F = %.2f", summary(anova_12wk)[[1]]["Preparation", "F value"]),
+    sprintf("F = %.2f", summary(anova_avg)[[1]]["Preparation", "F value"]),
+    sprintf("F = %.2f", anova_summary["Preparation", "F value"]),
+    sprintf("F = %.2f", anova_summary["Time", "F value"]),
+    sprintf("F = %.2f", anova_summary["Preparation:Time", "F value"])
+  ),
+  P_value = c(
+    NA,
+    anova_pval_6wk,
+    anova_pval_8wk,
+    anova_pval_10wk,
+    anova_pval_12wk,
+    anova_pval_avg,
+    p_prep,
+    p_time,
+    p_interaction
+  ),
+  Significant = c(
+    NA,
+    ifelse(!is.na(anova_pval_6wk) && anova_pval_6wk < 0.05, "Yes", "No"),
+    ifelse(!is.na(anova_pval_8wk) && anova_pval_8wk < 0.05, "Yes", "No"),
+    ifelse(!is.na(anova_pval_10wk) && anova_pval_10wk < 0.05, "Yes", "No"),
+    ifelse(!is.na(anova_pval_12wk) && anova_pval_12wk < 0.05, "Yes", "No"),
+    ifelse(!is.na(anova_pval_avg) && anova_pval_avg < 0.05, "Yes", "No"),
+    ifelse(!is.na(p_prep) && p_prep < 0.05, "Yes", "No"),
+    ifelse(!is.na(p_time) && p_time < 0.05, "Yes", "No"),
+    ifelse(!is.na(p_interaction) && p_interaction < 0.05, "Yes", "No")
+  )
+)
+
+kable(summary_results, digits = 4,
+      caption = "Summary of Beta-Carotene Bioavailability Analyses") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+cat("\n=== OVERALL CONCLUSIONS ===\n\n")
+
+n_sig <- sum(summary_results$Significant == "Yes", na.rm = TRUE)
+
+cat("KEY FINDINGS:\n\n")
+
+cat("1. MEASUREMENT RELIABILITY (Problem 12.20):\n")
+cat(sprintf("   CV = %.1f%% - ", CV))
+if (CV < 20) {
+  cat("GOOD reproducibility\n\n")
+} else {
+  cat("Moderate to poor reproducibility\n\n")
+}
+
+cat("2. PREPARATION DIFFERENCES OVER TIME (Problems 12.21-12.24):\n")
+time_results <- summary_results %>% filter(Problem %in% c("12.21", "12.22", "12.23", "12.24"))
+n_sig_time <- sum(time_results$Significant == "Yes", na.rm = TRUE)
+cat(sprintf("   %d out of 4 time points show significant differences\n\n", n_sig_time))
+
+cat("3. AVERAGE BIOAVAILABILITY (Problem 12.25):\n")
+cat(sprintf("   p = %.4f - ", anova_pval_avg))
+if (anova_pval_avg < 0.05) {
+  cat("SIGNIFICANT differences among preparations\n")
+  best_prep <- summary_avg %>% filter(Mean_Change == max(Mean_Change)) %>% pull(Preparation)
+  cat(sprintf("   Best preparation: %s\n\n", best_prep))
+} else {
+  cat("NO significant differences\n\n")
+}
+
+cat("4. TWO-WAY ANOVA (Problem 12.26):\n")
+if (!is.na(p_prep)) {
+  cat(sprintf("   Preparation effect: %s\n", ifelse(p_prep < 0.05, "SIGNIFICANT", "NOT significant")))
+} else {
+  cat("   Preparation effect: Unable to determine\n")
+}
+if (!is.na(p_time)) {
+  cat(sprintf("   Time effect: %s\n", ifelse(p_time < 0.05, "SIGNIFICANT", "NOT significant")))
+} else {
+  cat("   Time effect: Unable to determine\n")
+}
+if (!is.na(p_interaction)) {
+  cat(sprintf("   Interaction: %s\n", ifelse(p_interaction < 0.05, "SIGNIFICANT", "NOT significant")))
+} else {
+  cat("   Interaction: Unable to determine\n")
+}
+
+if (!is.na(p_interaction)) {
+  if (p_interaction < 0.05) {
+    cat("   → Preparations differ in their time patterns\n")
+  } else {
+    cat("   → All preparations show similar patterns over time\n")
+  }
+}
+
+cat("\nCLINICAL RECOMMENDATION:\n")
+if (anova_pval_avg < 0.05) {
+  cat("  Based on average bioavailability, preparations differ significantly.\n")
+  cat("  Consider using the preparation with highest average increase.\n")
+} else {
+  cat("  No clear difference among preparations.\n")
+  cat("  Choice may be based on cost, availability, or tolerability.\n")
+}
+```
+
+---
+
+# Conclusions
+
+## Problem 12.20 (Coefficient of Variation)
+- **CV:** `r sprintf("%.1f%%", CV)`
+- **Interpretation:** `r ifelse(CV < 20, "Good measurement reproducibility", "Moderate reproducibility")`
+
+## Problems 12.21-12.24 (Time-Specific Comparisons)
+- **6 weeks:** `r ifelse(anova_pval_6wk < 0.05, "Significant", "Not significant")` (p = `r sprintf("%.4f", anova_pval_6wk)`)
+- **8 weeks:** `r ifelse(anova_pval_8wk < 0.05, "Significant", "Not significant")` (p = `r sprintf("%.4f", anova_pval_8wk)`)
+- **10 weeks:** `r ifelse(anova_pval_10wk < 0.05, "Significant", "Not significant")` (p = `r sprintf("%.4f", anova_pval_10wk)`)
+- **12 weeks:** `r ifelse(anova_pval_12wk < 0.05, "Significant", "Not significant")` (p = `r sprintf("%.4f", anova_pval_12wk)`)
+
+## Problem 12.25 (Average Bioavailability)
+- **p-value:** `r sprintf("%.4f", anova_pval_avg)`
+- **Significant:** `r ifelse(anova_pval_avg < 0.05, "Yes", "No")`
+
+## Problem 12.26 (Two-Way ANOVA)
+- **Preparation effect:** `r ifelse(p_prep < 0.05, "Significant", "Not significant")` (p = `r sprintf("%.4f", p_prep)`)
+- **Time effect:** `r ifelse(p_time < 0.05, "Significant", "Not significant")` (p = `r sprintf("%.4f", p_time)`)
+- **Interaction:** `r ifelse(p_interaction < 0.05, "Significant interaction", "No interaction")` (p = `r sprintf("%.4f", p_interaction)`)
+
+---
+
+**END OF ANALYSIS**

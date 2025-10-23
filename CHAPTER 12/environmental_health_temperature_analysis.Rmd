@@ -1,0 +1,331 @@
+---
+title: "Environmental Health: Heat Loss Analysis by Location"
+author: "Your Name"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 12, fig.height = 8)
+```
+
+## Overview
+
+This analysis examines temperature data collected from 21 sites within a house over 30 days to identify locations that show heat loss. The student also recorded outside temperatures to assess the relationship between indoor and outdoor temperatures.
+
+**Research Question:** Do specific locations within the house show greater heat loss than others?
+
+## Load Required Libraries
+
+```{r load-libraries}
+library(tidyverse)
+library(knitr)
+library(ggplot2)
+library(reshape2)
+library(gridExtra)
+```
+
+## Load Data
+
+```{r load-data}
+# Read the TEMPERAT.DAT file from the data sets folder
+temp_data <- read.table("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-tab/TEMPERAT.DAT.txt",
+                        header = TRUE,
+                        sep = "\t")
+
+# Convert Date to proper date format
+temp_data$Date <- as.Date(temp_data$Date, format = "%m/%d/%Y")
+
+# Display structure of the data
+str(temp_data)
+
+# Display first few rows
+head(temp_data, 10)
+
+cat("\nDataset dimensions:", nrow(temp_data), "rows x", ncol(temp_data), "columns\n")
+cat("Number of unique dates:", length(unique(temp_data$Date)), "\n")
+cat("Number of room locations:", length(unique(temp_data$Room)), "\n")
+cat("Date range:", format(min(temp_data$Date), "%m/%d/%Y"), "to",
+    format(max(temp_data$Date), "%m/%d/%Y"), "\n")
+```
+
+## Data Summary
+
+```{r data-summary}
+# Summary statistics
+summary(temp_data)
+
+# Summary by room
+room_summary <- temp_data %>%
+  group_by(Room) %>%
+  summarise(
+    N_observations = n(),
+    Mean_indoor_temp = mean(In_temp, na.rm = TRUE),
+    SD_indoor_temp = sd(In_temp, na.rm = TRUE),
+    Min_indoor_temp = min(In_temp, na.rm = TRUE),
+    Max_indoor_temp = max(In_temp, na.rm = TRUE)
+  ) %>%
+  arrange(Mean_indoor_temp)
+
+kable(room_summary, digits = 2,
+      caption = "Temperature Summary by Room Location (sorted by mean temperature)")
+```
+
+## Heat Loss Analysis
+
+```{r heat-loss-calculation}
+# Calculate heat loss as the difference between indoor and outdoor temperature
+# Higher values indicate better insulation; lower values indicate heat loss
+temp_data <- temp_data %>%
+  mutate(Temp_diff = In_temp - Out_temp)
+
+# Summary of temperature differences by room
+heat_loss_summary <- temp_data %>%
+  group_by(Room) %>%
+  summarise(
+    Mean_temp_diff = mean(Temp_diff, na.rm = TRUE),
+    SD_temp_diff = sd(Temp_diff, na.rm = TRUE),
+    Mean_indoor = mean(In_temp, na.rm = TRUE)
+  ) %>%
+  arrange(Mean_temp_diff)
+
+# Identify rooms with greatest heat loss (smallest temperature difference)
+cat("Top 5 Rooms with Greatest Heat Loss (smallest indoor-outdoor temp difference):\n")
+kable(head(heat_loss_summary, 5), digits = 2)
+
+cat("\n\nTop 5 Rooms with Best Insulation (largest indoor-outdoor temp difference):\n")
+kable(tail(heat_loss_summary, 5), digits = 2)
+```
+
+## Visualizations
+
+### Distribution of Indoor Temperatures by Room
+
+```{r room-temp-boxplot}
+ggplot(temp_data, aes(x = factor(Room), y = In_temp, fill = factor(Room))) +
+  geom_boxplot() +
+  labs(title = "Distribution of Indoor Temperatures by Room Location",
+       subtitle = "30-day observation period",
+       x = "Room Number",
+       y = "Indoor Temperature (°F)") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 0, hjust = 0.5))
+```
+
+### Heat Loss by Room
+
+```{r heat-loss-barplot}
+ggplot(heat_loss_summary, aes(x = reorder(factor(Room), Mean_temp_diff),
+                                y = Mean_temp_diff, fill = Mean_temp_diff)) +
+  geom_bar(stat = "identity") +
+  geom_hline(yintercept = mean(heat_loss_summary$Mean_temp_diff),
+             linetype = "dashed", color = "red", linewidth = 1) +
+  scale_fill_gradient2(low = "blue", mid = "yellow", high = "red",
+                       midpoint = median(heat_loss_summary$Mean_temp_diff)) +
+  labs(title = "Heat Loss by Room Location",
+       subtitle = "Red dashed line = overall mean temperature difference",
+       x = "Room Number (ordered by temperature difference)",
+       y = "Mean Temperature Difference (Indoor - Outdoor, °F)",
+       fill = "Temp Diff") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+### Temperature Trends Over Time
+
+```{r temp-trends}
+# Plot outside temperature over time
+p1 <- ggplot(temp_data %>% distinct(Date, Out_temp),
+             aes(x = Date, y = Out_temp)) +
+  geom_line(color = "blue", linewidth = 1) +
+  geom_point(color = "blue", size = 2) +
+  labs(title = "Outside Temperature Over Time",
+       x = "Date",
+       y = "Outside Temperature (°F)") +
+  theme_minimal()
+
+# Calculate daily average indoor temperature
+daily_avg <- temp_data %>%
+  group_by(Date) %>%
+  summarise(Avg_indoor = mean(In_temp, na.rm = TRUE),
+            Out_temp = first(Out_temp))
+
+p2 <- ggplot(daily_avg, aes(x = Date)) +
+  geom_line(aes(y = Avg_indoor, color = "Indoor (avg)"), linewidth = 1) +
+  geom_line(aes(y = Out_temp, color = "Outdoor"), linewidth = 1) +
+  geom_point(aes(y = Avg_indoor, color = "Indoor (avg)"), size = 2) +
+  geom_point(aes(y = Out_temp, color = "Outdoor"), size = 2) +
+  scale_color_manual(values = c("Indoor (avg)" = "red", "Outdoor" = "blue")) +
+  labs(title = "Indoor (Average) vs Outdoor Temperature Over Time",
+       x = "Date",
+       y = "Temperature (°F)",
+       color = "Location") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+grid.arrange(p1, p2, ncol = 1)
+```
+
+### Heatmap of Temperatures by Room and Date
+
+```{r heatmap}
+# Create heatmap
+ggplot(temp_data, aes(x = Date, y = factor(Room), fill = In_temp)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red",
+                       midpoint = median(temp_data$In_temp)) +
+  labs(title = "Heatmap: Indoor Temperature by Room and Date",
+       x = "Date",
+       y = "Room Number",
+       fill = "Indoor\nTemp (°F)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+### Relationship Between Indoor and Outdoor Temperature
+
+```{r indoor-outdoor-relationship}
+# Select a few representative rooms
+rooms_to_plot <- c(1, 5, 10, 15, 20)
+
+temp_subset <- temp_data %>%
+  filter(Room %in% rooms_to_plot)
+
+ggplot(temp_subset, aes(x = Out_temp, y = In_temp, color = factor(Room))) +
+  geom_point(alpha = 0.6, size = 2) +
+  geom_smooth(method = "lm", se = TRUE, alpha = 0.2) +
+  facet_wrap(~ Room, labeller = label_both) +
+  labs(title = "Relationship Between Outdoor and Indoor Temperature",
+       subtitle = "Selected rooms with linear regression",
+       x = "Outdoor Temperature (°F)",
+       y = "Indoor Temperature (°F)",
+       color = "Room") +
+  theme_minimal()
+
+# Overall correlation
+cat("\nOverall correlation between outdoor and indoor temperature:",
+    round(cor(temp_data$Out_temp, temp_data$In_temp), 3), "\n")
+```
+
+## Statistical Analysis
+
+### ANOVA: Testing for Differences Among Rooms
+
+```{r anova-rooms}
+# One-way ANOVA to test if mean temperatures differ significantly among rooms
+anova_result <- aov(In_temp ~ factor(Room), data = temp_data)
+summary(anova_result)
+
+# Effect size (eta-squared)
+anova_summary <- summary(anova_result)
+ss_room <- anova_summary[[1]]$`Sum Sq`[1]
+ss_total <- sum(anova_summary[[1]]$`Sum Sq`)
+eta_squared <- ss_room / ss_total
+
+cat("\nEffect size (eta-squared):", round(eta_squared, 4))
+cat("\nThis indicates that", round(eta_squared * 100, 2),
+    "% of variance in indoor temperature is explained by room location.\n")
+```
+
+### Post-hoc Tests: Pairwise Comparisons
+
+```{r posthoc}
+# Tukey's HSD for pairwise comparisons
+tukey_result <- TukeyHSD(anova_result)
+
+# Show only significant differences (p < 0.05)
+sig_comparisons <- as.data.frame(tukey_result$`factor(Room)`) %>%
+  filter(`p adj` < 0.05) %>%
+  arrange(`p adj`)
+
+cat("\nNumber of significant pairwise differences (p < 0.05):", nrow(sig_comparisons), "\n\n")
+cat("Top 10 most significant pairwise differences:\n")
+kable(head(sig_comparisons, 10), digits = 4)
+```
+
+### Correlation Analysis with Outside Temperature
+
+```{r correlation-analysis}
+# Calculate correlation between indoor and outdoor temp for each room
+correlation_by_room <- temp_data %>%
+  group_by(Room) %>%
+  summarise(
+    Correlation = cor(In_temp, Out_temp),
+    Mean_indoor = mean(In_temp)
+  ) %>%
+  arrange(desc(abs(Correlation)))
+
+cat("Rooms ranked by correlation with outdoor temperature:\n")
+kable(correlation_by_room, digits = 3,
+      caption = "Higher correlation suggests less insulation/more heat loss")
+
+# Plot correlation strength
+ggplot(correlation_by_room, aes(x = reorder(factor(Room), Correlation),
+                                 y = Correlation, fill = Correlation)) +
+  geom_bar(stat = "identity") +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  labs(title = "Correlation Between Indoor and Outdoor Temperature by Room",
+       subtitle = "Higher correlation indicates greater sensitivity to outdoor temperature (heat loss)",
+       x = "Room Number",
+       y = "Correlation Coefficient") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+### Linear Regression: Predicting Indoor Temperature
+
+```{r regression-model}
+# Build a model to predict indoor temperature from outdoor temp and room
+model <- lm(In_temp ~ Out_temp + factor(Room), data = temp_data)
+
+cat("Regression Model Summary:\n")
+summary(model)
+
+# Visualize residuals
+par(mfrow = c(2, 2))
+plot(model)
+```
+
+## Conclusions
+
+```{r conclusions}
+# Identify problem rooms
+problem_rooms <- heat_loss_summary %>%
+  filter(Mean_temp_diff < quantile(Mean_temp_diff, 0.25)) %>%
+  pull(Room)
+
+cat("### Key Findings:\n\n")
+cat("1. Rooms with Greatest Heat Loss (bottom 25%):\n")
+cat("   Rooms:", paste(problem_rooms, collapse = ", "), "\n\n")
+
+cat("2. Mean indoor temperature across all locations:",
+    round(mean(temp_data$In_temp), 2), "°F\n")
+cat("   Mean outdoor temperature:",
+    round(mean(temp_data$Out_temp), 2), "°F\n")
+cat("   Average temperature difference:",
+    round(mean(temp_data$Temp_diff), 2), "°F\n\n")
+
+cat("3. Range of room temperatures:",
+    round(min(room_summary$Mean_indoor_temp), 2), "to",
+    round(max(room_summary$Mean_indoor_temp), 2), "°F\n\n")
+
+cat("4. The ANOVA test shows",
+    ifelse(anova_summary[[1]]$`Pr(>F)`[1] < 0.05,
+           "significant differences",
+           "no significant differences"),
+    "among room locations (p =",
+    round(anova_summary[[1]]$`Pr(>F)`[1], 4), ")\n\n")
+
+cat("### Recommendations:\n")
+cat("Focus insulation improvements on rooms with:\n")
+cat("- Lowest average indoor temperatures\n")
+cat("- Smallest indoor-outdoor temperature differences\n")
+cat("- Highest correlation with outdoor temperature\n")
+```
+
+## Session Information
+
+```{r session-info}
+sessionInfo()
+```

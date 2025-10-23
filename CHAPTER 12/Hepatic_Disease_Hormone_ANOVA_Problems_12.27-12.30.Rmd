@@ -1,0 +1,1114 @@
+---
+title: "Problems 12.27-12.30: Hepatic Disease - Hormone ANOVA Analysis"
+author: "One-Way ANOVA for Change in Biliary and Pancreatic Outcomes"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    number_sections: true
+    theme: cerulean
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 12,
+  fig.height = 8,
+  fig.align = 'center'
+)
+```
+
+# Introduction
+
+## Study Background
+
+This document analyzes **change scores** (post-treatment - pre-treatment) for hepatic disease using the **HORMONE.DAT** dataset. The study examines whether different hormone groups produce comparable changes in biliary and pancreatic function in hens.
+
+### Research Questions
+
+**Problem 12.27:** Use ANOVA methods to test whether the change in biliary-secretion levels is comparable for the five hormone groups. Identify and test for any specific group differences.
+
+**Problem 12.28:** Answer Problem 12.27 for changes in pancreatic-secretion levels.
+
+**Problem 12.29:** Answer Problem 12.27 for changes in biliary-pH levels.
+
+**Problem 12.30:** Answer Problem 12.27 for changes in pancreatic-pH levels.
+
+### Hormone Groups
+
+The five hormone groups are:
+1. **Control (Hormone = 1)**: Baseline/placebo group
+2. **Secretin (Hormone = 2)**: CCK analog
+3. **Gastrin (Hormone = 3)**: Gastrin hormone
+4. **Glucagon (Hormone = 4)**: Glucagon hormone
+5. **Pentagastrin (Hormone = 5)**: Synthetic gastrin analog
+
+# Data Loading and Preparation
+
+```{r load-packages}
+# Load required libraries
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(car)         # For Levene's test
+library(multcomp)    # For Tukey HSD
+library(ggplot2)
+library(gridExtra)   # For multiple plots
+library(broom)       # For tidy model outputs
+library(emmeans)     # For estimated marginal means
+
+# Set theme for plots
+theme_set(theme_minimal())
+```
+
+
+```{r load-data}
+# Load the HORMONE.DAT dataset
+data_path <- "Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/HORMONE.DAT.txt"
+
+# Read the data - handle quotes in column names
+hormone_data <- tryCatch({
+  read.csv(data_path, header = TRUE, strip.white = TRUE, quote = "'\"",
+           na.strings = c("", "NA", ".", "0"))
+}, error = function(e) {
+  cat("Error loading data from primary path. Trying alternative path...\n")
+  read.csv("../Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/HORMONE.DAT.txt",
+           header = TRUE, strip.white = TRUE, quote = "'\"",
+           na.strings = c("", "NA", ".", "0"))
+})
+
+# Clean column names (remove any quotes)
+colnames(hormone_data) <- gsub("'", "", colnames(hormone_data))
+colnames(hormone_data) <- gsub("\"", "", colnames(hormone_data))
+
+# Display structure
+cat("Dataset Structure:\n")
+str(hormone_data)
+
+cat("\nColumn names in dataset:\n")
+print(colnames(hormone_data))
+
+cat("\nFirst few rows:\n")
+head(hormone_data) %>%
+  kable(caption = "First 6 Observations from HORMONE Dataset") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+# Variable Definitions
+
+```{r variable-definitions}
+# Create variable definitions table
+var_definitions <- data.frame(
+  Variable = c("ID", "Dose", "Hormone", "Bilsecpr", "Bilphpr", "Pansecpr", "Panphpr",
+               "Bilsecpt", "Bilphpt", "Pansecpt", "Panphpt"),
+  Description = c(
+    "Hen identification number",
+    "Dose level of hormone (μg/kg/hr)",
+    "Type of hormone administered (1-5)",
+    "Biliary secretion rate - pre-treatment (mL/hr)",
+    "Biliary pH - pre-treatment",
+    "Pancreatic secretion rate - pre-treatment (mL/hr)",
+    "Pancreatic pH - pre-treatment",
+    "Biliary secretion rate - post-treatment (mL/hr)",
+    "Biliary pH - post-treatment",
+    "Pancreatic secretion rate - post-treatment (mL/hr)",
+    "Pancreatic pH - post-treatment"
+  ),
+  Type = c("ID", "Continuous", "Categorical (1-5)",
+           "Continuous", "Continuous", "Continuous", "Continuous",
+           "Continuous", "Continuous", "Continuous", "Continuous")
+)
+
+kable(var_definitions,
+      caption = "Variable Definitions for HORMONE Dataset") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+# Data Processing
+
+## Calculate Change Scores
+
+```{r calculate-changes}
+# Calculate change scores (post - pre)
+hormone_clean <- hormone_data %>%
+  mutate(
+    # Create hormone factor with meaningful labels
+    Hormone_Label = factor(Hormone,
+                          levels = c(1, 2, 3, 4, 5),
+                          labels = c("Control", "Secretin", "Gastrin", "Glucagon", "Pentagastrin")),
+
+    # Calculate change scores (post - pre)
+    # Note: When pre or post is 0, treat as missing for pH (0 is not a valid pH)
+    Change_Biliary_Sec = Bilsecpt - Bilsecpr,
+    Change_Pancreatic_Sec = Pansecpt - Pansecpr,
+    Change_Biliary_pH = ifelse(Bilphpt == 0 | Bilphpr == 0, NA, Bilphpt - Bilphpr),
+    Change_Pancreatic_pH = ifelse(Panphpt == 0 | Panphpr == 0, NA, Panphpt - Panphpr)
+  )
+
+cat("Change scores calculated.\n")
+cat("Dataset now has", nrow(hormone_clean), "observations.\n\n")
+
+# Summary by hormone group
+cat("Observations by Hormone Group:\n")
+hormone_summary <- hormone_clean %>%
+  group_by(Hormone_Label) %>%
+  summarise(
+    N = n(),
+    Mean_Dose = round(mean(Dose, na.rm = TRUE), 2),
+    SD_Dose = round(sd(Dose, na.rm = TRUE), 2),
+    .groups = 'drop'
+  )
+
+kable(hormone_summary,
+      caption = "Summary Statistics by Hormone Group",
+      col.names = c("Hormone", "N", "Mean Dose", "SD Dose")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+## Change Score Summary Statistics
+
+```{r change-summary}
+# Summary statistics for change scores by hormone
+change_summary <- hormone_clean %>%
+  group_by(Hormone_Label) %>%
+  summarise(
+    N = n(),
+    # Biliary Secretion Change
+    Mean_Bil_Sec_Chg = round(mean(Change_Biliary_Sec, na.rm = TRUE), 2),
+    SD_Bil_Sec_Chg = round(sd(Change_Biliary_Sec, na.rm = TRUE), 2),
+    # Pancreatic Secretion Change
+    Mean_Pan_Sec_Chg = round(mean(Change_Pancreatic_Sec, na.rm = TRUE), 2),
+    SD_Pan_Sec_Chg = round(sd(Change_Pancreatic_Sec, na.rm = TRUE), 2),
+    # Biliary pH Change
+    N_Bil_pH = sum(!is.na(Change_Biliary_pH)),
+    Mean_Bil_pH_Chg = round(mean(Change_Biliary_pH, na.rm = TRUE), 2),
+    SD_Bil_pH_Chg = round(sd(Change_Biliary_pH, na.rm = TRUE), 2),
+    # Pancreatic pH Change
+    N_Pan_pH = sum(!is.na(Change_Pancreatic_pH)),
+    Mean_Pan_pH_Chg = round(mean(Change_Pancreatic_pH, na.rm = TRUE), 2),
+    SD_Pan_pH_Chg = round(sd(Change_Pancreatic_pH, na.rm = TRUE), 2),
+    .groups = 'drop'
+  )
+
+kable(change_summary,
+      caption = "Change Score Summary Statistics by Hormone Group",
+      digits = 2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE,
+                font_size = 10)
+```
+
+# Exploratory Data Analysis
+
+## Visualizations of Change Scores
+
+```{r change-distributions}
+# Biliary Secretion Change
+p1 <- ggplot(hormone_clean, aes(x = Hormone_Label, y = Change_Biliary_Sec, fill = Hormone_Label)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", linewidth = 1) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Change in Biliary Secretion by Hormone Group",
+       subtitle = "Dashed line = no change",
+       x = "Hormone Group",
+       y = "Change in Biliary Secretion (mL/hr)") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Pancreatic Secretion Change
+p2 <- ggplot(hormone_clean, aes(x = Hormone_Label, y = Change_Pancreatic_Sec, fill = Hormone_Label)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", linewidth = 1) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Change in Pancreatic Secretion by Hormone Group",
+       subtitle = "Dashed line = no change",
+       x = "Hormone Group",
+       y = "Change in Pancreatic Secretion (mL/hr)") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Biliary pH Change
+p3 <- ggplot(hormone_clean, aes(x = Hormone_Label, y = Change_Biliary_pH, fill = Hormone_Label)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", linewidth = 1) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Change in Biliary pH by Hormone Group",
+       subtitle = "Dashed line = no change",
+       x = "Hormone Group",
+       y = "Change in Biliary pH") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Pancreatic pH Change
+p4 <- ggplot(hormone_clean, aes(x = Hormone_Label, y = Change_Pancreatic_pH, fill = Hormone_Label)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", linewidth = 1) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Change in Pancreatic pH by Hormone Group",
+       subtitle = "Dashed line = no change",
+       x = "Hormone Group",
+       y = "Change in Pancreatic pH") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+---
+
+# Problem 12.27: Change in Biliary Secretion
+
+## Research Question
+
+Test whether the change in biliary-secretion levels is comparable for the five hormone groups using ANOVA methods. Identify and test for any specific group differences.
+
+## Hypothesis
+
+**Null Hypothesis (H₀):** The mean change in biliary secretion is the same across all five hormone groups.
+
+**Alternative Hypothesis (H₁):** At least one hormone group has a different mean change in biliary secretion.
+
+## ANOVA Assumptions Check
+
+```{r biliary-sec-assumptions}
+cat("\n=== ANOVA ASSUMPTIONS: BILIARY SECRETION CHANGE ===\n\n")
+
+# Remove missing values
+data_bil_sec <- hormone_clean %>%
+  filter(!is.na(Change_Biliary_Sec))
+
+# 1. Normality by group (Shapiro-Wilk test)
+cat("1. Normality Test (Shapiro-Wilk by group):\n")
+normality_bil_sec <- data_bil_sec %>%
+  group_by(Hormone_Label) %>%
+  summarise(
+    N = n(),
+    W_statistic = ifelse(n() >= 3, shapiro.test(Change_Biliary_Sec)$statistic, NA),
+    P_value = ifelse(n() >= 3, shapiro.test(Change_Biliary_Sec)$p.value, NA),
+    .groups = 'drop'
+  )
+
+kable(normality_bil_sec,
+      caption = "Normality Tests by Hormone Group (Biliary Secretion Change)",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+cat("\nNote: p > 0.05 suggests normality is reasonable\n\n")
+
+# 2. Homogeneity of variance (Levene's test)
+cat("2. Homogeneity of Variance (Levene's Test):\n")
+levene_bil_sec <- car::leveneTest(Change_Biliary_Sec ~ Hormone_Label, data = data_bil_sec)
+print(levene_bil_sec)
+cat("\nNote: p > 0.05 suggests equal variances is reasonable\n\n")
+
+# 3. Q-Q plot for overall normality
+cat("3. Q-Q Plot for Overall Normality:\n")
+qqnorm(data_bil_sec$Change_Biliary_Sec, main = "Q-Q Plot: Biliary Secretion Change")
+qqline(data_bil_sec$Change_Biliary_Sec, col = "red", lwd = 2)
+```
+
+## One-Way ANOVA
+
+```{r biliary-sec-anova}
+cat("\n=== ONE-WAY ANOVA: BILIARY SECRETION CHANGE ===\n\n")
+
+# Fit one-way ANOVA
+anova_bil_sec <- aov(Change_Biliary_Sec ~ Hormone_Label, data = data_bil_sec)
+
+# ANOVA table
+cat("ANOVA Table:\n")
+anova_summary_bil_sec <- summary(anova_bil_sec)
+print(anova_summary_bil_sec)
+
+# Extract F-statistic and p-value
+anova_table <- anova_summary_bil_sec[[1]]
+f_stat <- anova_table["Hormone_Label", "F value"]
+p_value <- anova_table["Hormone_Label", "Pr(>F)"]
+
+cat("\n=== Interpretation ===\n")
+cat(sprintf("F-statistic = %.4f\n", f_stat))
+cat(sprintf("P-value = %.4e\n\n", p_value))
+
+if (!is.na(p_value)) {
+  if (p_value < 0.001) {
+    cat("*** HIGHLY SIGNIFICANT difference among hormone groups (p < 0.001) ***\n")
+    cat("The change in biliary secretion is NOT comparable across groups.\n")
+  } else if (p_value < 0.01) {
+    cat("** SIGNIFICANT difference among hormone groups (p < 0.01) **\n")
+    cat("The change in biliary secretion is NOT comparable across groups.\n")
+  } else if (p_value < 0.05) {
+    cat("* SIGNIFICANT difference among hormone groups (p < 0.05) *\n")
+    cat("The change in biliary secretion is NOT comparable across groups.\n")
+  } else {
+    cat("No significant difference among hormone groups (p >= 0.05)\n")
+    cat("The change in biliary secretion IS comparable across groups.\n")
+  }
+} else {
+  cat("Unable to determine significance.\n")
+}
+```
+
+## Post-Hoc Analysis: Tukey HSD
+
+```{r biliary-sec-tukey}
+cat("\n=== POST-HOC ANALYSIS: TUKEY HSD ===\n")
+cat("Pairwise comparisons to identify specific group differences\n\n")
+
+# Tukey HSD test
+tukey_bil_sec <- TukeyHSD(anova_bil_sec, conf.level = 0.95)
+print(tukey_bil_sec)
+
+# Tidy results
+tukey_tidy_bil_sec <- as.data.frame(tukey_bil_sec$Hormone_Label) %>%
+  rownames_to_column("Comparison") %>%
+  mutate(
+    Significant = ifelse(`p adj` < 0.05, "Yes", "No")
+  ) %>%
+  arrange(`p adj`)
+
+kable(tukey_tidy_bil_sec,
+      caption = "Tukey HSD Pairwise Comparisons (Biliary Secretion Change)",
+      digits = 4,
+      col.names = c("Comparison", "Difference", "Lower CI", "Upper CI", "Adj. P-value", "Significant")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  row_spec(which(tukey_tidy_bil_sec$Significant == "Yes"),
+           bold = TRUE, background = "#ffffcc")
+
+# Visualize Tukey HSD
+plot(tukey_bil_sec, las = 1, col = "blue",
+     main = "Tukey HSD 95% Confidence Intervals\nBiliary Secretion Change")
+abline(v = 0, col = "red", lty = 2, lwd = 2)
+```
+
+## Summary: Problem 12.27
+
+```{r summary-12.27}
+cat("\n=== SUMMARY: PROBLEM 12.27 ===\n\n")
+
+cat("Research Question:\n")
+cat("  Are changes in biliary secretion comparable across hormone groups?\n\n")
+
+cat("ANOVA Result:\n")
+cat(sprintf("  F(%d, %d) = %.4f, p = %.4e\n",
+            anova_table["Hormone_Label", "Df"],
+            anova_table["Residuals", "Df"],
+            f_stat, p_value))
+
+if (!is.na(p_value) && p_value < 0.05) {
+  cat("\n  CONCLUSION: Changes are NOT comparable (significant differences exist)\n\n")
+
+  # Count significant pairwise comparisons
+  n_sig <- sum(tukey_tidy_bil_sec$Significant == "Yes", na.rm = TRUE)
+  cat(sprintf("Specific Differences (Tukey HSD):\n"))
+  cat(sprintf("  %d out of %d pairwise comparisons are significant (p < 0.05)\n\n",
+              n_sig, nrow(tukey_tidy_bil_sec)))
+
+  cat("Significant pairwise differences:\n")
+  sig_comparisons <- tukey_tidy_bil_sec %>%
+    filter(Significant == "Yes") %>%
+    dplyr::select(Comparison, diff, `p adj`)
+
+  if (nrow(sig_comparisons) > 0) {
+    for (i in 1:nrow(sig_comparisons)) {
+      cat(sprintf("  - %s: Δ = %.2f (p = %.4f)\n",
+                  sig_comparisons$Comparison[i],
+                  sig_comparisons$diff[i],
+                  sig_comparisons$`p adj`[i]))
+    }
+  }
+} else {
+  cat("\n  CONCLUSION: Changes ARE comparable (no significant differences)\n")
+}
+```
+
+---
+
+# Problem 12.28: Change in Pancreatic Secretion
+
+## Research Question
+
+Test whether the change in pancreatic-secretion levels is comparable for the five hormone groups using ANOVA methods. Identify and test for any specific group differences.
+
+## Hypothesis
+
+**Null Hypothesis (H₀):** The mean change in pancreatic secretion is the same across all five hormone groups.
+
+**Alternative Hypothesis (H₁):** At least one hormone group has a different mean change in pancreatic secretion.
+
+## ANOVA Assumptions Check
+
+```{r pancreatic-sec-assumptions}
+cat("\n=== ANOVA ASSUMPTIONS: PANCREATIC SECRETION CHANGE ===\n\n")
+
+# Remove missing values
+data_pan_sec <- hormone_clean %>%
+  filter(!is.na(Change_Pancreatic_Sec))
+
+# 1. Normality by group
+cat("1. Normality Test (Shapiro-Wilk by group):\n")
+normality_pan_sec <- data_pan_sec %>%
+  group_by(Hormone_Label) %>%
+  summarise(
+    N = n(),
+    W_statistic = ifelse(n() >= 3, shapiro.test(Change_Pancreatic_Sec)$statistic, NA),
+    P_value = ifelse(n() >= 3, shapiro.test(Change_Pancreatic_Sec)$p.value, NA),
+    .groups = 'drop'
+  )
+
+kable(normality_pan_sec,
+      caption = "Normality Tests by Hormone Group (Pancreatic Secretion Change)",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+cat("\nNote: p > 0.05 suggests normality is reasonable\n\n")
+
+# 2. Homogeneity of variance
+cat("2. Homogeneity of Variance (Levene's Test):\n")
+levene_pan_sec <- car::leveneTest(Change_Pancreatic_Sec ~ Hormone_Label, data = data_pan_sec)
+print(levene_pan_sec)
+cat("\nNote: p > 0.05 suggests equal variances is reasonable\n\n")
+
+# 3. Q-Q plot
+cat("3. Q-Q Plot for Overall Normality:\n")
+qqnorm(data_pan_sec$Change_Pancreatic_Sec, main = "Q-Q Plot: Pancreatic Secretion Change")
+qqline(data_pan_sec$Change_Pancreatic_Sec, col = "red", lwd = 2)
+```
+
+## One-Way ANOVA
+
+```{r pancreatic-sec-anova}
+cat("\n=== ONE-WAY ANOVA: PANCREATIC SECRETION CHANGE ===\n\n")
+
+# Fit one-way ANOVA
+anova_pan_sec <- aov(Change_Pancreatic_Sec ~ Hormone_Label, data = data_pan_sec)
+
+# ANOVA table
+cat("ANOVA Table:\n")
+anova_summary_pan_sec <- summary(anova_pan_sec)
+print(anova_summary_pan_sec)
+
+# Extract F-statistic and p-value
+anova_table_pan <- anova_summary_pan_sec[[1]]
+f_stat_pan <- anova_table_pan["Hormone_Label", "F value"]
+p_value_pan <- anova_table_pan["Hormone_Label", "Pr(>F)"]
+
+cat("\n=== Interpretation ===\n")
+cat(sprintf("F-statistic = %.4f\n", f_stat_pan))
+cat(sprintf("P-value = %.4e\n\n", p_value_pan))
+
+if (!is.na(p_value_pan)) {
+  if (p_value_pan < 0.001) {
+    cat("*** HIGHLY SIGNIFICANT difference among hormone groups (p < 0.001) ***\n")
+    cat("The change in pancreatic secretion is NOT comparable across groups.\n")
+  } else if (p_value_pan < 0.01) {
+    cat("** SIGNIFICANT difference among hormone groups (p < 0.01) **\n")
+    cat("The change in pancreatic secretion is NOT comparable across groups.\n")
+  } else if (p_value_pan < 0.05) {
+    cat("* SIGNIFICANT difference among hormone groups (p < 0.05) *\n")
+    cat("The change in pancreatic secretion is NOT comparable across groups.\n")
+  } else {
+    cat("No significant difference among hormone groups (p >= 0.05)\n")
+    cat("The change in pancreatic secretion IS comparable across groups.\n")
+  }
+} else {
+  cat("Unable to determine significance.\n")
+}
+```
+
+## Post-Hoc Analysis: Tukey HSD
+
+```{r pancreatic-sec-tukey}
+cat("\n=== POST-HOC ANALYSIS: TUKEY HSD ===\n")
+cat("Pairwise comparisons to identify specific group differences\n\n")
+
+# Tukey HSD test
+tukey_pan_sec <- TukeyHSD(anova_pan_sec, conf.level = 0.95)
+print(tukey_pan_sec)
+
+# Tidy results
+tukey_tidy_pan_sec <- as.data.frame(tukey_pan_sec$Hormone_Label) %>%
+  rownames_to_column("Comparison") %>%
+  mutate(
+    Significant = ifelse(`p adj` < 0.05, "Yes", "No")
+  ) %>%
+  arrange(`p adj`)
+
+kable(tukey_tidy_pan_sec,
+      caption = "Tukey HSD Pairwise Comparisons (Pancreatic Secretion Change)",
+      digits = 4,
+      col.names = c("Comparison", "Difference", "Lower CI", "Upper CI", "Adj. P-value", "Significant")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  row_spec(which(tukey_tidy_pan_sec$Significant == "Yes"),
+           bold = TRUE, background = "#ffffcc")
+
+# Visualize Tukey HSD
+plot(tukey_pan_sec, las = 1, col = "blue",
+     main = "Tukey HSD 95% Confidence Intervals\nPancreatic Secretion Change")
+abline(v = 0, col = "red", lty = 2, lwd = 2)
+```
+
+## Summary: Problem 12.28
+
+```{r summary-12.28}
+cat("\n=== SUMMARY: PROBLEM 12.28 ===\n\n")
+
+cat("Research Question:\n")
+cat("  Are changes in pancreatic secretion comparable across hormone groups?\n\n")
+
+cat("ANOVA Result:\n")
+cat(sprintf("  F(%d, %d) = %.4f, p = %.4e\n",
+            anova_table_pan["Hormone_Label", "Df"],
+            anova_table_pan["Residuals", "Df"],
+            f_stat_pan, p_value_pan))
+
+if (!is.na(p_value_pan) && p_value_pan < 0.05) {
+  cat("\n  CONCLUSION: Changes are NOT comparable (significant differences exist)\n\n")
+
+  n_sig <- sum(tukey_tidy_pan_sec$Significant == "Yes", na.rm = TRUE)
+  cat(sprintf("Specific Differences (Tukey HSD):\n"))
+  cat(sprintf("  %d out of %d pairwise comparisons are significant (p < 0.05)\n\n",
+              n_sig, nrow(tukey_tidy_pan_sec)))
+
+  cat("Significant pairwise differences:\n")
+  sig_comparisons <- tukey_tidy_pan_sec %>%
+    filter(Significant == "Yes") %>%
+    dplyr::select(Comparison, diff, `p adj`)
+
+  if (nrow(sig_comparisons) > 0) {
+    for (i in 1:nrow(sig_comparisons)) {
+      cat(sprintf("  - %s: Δ = %.2f (p = %.4f)\n",
+                  sig_comparisons$Comparison[i],
+                  sig_comparisons$diff[i],
+                  sig_comparisons$`p adj`[i]))
+    }
+  }
+} else {
+  cat("\n  CONCLUSION: Changes ARE comparable (no significant differences)\n")
+}
+```
+
+---
+
+# Problem 12.29: Change in Biliary pH
+
+## Research Question
+
+Test whether the change in biliary-pH levels is comparable for the five hormone groups using ANOVA methods. Identify and test for any specific group differences.
+
+## Hypothesis
+
+**Null Hypothesis (H₀):** The mean change in biliary pH is the same across all five hormone groups.
+
+**Alternative Hypothesis (H₁):** At least one hormone group has a different mean change in biliary pH.
+
+## ANOVA Assumptions Check
+
+```{r biliary-ph-assumptions}
+cat("\n=== ANOVA ASSUMPTIONS: BILIARY pH CHANGE ===\n\n")
+
+# Remove missing values
+data_bil_ph <- hormone_clean %>%
+  filter(!is.na(Change_Biliary_pH))
+
+cat("Sample sizes after removing missing pH values:\n")
+table(data_bil_ph$Hormone_Label)
+cat("\n")
+
+# 1. Normality by group
+cat("1. Normality Test (Shapiro-Wilk by group):\n")
+normality_bil_ph <- data_bil_ph %>%
+  group_by(Hormone_Label) %>%
+  summarise(
+    N = n(),
+    W_statistic = ifelse(n() >= 3, shapiro.test(Change_Biliary_pH)$statistic, NA),
+    P_value = ifelse(n() >= 3, shapiro.test(Change_Biliary_pH)$p.value, NA),
+    .groups = 'drop'
+  )
+
+kable(normality_bil_ph,
+      caption = "Normality Tests by Hormone Group (Biliary pH Change)",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+cat("\nNote: p > 0.05 suggests normality is reasonable\n\n")
+
+# 2. Homogeneity of variance
+cat("2. Homogeneity of Variance (Levene's Test):\n")
+levene_bil_ph <- car::leveneTest(Change_Biliary_pH ~ Hormone_Label, data = data_bil_ph)
+print(levene_bil_ph)
+cat("\nNote: p > 0.05 suggests equal variances is reasonable\n\n")
+
+# 3. Q-Q plot
+cat("3. Q-Q Plot for Overall Normality:\n")
+qqnorm(data_bil_ph$Change_Biliary_pH, main = "Q-Q Plot: Biliary pH Change")
+qqline(data_bil_ph$Change_Biliary_pH, col = "red", lwd = 2)
+```
+
+## One-Way ANOVA
+
+```{r biliary-ph-anova}
+cat("\n=== ONE-WAY ANOVA: BILIARY pH CHANGE ===\n\n")
+
+# Fit one-way ANOVA
+anova_bil_ph <- aov(Change_Biliary_pH ~ Hormone_Label, data = data_bil_ph)
+
+# ANOVA table
+cat("ANOVA Table:\n")
+anova_summary_bil_ph <- summary(anova_bil_ph)
+print(anova_summary_bil_ph)
+
+# Extract F-statistic and p-value
+anova_table_bil_ph <- anova_summary_bil_ph[[1]]
+f_stat_bil_ph <- anova_table_bil_ph["Hormone_Label", "F value"]
+p_value_bil_ph <- anova_table_bil_ph["Hormone_Label", "Pr(>F)"]
+
+cat("\n=== Interpretation ===\n")
+cat(sprintf("F-statistic = %.4f\n", f_stat_bil_ph))
+cat(sprintf("P-value = %.4e\n\n", p_value_bil_ph))
+
+if (!is.na(p_value_bil_ph)) {
+  if (p_value_bil_ph < 0.001) {
+    cat("*** HIGHLY SIGNIFICANT difference among hormone groups (p < 0.001) ***\n")
+    cat("The change in biliary pH is NOT comparable across groups.\n")
+  } else if (p_value_bil_ph < 0.01) {
+    cat("** SIGNIFICANT difference among hormone groups (p < 0.01) **\n")
+    cat("The change in biliary pH is NOT comparable across groups.\n")
+  } else if (p_value_bil_ph < 0.05) {
+    cat("* SIGNIFICANT difference among hormone groups (p < 0.05) *\n")
+    cat("The change in biliary pH is NOT comparable across groups.\n")
+  } else {
+    cat("No significant difference among hormone groups (p >= 0.05)\n")
+    cat("The change in biliary pH IS comparable across groups.\n")
+  }
+} else {
+  cat("Unable to determine significance.\n")
+}
+```
+
+## Post-Hoc Analysis: Tukey HSD
+
+```{r biliary-ph-tukey}
+cat("\n=== POST-HOC ANALYSIS: TUKEY HSD ===\n")
+cat("Pairwise comparisons to identify specific group differences\n\n")
+
+# Tukey HSD test
+tukey_bil_ph <- TukeyHSD(anova_bil_ph, conf.level = 0.95)
+print(tukey_bil_ph)
+
+# Tidy results
+tukey_tidy_bil_ph <- as.data.frame(tukey_bil_ph$Hormone_Label) %>%
+  rownames_to_column("Comparison") %>%
+  mutate(
+    Significant = ifelse(`p adj` < 0.05, "Yes", "No")
+  ) %>%
+  arrange(`p adj`)
+
+kable(tukey_tidy_bil_ph,
+      caption = "Tukey HSD Pairwise Comparisons (Biliary pH Change)",
+      digits = 4,
+      col.names = c("Comparison", "Difference", "Lower CI", "Upper CI", "Adj. P-value", "Significant")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  row_spec(which(tukey_tidy_bil_ph$Significant == "Yes"),
+           bold = TRUE, background = "#ffffcc")
+
+# Visualize Tukey HSD
+plot(tukey_bil_ph, las = 1, col = "blue",
+     main = "Tukey HSD 95% Confidence Intervals\nBiliary pH Change")
+abline(v = 0, col = "red", lty = 2, lwd = 2)
+```
+
+## Summary: Problem 12.29
+
+```{r summary-12.29}
+cat("\n=== SUMMARY: PROBLEM 12.29 ===\n\n")
+
+cat("Research Question:\n")
+cat("  Are changes in biliary pH comparable across hormone groups?\n\n")
+
+cat("ANOVA Result:\n")
+cat(sprintf("  F(%d, %d) = %.4f, p = %.4e\n",
+            anova_table_bil_ph["Hormone_Label", "Df"],
+            anova_table_bil_ph["Residuals", "Df"],
+            f_stat_bil_ph, p_value_bil_ph))
+
+if (!is.na(p_value_bil_ph) && p_value_bil_ph < 0.05) {
+  cat("\n  CONCLUSION: Changes are NOT comparable (significant differences exist)\n\n")
+
+  n_sig <- sum(tukey_tidy_bil_ph$Significant == "Yes", na.rm = TRUE)
+  cat(sprintf("Specific Differences (Tukey HSD):\n"))
+  cat(sprintf("  %d out of %d pairwise comparisons are significant (p < 0.05)\n\n",
+              n_sig, nrow(tukey_tidy_bil_ph)))
+
+  cat("Significant pairwise differences:\n")
+  sig_comparisons <- tukey_tidy_bil_ph %>%
+    filter(Significant == "Yes") %>%
+    dplyr::select(Comparison, diff, `p adj`)
+
+  if (nrow(sig_comparisons) > 0) {
+    for (i in 1:nrow(sig_comparisons)) {
+      cat(sprintf("  - %s: Δ = %.2f (p = %.4f)\n",
+                  sig_comparisons$Comparison[i],
+                  sig_comparisons$diff[i],
+                  sig_comparisons$`p adj`[i]))
+    }
+  }
+} else {
+  cat("\n  CONCLUSION: Changes ARE comparable (no significant differences)\n")
+}
+```
+
+---
+
+# Problem 12.30: Change in Pancreatic pH
+
+## Research Question
+
+Test whether the change in pancreatic-pH levels is comparable for the five hormone groups using ANOVA methods. Identify and test for any specific group differences.
+
+## Hypothesis
+
+**Null Hypothesis (H₀):** The mean change in pancreatic pH is the same across all five hormone groups.
+
+**Alternative Hypothesis (H₁):** At least one hormone group has a different mean change in pancreatic pH.
+
+## ANOVA Assumptions Check
+
+```{r pancreatic-ph-assumptions}
+cat("\n=== ANOVA ASSUMPTIONS: PANCREATIC pH CHANGE ===\n\n")
+
+# Remove missing values
+data_pan_ph <- hormone_clean %>%
+  filter(!is.na(Change_Pancreatic_pH))
+
+cat("Sample sizes after removing missing pH values:\n")
+table(data_pan_ph$Hormone_Label)
+cat("\n")
+
+# 1. Normality by group
+cat("1. Normality Test (Shapiro-Wilk by group):\n")
+normality_pan_ph <- data_pan_ph %>%
+  group_by(Hormone_Label) %>%
+  summarise(
+    N = n(),
+    W_statistic = ifelse(n() >= 3, shapiro.test(Change_Pancreatic_pH)$statistic, NA),
+    P_value = ifelse(n() >= 3, shapiro.test(Change_Pancreatic_pH)$p.value, NA),
+    .groups = 'drop'
+  )
+
+kable(normality_pan_ph,
+      caption = "Normality Tests by Hormone Group (Pancreatic pH Change)",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+cat("\nNote: p > 0.05 suggests normality is reasonable\n\n")
+
+# 2. Homogeneity of variance
+cat("2. Homogeneity of Variance (Levene's Test):\n")
+levene_pan_ph <- car::leveneTest(Change_Pancreatic_pH ~ Hormone_Label, data = data_pan_ph)
+print(levene_pan_ph)
+cat("\nNote: p > 0.05 suggests equal variances is reasonable\n\n")
+
+# 3. Q-Q plot
+cat("3. Q-Q Plot for Overall Normality:\n")
+qqnorm(data_pan_ph$Change_Pancreatic_pH, main = "Q-Q Plot: Pancreatic pH Change")
+qqline(data_pan_ph$Change_Pancreatic_pH, col = "red", lwd = 2)
+```
+
+## One-Way ANOVA
+
+```{r pancreatic-ph-anova}
+cat("\n=== ONE-WAY ANOVA: PANCREATIC pH CHANGE ===\n\n")
+
+# Fit one-way ANOVA
+anova_pan_ph <- aov(Change_Pancreatic_pH ~ Hormone_Label, data = data_pan_ph)
+
+# ANOVA table
+cat("ANOVA Table:\n")
+anova_summary_pan_ph <- summary(anova_pan_ph)
+print(anova_summary_pan_ph)
+
+# Extract F-statistic and p-value
+anova_table_pan_ph <- anova_summary_pan_ph[[1]]
+f_stat_pan_ph <- anova_table_pan_ph["Hormone_Label", "F value"]
+p_value_pan_ph <- anova_table_pan_ph["Hormone_Label", "Pr(>F)"]
+
+cat("\n=== Interpretation ===\n")
+cat(sprintf("F-statistic = %.4f\n", f_stat_pan_ph))
+cat(sprintf("P-value = %.4e\n\n", p_value_pan_ph))
+
+if (!is.na(p_value_pan_ph)) {
+  if (p_value_pan_ph < 0.001) {
+    cat("*** HIGHLY SIGNIFICANT difference among hormone groups (p < 0.001) ***\n")
+    cat("The change in pancreatic pH is NOT comparable across groups.\n")
+  } else if (p_value_pan_ph < 0.01) {
+    cat("** SIGNIFICANT difference among hormone groups (p < 0.01) **\n")
+    cat("The change in pancreatic pH is NOT comparable across groups.\n")
+  } else if (p_value_pan_ph < 0.05) {
+    cat("* SIGNIFICANT difference among hormone groups (p < 0.05) *\n")
+    cat("The change in pancreatic pH is NOT comparable across groups.\n")
+  } else {
+    cat("No significant difference among hormone groups (p >= 0.05)\n")
+    cat("The change in pancreatic pH IS comparable across groups.\n")
+  }
+} else {
+  cat("Unable to determine significance.\n")
+}
+```
+
+## Post-Hoc Analysis: Tukey HSD
+
+```{r pancreatic-ph-tukey}
+cat("\n=== POST-HOC ANALYSIS: TUKEY HSD ===\n")
+cat("Pairwise comparisons to identify specific group differences\n\n")
+
+# Tukey HSD test
+tukey_pan_ph <- TukeyHSD(anova_pan_ph, conf.level = 0.95)
+print(tukey_pan_ph)
+
+# Tidy results
+tukey_tidy_pan_ph <- as.data.frame(tukey_pan_ph$Hormone_Label) %>%
+  rownames_to_column("Comparison") %>%
+  mutate(
+    Significant = ifelse(`p adj` < 0.05, "Yes", "No")
+  ) %>%
+  arrange(`p adj`)
+
+kable(tukey_tidy_pan_ph,
+      caption = "Tukey HSD Pairwise Comparisons (Pancreatic pH Change)",
+      digits = 4,
+      col.names = c("Comparison", "Difference", "Lower CI", "Upper CI", "Adj. P-value", "Significant")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  row_spec(which(tukey_tidy_pan_ph$Significant == "Yes"),
+           bold = TRUE, background = "#ffffcc")
+
+# Visualize Tukey HSD
+plot(tukey_pan_ph, las = 1, col = "blue",
+     main = "Tukey HSD 95% Confidence Intervals\nPancreatic pH Change")
+abline(v = 0, col = "red", lty = 2, lwd = 2)
+```
+
+## Summary: Problem 12.30
+
+```{r summary-12.30}
+cat("\n=== SUMMARY: PROBLEM 12.30 ===\n\n")
+
+cat("Research Question:\n")
+cat("  Are changes in pancreatic pH comparable across hormone groups?\n\n")
+
+cat("ANOVA Result:\n")
+cat(sprintf("  F(%d, %d) = %.4f, p = %.4e\n",
+            anova_table_pan_ph["Hormone_Label", "Df"],
+            anova_table_pan_ph["Residuals", "Df"],
+            f_stat_pan_ph, p_value_pan_ph))
+
+if (!is.na(p_value_pan_ph) && p_value_pan_ph < 0.05) {
+  cat("\n  CONCLUSION: Changes are NOT comparable (significant differences exist)\n\n")
+
+  n_sig <- sum(tukey_tidy_pan_ph$Significant == "Yes", na.rm = TRUE)
+  cat(sprintf("Specific Differences (Tukey HSD):\n"))
+  cat(sprintf("  %d out of %d pairwise comparisons are significant (p < 0.05)\n\n",
+              n_sig, nrow(tukey_tidy_pan_ph)))
+
+  cat("Significant pairwise differences:\n")
+  sig_comparisons <- tukey_tidy_pan_ph %>%
+    filter(Significant == "Yes") %>%
+    dplyr::select(Comparison, diff, `p adj`)
+
+  if (nrow(sig_comparisons) > 0) {
+    for (i in 1:nrow(sig_comparisons)) {
+      cat(sprintf("  - %s: Δ = %.2f (p = %.4f)\n",
+                  sig_comparisons$Comparison[i],
+                  sig_comparisons$diff[i],
+                  sig_comparisons$`p adj`[i]))
+    }
+  }
+} else {
+  cat("\n  CONCLUSION: Changes ARE comparable (no significant differences)\n")
+}
+```
+
+---
+
+# Comprehensive Summary
+
+## All ANOVA Results
+
+```{r comprehensive-results}
+cat("\n=== COMPREHENSIVE SUMMARY: ALL ANOVA RESULTS ===\n\n")
+
+# Create comprehensive summary table
+comprehensive_anova <- data.frame(
+  Problem = c("12.27", "12.28", "12.29", "12.30"),
+  Outcome = c("Biliary Secretion Change", "Pancreatic Secretion Change",
+              "Biliary pH Change", "Pancreatic pH Change"),
+  F_statistic = c(f_stat, f_stat_pan, f_stat_bil_ph, f_stat_pan_ph),
+  df1 = c(anova_table["Hormone_Label", "Df"],
+          anova_table_pan["Hormone_Label", "Df"],
+          anova_table_bil_ph["Hormone_Label", "Df"],
+          anova_table_pan_ph["Hormone_Label", "Df"]),
+  df2 = c(anova_table["Residuals", "Df"],
+          anova_table_pan["Residuals", "Df"],
+          anova_table_bil_ph["Residuals", "Df"],
+          anova_table_pan_ph["Residuals", "Df"]),
+  P_value = c(p_value, p_value_pan, p_value_bil_ph, p_value_pan_ph),
+  Significant = c(
+    ifelse(!is.na(p_value) && p_value < 0.05, "Yes", "No"),
+    ifelse(!is.na(p_value_pan) && p_value_pan < 0.05, "Yes", "No"),
+    ifelse(!is.na(p_value_bil_ph) && p_value_bil_ph < 0.05, "Yes", "No"),
+    ifelse(!is.na(p_value_pan_ph) && p_value_pan_ph < 0.05, "Yes", "No")
+  ),
+  Conclusion = c(
+    ifelse(!is.na(p_value) && p_value < 0.05, "NOT comparable", "Comparable"),
+    ifelse(!is.na(p_value_pan) && p_value_pan < 0.05, "NOT comparable", "Comparable"),
+    ifelse(!is.na(p_value_bil_ph) && p_value_bil_ph < 0.05, "NOT comparable", "Comparable"),
+    ifelse(!is.na(p_value_pan_ph) && p_value_pan_ph < 0.05, "NOT comparable", "Comparable")
+  )
+)
+
+kable(comprehensive_anova,
+      caption = "Comprehensive ANOVA Summary: All Four Problems",
+      digits = 4,
+      col.names = c("Problem", "Outcome Variable", "F", "df1", "df2", "P-value", "Significant", "Conclusion")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  row_spec(which(comprehensive_anova$Significant == "Yes"),
+           bold = TRUE, background = "#ffffcc")
+```
+
+## Visual Summary
+
+```{r comprehensive-visual}
+# Create bar plot of F-statistics
+ggplot(comprehensive_anova, aes(x = Problem, y = F_statistic, fill = Significant)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_hline(yintercept = qf(0.95, 4, 100), linetype = "dashed", color = "red", linewidth = 1) +
+  geom_text(aes(label = sprintf("F=%.2f", F_statistic)),
+            vjust = -0.5, size = 4, fontface = "bold") +
+  scale_fill_manual(values = c("No" = "#95a5a6", "Yes" = "#e74c3c")) +
+  labs(title = "ANOVA F-Statistics Across All Problems",
+       subtitle = "Red dashed line = Critical F-value (approximate)",
+       x = "Problem Number",
+       y = "F-Statistic",
+       fill = "Significant (p<0.05)") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 14))
+```
+
+## Key Findings
+
+```{r key-findings, echo=FALSE, results='asis'}
+cat("\n### Overall Conclusions\n\n")
+
+n_sig <- sum(comprehensive_anova$Significant == "Yes")
+
+cat(sprintf("Out of 4 outcomes tested, **%d showed significant differences** among hormone groups.\n\n", n_sig))
+
+if (n_sig > 0) {
+  cat("**Outcomes with significant differences (changes NOT comparable):**\n\n")
+  sig_outcomes <- comprehensive_anova %>%
+    filter(Significant == "Yes")
+
+  for (i in 1:nrow(sig_outcomes)) {
+    cat(sprintf("- **Problem %s**: %s (F = %.2f, p = %.4f)\n",
+                sig_outcomes$Problem[i],
+                sig_outcomes$Outcome[i],
+                sig_outcomes$F_statistic[i],
+                sig_outcomes$P_value[i]))
+  }
+  cat("\n")
+}
+
+non_sig <- comprehensive_anova %>%
+  filter(Significant == "No")
+
+if (nrow(non_sig) > 0) {
+  cat("**Outcomes with no significant differences (changes ARE comparable):**\n\n")
+
+  for (i in 1:nrow(non_sig)) {
+    cat(sprintf("- **Problem %s**: %s (F = %.2f, p = %.4f)\n",
+                non_sig$Problem[i],
+                non_sig$Outcome[i],
+                non_sig$F_statistic[i],
+                non_sig$P_value[i]))
+  }
+  cat("\n")
+}
+```
+
+# Conclusions
+
+## Statistical Methods Used
+
+For each of the four problems (12.27-12.30), we employed:
+
+1. **One-Way ANOVA** to test overall differences among five hormone groups
+2. **Assumption Checking**:
+   - Normality (Shapiro-Wilk tests by group and Q-Q plots)
+   - Homogeneity of variance (Levene's test)
+3. **Post-Hoc Analysis**: Tukey HSD for pairwise comparisons (when ANOVA significant)
+4. **Effect Visualization**: Boxplots and confidence interval plots
+
+## Biological Interpretation
+
+The ANOVA results reveal which physiological outcomes are differentially affected by hormone treatments:
+
+- **Secretion levels** (biliary and pancreatic): Indicate volume of secretion changes
+- **pH levels** (biliary and pancreatic): Indicate acidity/alkalinity changes
+- **Hormone-specific effects**: Different hormones may have selective actions
+
+When changes are **NOT comparable** (significant ANOVA), this suggests that:
+- Different hormones have distinct pharmacological effects
+- Treatment effects are hormone-specific rather than general responses
+
+When changes **ARE comparable** (non-significant ANOVA), this suggests that:
+- All hormones produce similar effects on that outcome
+- OR none of the hormones significantly affect that outcome
+
+## Limitations
+
+1. **Sample size**: Varies by hormone group; some groups have small n
+2. **Missing data**: pH measurements have more missing values (0 treated as missing)
+3. **Assumption violations**: Some outcomes may violate normality or equal variance
+4. **Multiple comparisons**: Performing 4 ANOVAs increases Type I error risk
+5. **Study design**: Results specific to hen model; may not generalize to humans
+
+## Recommendations
+
+- For outcomes with significant differences, focus on Tukey HSD results to identify specific hormone pairs
+- Consider dose-response relationships (see Chapter 11 regression analyses)
+- Verify assumptions; if violated, consider non-parametric alternatives (Kruskal-Wallis)
+- Adjust for multiple comparisons if conducting family-wise inference
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
+
+---
+**End of Analysis**

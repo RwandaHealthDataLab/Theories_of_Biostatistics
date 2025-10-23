@@ -1,0 +1,728 @@
+---
+title: "Ophthalmology: Tear Production Analysis"
+subtitle: "TEAR.DAT Dataset - Chapter 12 Analysis"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    code_folding: show
+    theme: cerulean
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Overview
+
+This analysis examines tear production data from an ophthalmology study. The TEAR.DAT dataset contains measurements of tear production from both eyes (right and left) under different experimental conditions and time points.
+
+## Study Design
+
+The study appears to investigate:
+
+- **Eyes**: Right eye (OD - Oculus Dexter) and Left eye (OS - Oculus Sinister)
+- **Concentrations**: Three different concentration levels (3%, 6%, and 10%)
+- **Time Points**:
+  - Baseline (bas)
+  - Immediate (im)
+  - Post-treatment at 5 minutes (pst5)
+  - Post-treatment at 10 minutes (pt10)
+  - Post-treatment at 15 minutes (pt15)
+- **Replicates**: Two measurements (1 and 2) at each condition
+
+## Variable Naming Convention
+
+Variables follow the pattern: `[eye][concentration][timepoint][replicate]`
+
+For example:
+- `od3bas1` = Right eye (OD), 3% concentration, baseline, replicate 1
+- `os6im2` = Left eye (OS), 6% concentration, immediate, replicate 2
+- `od10pst51` = Right eye (OD), 10% concentration, 5 minutes post, replicate 1
+
+# Load Required Libraries
+
+```{r load-libraries}
+library(tidyverse)      # Data manipulation and visualization
+library(knitr)          # Tables
+library(ggplot2)        # Advanced plotting
+library(reshape2)       # Data reshaping
+library(car)            # Statistical tests including Levene's test
+library(broom)          # Tidy statistical outputs
+library(GGally)         # Pair plots
+library(corrplot)       # Correlation plots
+library(gridExtra)      # Multiple plots
+library(lme4)           # Mixed effects models
+library(nlme)           # Linear and nonlinear mixed effects models
+```
+
+# Load and Explore Data
+
+```{r load-data}
+# Read the TEAR.DAT file
+tear_data <- read.table("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/TEAR.DAT.txt",
+                        header = TRUE,
+                        sep = ",",
+                        quote = "'\"",
+                        strip.white = TRUE)
+
+# Display structure
+str(tear_data)
+
+cat("\nDataset dimensions:", nrow(tear_data), "subjects x",
+    ncol(tear_data), "variables\n")
+
+# Display first few rows
+head(tear_data, 3)
+```
+
+## Data Summary
+
+```{r data-summary}
+# Summary statistics
+cat("\nSummary of all variables:\n")
+summary(tear_data)
+
+# Check for missing values
+cat("\n\nMissing values per variable:\n")
+missing_counts <- colSums(is.na(tear_data))
+if(sum(missing_counts) > 0) {
+  print(missing_counts[missing_counts > 0])
+} else {
+  cat("No missing values detected.\n")
+}
+
+# Number of subjects
+cat("\nTotal number of subjects:", nrow(tear_data), "\n")
+```
+
+# Data Preparation and Restructuring
+
+To facilitate analysis, we'll restructure the data from wide to long format.
+
+```{r data-reshape}
+# Create a long format dataset for easier analysis
+# We'll separate by concentration level first
+
+# Helper function to extract measurements
+extract_measurements <- function(data, eye, conc) {
+  prefix <- paste0(eye, conc)
+
+  # Get all columns for this eye-concentration combination
+  cols <- grep(paste0("^", prefix), names(data), value = TRUE)
+
+  if(length(cols) == 0) return(NULL)
+
+  result <- data %>%
+    dplyr::select(ID, all_of(cols)) %>%
+    pivot_longer(
+      cols = -ID,
+      names_to = "variable",
+      values_to = "tear_production"
+    ) %>%
+    mutate(
+      eye = eye,
+      concentration = conc,
+      # Extract timepoint and replicate from variable name
+      timepoint = case_when(
+        str_detect(variable, "bas") ~ "baseline",
+        str_detect(variable, "im") ~ "immediate",
+        str_detect(variable, "pst5|ps5") ~ "post_5min",
+        str_detect(variable, "pt10|p10") ~ "post_10min",
+        str_detect(variable, "pt15|p15") ~ "post_15min",
+        TRUE ~ "unknown"
+      ),
+      replicate = str_extract(variable, "\\d$")
+    )
+
+  return(result)
+}
+
+# Extract data for all combinations
+eyes <- c("od", "os")
+concentrations <- c("3", "6", "10")
+
+tear_long <- NULL
+
+for(eye in eyes) {
+  for(conc in concentrations) {
+    temp_data <- extract_measurements(tear_data, eye, conc)
+    if(!is.null(temp_data)) {
+      tear_long <- bind_rows(tear_long, temp_data)
+    }
+  }
+}
+
+# Clean up the long format data
+tear_long <- tear_long %>%
+  filter(timepoint != "unknown") %>%
+  mutate(
+    eye = factor(eye, levels = c("od", "os"),
+                 labels = c("Right Eye (OD)", "Left Eye (OS)")),
+    concentration = factor(concentration, levels = c("3", "6", "10"),
+                          labels = c("3%", "6%", "10%")),
+    timepoint = factor(timepoint,
+                      levels = c("baseline", "immediate", "post_5min",
+                                "post_10min", "post_15min"),
+                      labels = c("Baseline", "Immediate", "5 min post",
+                                "10 min post", "15 min post")),
+    replicate = as.factor(replicate)
+  ) %>%
+  filter(!is.na(tear_production))
+
+# Display restructured data
+cat("\nRestructured data (long format):\n")
+head(tear_long, 10)
+
+cat("\n\nDimensions of long format data:", nrow(tear_long), "observations\n")
+
+# Summary by eye, concentration, and timepoint
+cat("\n\nObservations by Eye and Concentration:\n")
+table(tear_long$eye, tear_long$concentration)
+
+cat("\n\nObservations by Timepoint:\n")
+table(tear_long$timepoint)
+```
+
+# Descriptive Statistics
+
+## Overall Statistics by Eye
+
+```{r desc-by-eye}
+desc_by_eye <- tear_long %>%
+  group_by(eye) %>%
+  summarise(
+    N = n(),
+    Mean = mean(tear_production, na.rm = TRUE),
+    SD = sd(tear_production, na.rm = TRUE),
+    Median = median(tear_production, na.rm = TRUE),
+    Min = min(tear_production, na.rm = TRUE),
+    Max = max(tear_production, na.rm = TRUE),
+    Q1 = quantile(tear_production, 0.25, na.rm = TRUE),
+    Q3 = quantile(tear_production, 0.75, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+kable(desc_by_eye, digits = 2,
+      caption = "Descriptive Statistics for Tear Production by Eye")
+```
+
+## Statistics by Concentration
+
+```{r desc-by-concentration}
+desc_by_conc <- tear_long %>%
+  group_by(concentration) %>%
+  summarise(
+    N = n(),
+    Mean = mean(tear_production, na.rm = TRUE),
+    SD = sd(tear_production, na.rm = TRUE),
+    Median = median(tear_production, na.rm = TRUE),
+    Min = min(tear_production, na.rm = TRUE),
+    Max = max(tear_production, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+kable(desc_by_conc, digits = 2,
+      caption = "Descriptive Statistics for Tear Production by Concentration")
+```
+
+## Statistics by Timepoint
+
+```{r desc-by-timepoint}
+desc_by_time <- tear_long %>%
+  group_by(timepoint) %>%
+  summarise(
+    N = n(),
+    Mean = mean(tear_production, na.rm = TRUE),
+    SD = sd(tear_production, na.rm = TRUE),
+    Median = median(tear_production, na.rm = TRUE),
+    Min = min(tear_production, na.rm = TRUE),
+    Max = max(tear_production, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+kable(desc_by_time, digits = 2,
+      caption = "Descriptive Statistics for Tear Production by Timepoint")
+```
+
+## Statistics by Eye, Concentration, and Timepoint
+
+```{r desc-comprehensive}
+desc_comprehensive <- tear_long %>%
+  group_by(eye, concentration, timepoint) %>%
+  summarise(
+    N = n(),
+    Mean = mean(tear_production, na.rm = TRUE),
+    SD = sd(tear_production, na.rm = TRUE),
+    SE = sd(tear_production, na.rm = TRUE) / sqrt(n()),
+    .groups = 'drop'
+  )
+
+kable(desc_comprehensive, digits = 2,
+      caption = "Descriptive Statistics by Eye, Concentration, and Timepoint")
+```
+
+# Visualizations
+
+## Overall Distribution of Tear Production
+
+```{r overall-histogram}
+ggplot(tear_long, aes(x = tear_production)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white", alpha = 0.7) +
+  geom_density(aes(y = after_stat(count)), color = "red", linewidth = 1) +
+  labs(title = "Distribution of Tear Production Values",
+       subtitle = "All measurements combined",
+       x = "Tear Production",
+       y = "Frequency") +
+  theme_minimal()
+```
+
+## Distribution by Eye
+
+```{r boxplot-by-eye}
+ggplot(tear_long, aes(x = eye, y = tear_production, fill = eye)) +
+  geom_boxplot(alpha = 0.7, outlier.alpha = 0.5) +
+  geom_jitter(width = 0.2, alpha = 0.2, size = 0.5) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 3,
+               fill = "red", color = "darkred") +
+  labs(title = "Tear Production by Eye",
+       subtitle = "Red diamonds indicate means",
+       x = "Eye",
+       y = "Tear Production") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+## Distribution by Concentration
+
+```{r boxplot-by-concentration}
+ggplot(tear_long, aes(x = concentration, y = tear_production, fill = concentration)) +
+  geom_boxplot(alpha = 0.7, outlier.alpha = 0.5) +
+  geom_jitter(width = 0.2, alpha = 0.2, size = 0.5) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 3,
+               fill = "red", color = "darkred") +
+  labs(title = "Tear Production by Concentration Level",
+       subtitle = "Red diamonds indicate means",
+       x = "Concentration",
+       y = "Tear Production") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+## Distribution by Timepoint
+
+```{r boxplot-by-timepoint}
+ggplot(tear_long, aes(x = timepoint, y = tear_production, fill = timepoint)) +
+  geom_boxplot(alpha = 0.7, outlier.alpha = 0.5) +
+  geom_jitter(width = 0.2, alpha = 0.2, size = 0.5) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 3,
+               fill = "red", color = "darkred") +
+  labs(title = "Tear Production Over Time",
+       subtitle = "Red diamonds indicate means",
+       x = "Timepoint",
+       y = "Tear Production") +
+  scale_fill_brewer(palette = "Set3") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Interaction Plot: Concentration × Timepoint
+
+```{r interaction-plot-conc-time}
+interaction_data <- tear_long %>%
+  group_by(concentration, timepoint) %>%
+  summarise(
+    mean_tear = mean(tear_production, na.rm = TRUE),
+    se = sd(tear_production, na.rm = TRUE) / sqrt(n()),
+    .groups = 'drop'
+  )
+
+ggplot(interaction_data, aes(x = timepoint, y = mean_tear,
+                             color = concentration, group = concentration)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = mean_tear - se, ymax = mean_tear + se),
+                width = 0.2, linewidth = 0.8) +
+  labs(title = "Interaction Plot: Tear Production by Concentration and Time",
+       subtitle = "Error bars represent ± 1 SE",
+       x = "Timepoint",
+       y = "Mean Tear Production",
+       color = "Concentration") +
+  scale_color_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Interaction Plot: Eye × Timepoint
+
+```{r interaction-plot-eye-time}
+interaction_eye_data <- tear_long %>%
+  group_by(eye, timepoint) %>%
+  summarise(
+    mean_tear = mean(tear_production, na.rm = TRUE),
+    se = sd(tear_production, na.rm = TRUE) / sqrt(n()),
+    .groups = 'drop'
+  )
+
+ggplot(interaction_eye_data, aes(x = timepoint, y = mean_tear,
+                                  color = eye, group = eye)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = mean_tear - se, ymax = mean_tear + se),
+                width = 0.2, linewidth = 0.8) +
+  labs(title = "Interaction Plot: Tear Production by Eye and Time",
+       subtitle = "Error bars represent ± 1 SE",
+       x = "Timepoint",
+       y = "Mean Tear Production",
+       color = "Eye") +
+  scale_color_manual(values = c("steelblue", "coral")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Faceted Plot: All Combinations
+
+```{r faceted-plot}
+facet_data <- tear_long %>%
+  group_by(eye, concentration, timepoint) %>%
+  summarise(
+    mean_tear = mean(tear_production, na.rm = TRUE),
+    se = sd(tear_production, na.rm = TRUE) / sqrt(n()),
+    .groups = 'drop'
+  )
+
+ggplot(facet_data, aes(x = timepoint, y = mean_tear,
+                       color = concentration, group = concentration)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  geom_errorbar(aes(ymin = mean_tear - se, ymax = mean_tear + se),
+                width = 0.2) +
+  facet_wrap(~ eye, ncol = 2) +
+  labs(title = "Tear Production by Eye, Concentration, and Time",
+       subtitle = "Error bars represent ± 1 SE",
+       x = "Timepoint",
+       y = "Mean Tear Production",
+       color = "Concentration") +
+  scale_color_brewer(palette = "Dark2") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.text = element_text(face = "bold", size = 11))
+```
+
+## Individual Subject Trajectories
+
+```{r individual-trajectories}
+# Plot a subset of individual subjects
+set.seed(123)
+sample_ids <- sample(unique(tear_long$ID), min(10, length(unique(tear_long$ID))))
+
+tear_long %>%
+  filter(ID %in% sample_ids) %>%
+  ggplot(aes(x = timepoint, y = tear_production,
+             group = interaction(ID, concentration, eye),
+             color = concentration)) +
+  geom_line(alpha = 0.6) +
+  geom_point(alpha = 0.6, size = 1.5) +
+  facet_wrap(~ eye) +
+  labs(title = "Individual Subject Trajectories (Sample of Subjects)",
+       subtitle = "Showing variation across time by concentration and eye",
+       x = "Timepoint",
+       y = "Tear Production",
+       color = "Concentration") +
+  scale_color_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+# Statistical Analysis
+
+## Test for Eye Differences (Paired Comparison)
+
+Since both eyes are measured on the same subjects, we can use paired tests.
+
+```{r paired-eye-test}
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("PAIRED COMPARISON: RIGHT EYE vs LEFT EYE\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Calculate mean for each subject-eye combination
+eye_comparison <- tear_long %>%
+  group_by(ID, eye) %>%
+  summarise(mean_tear = mean(tear_production, na.rm = TRUE),
+            .groups = 'drop') %>%
+  pivot_wider(names_from = eye, values_from = mean_tear) %>%
+  rename(right_eye = `Right Eye (OD)`, left_eye = `Left Eye (OS)`) %>%
+  filter(!is.na(right_eye) & !is.na(left_eye))
+
+# Paired t-test
+paired_test <- t.test(eye_comparison$right_eye,
+                      eye_comparison$left_eye,
+                      paired = TRUE)
+
+print(paired_test)
+
+cat("\nMean difference (Right - Left):",
+    round(mean(eye_comparison$right_eye - eye_comparison$left_eye), 3), "\n")
+cat("95% CI for mean difference: (",
+    round(paired_test$conf.int[1], 3), ",",
+    round(paired_test$conf.int[2], 3), ")\n")
+cat("\nConclusion:",
+    ifelse(paired_test$p.value < 0.05,
+           "There IS a statistically significant difference between eyes (p < 0.05)",
+           "There is NO statistically significant difference between eyes (p >= 0.05)"),
+    "\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+```
+
+## One-Way ANOVA: Effect of Concentration
+
+```{r anova-concentration}
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("ONE-WAY ANOVA: EFFECT OF CONCENTRATION\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Perform ANOVA
+anova_conc <- aov(tear_production ~ concentration, data = tear_long)
+anova_conc_summary <- summary(anova_conc)
+
+print(anova_conc_summary)
+
+# Post-hoc test if significant
+if(anova_conc_summary[[1]]$`Pr(>F)`[1] < 0.05) {
+  cat("\n\nPost-hoc Tukey's HSD Test:\n")
+  tukey_conc <- TukeyHSD(anova_conc)
+  print(tukey_conc)
+
+  # Plot Tukey results
+  par(mar = c(5, 10, 4, 2))
+  plot(tukey_conc, las = 1)
+  title(main = "Tukey's HSD: Concentration Comparisons")
+}
+
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+```
+
+## One-Way ANOVA: Effect of Timepoint
+
+```{r anova-timepoint}
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("ONE-WAY ANOVA: EFFECT OF TIMEPOINT\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Perform ANOVA
+anova_time <- aov(tear_production ~ timepoint, data = tear_long)
+anova_time_summary <- summary(anova_time)
+
+print(anova_time_summary)
+
+# Post-hoc test if significant
+if(anova_time_summary[[1]]$`Pr(>F)`[1] < 0.05) {
+  cat("\n\nPost-hoc Tukey's HSD Test:\n")
+  tukey_time <- TukeyHSD(anova_time)
+  print(tukey_time)
+
+  # Plot Tukey results
+  par(mar = c(5, 15, 4, 2))
+  plot(tukey_time, las = 1, cex.axis = 0.7)
+  title(main = "Tukey's HSD: Timepoint Comparisons")
+}
+
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+```
+
+## Two-Way ANOVA: Concentration × Timepoint
+
+```{r two-way-anova}
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("TWO-WAY ANOVA: CONCENTRATION × TIMEPOINT\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Perform two-way ANOVA
+anova_2way <- aov(tear_production ~ concentration * timepoint, data = tear_long)
+anova_2way_summary <- summary(anova_2way)
+
+print(anova_2way_summary)
+
+cat("\n\nInterpretation:\n")
+cat("- Main effect of Concentration: p =",
+    format.pval(anova_2way_summary[[1]]$`Pr(>F)`[1], digits = 4), "\n")
+cat("- Main effect of Timepoint: p =",
+    format.pval(anova_2way_summary[[1]]$`Pr(>F)`[2], digits = 4), "\n")
+cat("- Interaction (Concentration × Timepoint): p =",
+    format.pval(anova_2way_summary[[1]]$`Pr(>F)`[3], digits = 4), "\n")
+
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+```
+
+## Checking ANOVA Assumptions
+
+```{r anova-assumptions}
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("CHECKING ANOVA ASSUMPTIONS\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# 1. Normality of residuals
+cat("1. NORMALITY OF RESIDUALS\n")
+cat("-" %>% rep(40) %>% paste(collapse = ""), "\n")
+
+# Shapiro-Wilk test on residuals
+shapiro_test <- shapiro.test(residuals(anova_2way))
+cat("Shapiro-Wilk test: W =", round(shapiro_test$statistic, 4),
+    ", p-value =", format.pval(shapiro_test$p.value, digits = 4), "\n")
+cat("Interpretation:",
+    ifelse(shapiro_test$p.value > 0.05,
+           "Residuals are consistent with normality (p > 0.05)",
+           "Residuals may deviate from normality (p < 0.05)"),
+    "\n\n")
+
+# Q-Q plot
+par(mfrow = c(2, 2))
+plot(anova_2way)
+par(mfrow = c(1, 1))
+
+# 2. Homogeneity of variance
+cat("\n2. HOMOGENEITY OF VARIANCE\n")
+cat("-" %>% rep(40) %>% paste(collapse = ""), "\n")
+
+# Levene's test
+levene_conc <- leveneTest(tear_production ~ concentration, data = tear_long)
+cat("Levene's test (Concentration):\n")
+print(levene_conc)
+
+levene_time <- leveneTest(tear_production ~ timepoint, data = tear_long)
+cat("\nLevene's test (Timepoint):\n")
+print(levene_time)
+
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+```
+
+## Repeated Measures Analysis
+
+Since we have repeated measurements on the same subjects, a repeated measures or mixed effects approach may be more appropriate.
+
+```{r repeated-measures}
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("REPEATED MEASURES ANALYSIS\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Create a subset with complete cases for key factors
+tear_rm <- tear_long %>%
+  filter(!is.na(tear_production)) %>%
+  mutate(ID = as.factor(ID))
+
+# Fit linear mixed effects model
+# Random intercept for subjects
+cat("Linear Mixed Effects Model with Random Intercept for Subjects:\n")
+cat("-" %>% rep(60) %>% paste(collapse = ""), "\n\n")
+
+lme_model <- lme(tear_production ~ concentration * timepoint * eye,
+                 random = ~ 1 | ID,
+                 data = tear_rm,
+                 method = "REML")
+
+print(summary(lme_model))
+
+cat("\n\nANOVA Table for Fixed Effects:\n")
+print(anova(lme_model))
+
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+```
+
+# Summary of Key Findings
+
+```{r summary-findings}
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("SUMMARY OF KEY FINDINGS\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+cat("1. SAMPLE SIZE\n")
+cat("   - Total subjects:", length(unique(tear_long$ID)), "\n")
+cat("   - Total observations:", nrow(tear_long), "\n\n")
+
+cat("2. OVERALL TEAR PRODUCTION\n")
+cat("   - Mean:", round(mean(tear_long$tear_production, na.rm = TRUE), 2), "\n")
+cat("   - SD:", round(sd(tear_long$tear_production, na.rm = TRUE), 2), "\n")
+cat("   - Range: [", round(min(tear_long$tear_production, na.rm = TRUE), 2),
+    ",", round(max(tear_long$tear_production, na.rm = TRUE), 2), "]\n\n")
+
+cat("3. EYE COMPARISON (PAIRED)\n")
+cat("   - Mean Right Eye:",
+    round(mean(eye_comparison$right_eye, na.rm = TRUE), 2), "\n")
+cat("   - Mean Left Eye:",
+    round(mean(eye_comparison$left_eye, na.rm = TRUE), 2), "\n")
+cat("   - Paired t-test p-value:",
+    format.pval(paired_test$p.value, digits = 4), "\n")
+cat("   - Conclusion:",
+    ifelse(paired_test$p.value < 0.05, "Significant difference",
+           "No significant difference"), "\n\n")
+
+cat("4. EFFECT OF CONCENTRATION\n")
+cat("   - ANOVA p-value:",
+    format.pval(anova_conc_summary[[1]]$`Pr(>F)`[1], digits = 4), "\n")
+cat("   - Conclusion:",
+    ifelse(anova_conc_summary[[1]]$`Pr(>F)`[1] < 0.05,
+           "Significant effect of concentration",
+           "No significant effect of concentration"), "\n\n")
+
+cat("5. EFFECT OF TIMEPOINT\n")
+cat("   - ANOVA p-value:",
+    format.pval(anova_time_summary[[1]]$`Pr(>F)`[1], digits = 4), "\n")
+cat("   - Conclusion:",
+    ifelse(anova_time_summary[[1]]$`Pr(>F)`[1] < 0.05,
+           "Significant effect of timepoint",
+           "No significant effect of timepoint"), "\n\n")
+
+cat("6. INTERACTION EFFECTS (CONCENTRATION × TIMEPOINT)\n")
+cat("   - Interaction p-value:",
+    format.pval(anova_2way_summary[[1]]$`Pr(>F)`[3], digits = 4), "\n")
+cat("   - Conclusion:",
+    ifelse(anova_2way_summary[[1]]$`Pr(>F)`[3] < 0.05,
+           "Significant interaction present",
+           "No significant interaction"), "\n\n")
+
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+```
+
+# Conclusions
+
+This comprehensive analysis of the TEAR.DAT ophthalmology dataset reveals:
+
+1. **Study Design**: The dataset contains measurements from `r length(unique(tear_long$ID))` subjects with tear production measured in both eyes at three concentration levels (3%, 6%, 10%) across five timepoints (baseline, immediate, and 5, 10, and 15 minutes post-treatment).
+
+2. **Eye Comparison**: `r ifelse(paired_test$p.value < 0.05, "There is a statistically significant difference in tear production between the right and left eyes when averaged across all conditions.", "There is no statistically significant difference in tear production between the right and left eyes.")` (paired t-test, p = `r format.pval(paired_test$p.value, digits = 4)`).
+
+3. **Concentration Effect**: `r ifelse(anova_conc_summary[[1]]$\`Pr(>F)\`[1] < 0.05, "Tear production differs significantly across concentration levels.", "Tear production does not differ significantly across concentration levels.")` (one-way ANOVA, p = `r format.pval(anova_conc_summary[[1]]$\`Pr(>F)\`[1], digits = 4)`).
+
+4. **Temporal Effects**: `r ifelse(anova_time_summary[[1]]$\`Pr(>F)\`[1] < 0.05, "Tear production changes significantly over time.", "Tear production does not change significantly over time.")` (one-way ANOVA, p = `r format.pval(anova_time_summary[[1]]$\`Pr(>F)\`[1], digits = 4)`).
+
+5. **Interaction**: `r ifelse(anova_2way_summary[[1]]$\`Pr(>F)\`[3] < 0.05, "There is a significant interaction between concentration and timepoint, suggesting that the effect of concentration on tear production varies across different timepoints.", "There is no significant interaction between concentration and timepoint.")` (two-way ANOVA, p = `r format.pval(anova_2way_summary[[1]]$\`Pr(>F)\`[3], digits = 4)`).
+
+6. **Repeated Measures**: The linear mixed effects model accounting for within-subject correlation provides a more appropriate analysis given the repeated measures design of this study.
+
+# Clinical Implications
+
+The findings from this analysis can inform:
+
+- Understanding of tear production dynamics under different concentrations
+- Temporal patterns of tear production response
+- Potential differences in tear production between eyes
+- Design of future studies in ophthalmology
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
