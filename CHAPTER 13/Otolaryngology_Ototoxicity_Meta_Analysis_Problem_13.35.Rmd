@@ -1,0 +1,771 @@
+---
+title: "Otolaryngology: Ototoxicity Meta-Analysis of Aminoglycoside Antibiotics"
+subtitle: "Problem 13.35 - Pairwise Meta-Analysis with Odds Ratios and 95% CIs"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    code_folding: show
+    theme: cosmo
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Problem Statement
+
+**Problem 13.35**: Answer the question in Problem 13.34 to assess whether there are differences in ototoxicity between each pair of antibiotics.
+
+Using the same methods as Problem 13.34, we will:
+
+1. Perform pairwise meta-analyses for all antibiotic combinations
+2. Obtain **point estimates** of odds ratios (OR)
+3. Calculate **95% confidence intervals** for each OR
+4. Provide **two-sided p-values** for statistical testing
+
+# Background
+
+This analysis examines **ototoxicity** (auditory/hearing toxicity) data from randomized controlled trials comparing five aminoglycoside antibiotics:
+
+1. **Amikacin** (Code: 1)
+2. **Gentamicin** (Code: 2)
+3. **Netilmicin** (Code: 3)
+4. **Sisomicin** (Code: 4)
+5. **Tobramycin** (Code: 5)
+
+## Clinical Relevance
+
+Ototoxicity is a serious side effect of aminoglycoside antibiotics that can result in:
+
+- Irreversible hearing loss
+- Vestibular dysfunction (balance problems)
+- Tinnitus (ringing in the ears)
+
+Understanding differences in ototoxicity rates between antibiotics is critical for:
+
+- Informed clinical decision-making
+- Risk-benefit assessment in antibiotic selection
+- Minimizing permanent auditory damage in patients
+
+# Load Required Libraries
+
+```{r load-libraries}
+library(tidyverse)      # Data manipulation and visualization
+library(knitr)          # Tables
+library(meta)           # Meta-analysis functions
+library(metafor)        # Advanced meta-analysis
+library(ggplot2)        # Advanced plotting
+library(gridExtra)      # Multiple plots
+library(scales)         # Scale functions
+library(broom)          # Tidy outputs
+```
+
+# Load and Prepare Data
+
+## Load OTO.DAT
+
+```{r load-data}
+# Load Ototoxicity data
+oto_data <- read.table("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/OTO.DAT.txt",
+                       header = TRUE,
+                       sep = ",",
+                       quote = "'\"",
+                       strip.white = TRUE)
+
+cat("Dataset dimensions:", nrow(oto_data), "records\n")
+cat("\nFirst 15 rows:\n")
+kable(head(oto_data, 15),
+      caption = "OTO.DAT - First 15 Records")
+```
+
+## Data Structure and Validation
+
+```{r data-structure}
+# Display structure
+str(oto_data)
+
+# Check endpoint values (should all be 3 for ototoxicity)
+cat("\nEndpoint distribution:\n")
+table(oto_data$Endpnt)
+
+# Check antibiotics present
+cat("\n\nAntibiotics in dataset:\n")
+table(oto_data$Antibio)
+```
+
+## Add Descriptive Labels
+
+```{r add-labels}
+# Add descriptive antibiotic names
+oto_clean <- oto_data %>%
+  mutate(
+    Antibiotic = factor(Antibio,
+                       levels = 1:5,
+                       labels = c("Amikacin", "Gentamicin", "Netilmicin",
+                                 "Sisomicin", "Tobramycin")),
+    # Calculate proportion with ototoxicity
+    Ototox_prop = Side_eff / Samp_sz,
+    # Calculate number without ototoxicity
+    No_ototox = Samp_sz - Side_eff
+  )
+
+cat("Data preparation complete.\n")
+cat("Total records:", nrow(oto_clean), "\n")
+cat("\nRecords by antibiotic:\n")
+table(oto_clean$Antibiotic)
+```
+
+## Overall Summary Statistics
+
+```{r overall-summary}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("OVERALL OTOTOXICITY SUMMARY\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+overall_summary <- oto_clean %>%
+  summarise(
+    Total_studies = n_distinct(Name),
+    Total_records = n(),
+    Total_patients = sum(Samp_sz),
+    Total_ototoxic = sum(Side_eff),
+    Overall_ototox_rate = sum(Side_eff) / sum(Samp_sz)
+  )
+
+cat("Total number of studies:", overall_summary$Total_studies, "\n")
+cat("Total number of records:", overall_summary$Total_records, "\n")
+cat("Total number of patients:", overall_summary$Total_patients, "\n")
+cat("Total with ototoxicity:", overall_summary$Total_ototoxic, "\n")
+cat("Overall ototoxicity rate:",
+    round(overall_summary$Overall_ototox_rate * 100, 2), "%\n")
+```
+
+## Summary by Antibiotic
+
+```{r summary-by-antibiotic}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("SUMMARY BY ANTIBIOTIC\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+antibiotic_summary <- oto_clean %>%
+  group_by(Antibiotic) %>%
+  summarise(
+    N_studies = n_distinct(Name),
+    N_records = n(),
+    Total_patients = sum(Samp_sz),
+    Total_ototoxic = sum(Side_eff),
+    Total_no_ototox = sum(No_ototox),
+    Mean_ototox_rate = mean(Ototox_prop),
+    SD_ototox_rate = sd(Ototox_prop),
+    Min_ototox_rate = min(Ototox_prop),
+    Max_ototox_rate = max(Ototox_prop),
+    Pooled_ototox_rate = sum(Side_eff) / sum(Samp_sz),
+    .groups = 'drop'
+  )
+
+kable(antibiotic_summary, digits = 4,
+      caption = "Summary Statistics by Antibiotic")
+```
+
+# Visualization of Ototoxicity Rates
+
+```{r visualization, fig.height=10}
+# Box plot
+p1 <- ggplot(oto_clean, aes(x = Antibiotic, y = Ototox_prop,
+                             fill = Antibiotic)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 2) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "red", color = "darkred") +
+  labs(title = "Distribution of Ototoxicity Rates by Antibiotic",
+       subtitle = "Red diamonds indicate mean rates",
+       x = "Antibiotic",
+       y = "Ototoxicity Rate (Proportion)") +
+  scale_y_continuous(labels = percent_format()) +
+  scale_fill_brewer(palette = "Dark2") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Bar plot with pooled rates
+p2 <- ggplot(antibiotic_summary, aes(x = Antibiotic, y = Pooled_ototox_rate,
+                                      fill = Antibiotic)) +
+  geom_col(alpha = 0.7) +
+  geom_text(aes(label = paste0(round(Pooled_ototox_rate * 100, 1), "%")),
+            vjust = -0.5, size = 4) +
+  labs(title = "Pooled Ototoxicity Rates by Antibiotic",
+       x = "Antibiotic",
+       y = "Pooled Ototoxicity Rate") +
+  scale_y_continuous(labels = percent_format(),
+                     limits = c(0, max(antibiotic_summary$Pooled_ototox_rate) * 1.2)) +
+  scale_fill_brewer(palette = "Dark2") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Sample size by antibiotic
+p3 <- ggplot(antibiotic_summary, aes(x = Antibiotic, y = Total_patients,
+                                      fill = Antibiotic)) +
+  geom_col(alpha = 0.7) +
+  geom_text(aes(label = Total_patients), vjust = -0.5, size = 4) +
+  labs(title = "Total Sample Size by Antibiotic",
+       x = "Antibiotic",
+       y = "Total Number of Patients") +
+  scale_fill_brewer(palette = "Dark2") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Number of studies by antibiotic
+p4 <- ggplot(antibiotic_summary, aes(x = Antibiotic, y = N_studies,
+                                      fill = Antibiotic)) +
+  geom_col(alpha = 0.7) +
+  geom_text(aes(label = N_studies), vjust = -0.5, size = 4) +
+  labs(title = "Number of Studies by Antibiotic",
+       x = "Antibiotic",
+       y = "Number of Studies") +
+  scale_fill_brewer(palette = "Dark2") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Arrange plots
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+# Problem 13.35: Pairwise Meta-Analysis
+
+## Methodology
+
+For each pair of antibiotics, we will:
+
+1. **Identify studies** that directly compared the two antibiotics
+2. **Calculate the odds ratio (OR)** for each study
+3. **Perform meta-analysis** using the Mantel-Haenszel method
+4. **Report**:
+   - Point estimate of the pooled OR
+   - 95% confidence interval
+   - Two-sided p-value
+
+**Interpretation of Odds Ratio**:
+
+- OR = 1: No difference in ototoxicity between antibiotics
+- OR > 1: First antibiotic has higher odds of ototoxicity
+- OR < 1: First antibiotic has lower odds of ototoxicity
+
+## Identify All Pairwise Comparisons
+
+```{r identify-pairs}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("IDENTIFYING PAIRWISE COMPARISONS FROM STUDIES\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Get list of studies and their antibiotics
+study_antibiotics <- oto_clean %>%
+  group_by(Name, Id) %>%
+  summarise(
+    Antibiotics = paste(sort(unique(as.character(Antibiotic))), collapse = " vs "),
+    N_antibiotics = n_distinct(Antibiotic),
+    .groups = 'drop'
+  ) %>%
+  arrange(Id)
+
+cat("Studies and their antibiotic comparisons:\n\n")
+kable(study_antibiotics,
+      caption = "Studies and Antibiotic Comparisons")
+
+# Count studies by number of antibiotics compared
+cat("\n\nStudy distribution by number of arms:\n")
+table(study_antibiotics$N_antibiotics)
+```
+
+## Pairwise Meta-Analysis Function
+
+```{r meta-analysis-function}
+# Function to perform pairwise meta-analysis
+perform_pairwise_meta <- function(data, antibiotic1, antibiotic2) {
+
+  # Filter studies that contain both antibiotics
+  studies_with_both <- data %>%
+    group_by(Name, Id) %>%
+    filter(all(c(antibiotic1, antibiotic2) %in% Antibiotic)) %>%
+    ungroup()
+
+  # Get unique study names
+  study_names <- unique(studies_with_both$Name)
+
+  if(length(study_names) == 0) {
+    return(list(
+      comparison = paste(antibiotic1, "vs", antibiotic2),
+      n_studies = 0,
+      result = NULL,
+      message = "No studies directly compared these antibiotics"
+    ))
+  }
+
+  # Prepare data for meta-analysis
+  meta_data <- data.frame()
+
+  for(study in study_names) {
+    # Get data for this study
+    study_data <- studies_with_both %>%
+      filter(Name == study)
+
+    # Get data for each antibiotic
+    ab1_data <- study_data %>% filter(Antibiotic == antibiotic1)
+    ab2_data <- study_data %>% filter(Antibiotic == antibiotic2)
+
+    # Create 2x2 table for this study
+    # Rows: Antibiotic 1, Antibiotic 2
+    # Columns: Ototoxic, Not ototoxic
+
+    meta_data <- bind_rows(meta_data, data.frame(
+      Study = study,
+      Ab1_ototox = ab1_data$Side_eff,
+      Ab1_no_ototox = ab1_data$No_ototox,
+      Ab2_ototox = ab2_data$Side_eff,
+      Ab2_no_ototox = ab2_data$No_ototox,
+      Ab1_total = ab1_data$Samp_sz,
+      Ab2_total = ab2_data$Samp_sz
+    ))
+  }
+
+  # Use metafor for meta-analysis
+  # Mantel-Haenszel method
+  ma_result <- tryCatch({
+    rma.mh(ai = meta_data$Ab1_ototox,
+           bi = meta_data$Ab1_no_ototox,
+           ci = meta_data$Ab2_ototox,
+           di = meta_data$Ab2_no_ototox,
+           measure = "OR",
+           method = "FE")  # Fixed effects
+  }, error = function(e) {
+    message("Error in meta-analysis: ", e$message)
+    return(NULL)
+  })
+
+  if(is.null(ma_result)) {
+    return(list(
+      comparison = paste(antibiotic1, "vs", antibiotic2),
+      n_studies = 0,
+      result = NULL,
+      message = "Error performing meta-analysis"
+    ))
+  }
+
+  return(list(
+    comparison = paste(antibiotic1, "vs", antibiotic2),
+    n_studies = nrow(meta_data),
+    study_data = meta_data,
+    result = ma_result,
+    message = "Meta-analysis completed successfully"
+  ))
+}
+```
+
+## Conduct All Pairwise Meta-Analyses
+
+```{r pairwise-meta-analyses}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("PROBLEM 13.35: PAIRWISE META-ANALYSES FOR OTOTOXICITY\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Get all unique antibiotics
+antibiotics <- sort(unique(oto_clean$Antibiotic))
+n_antibiotics <- length(antibiotics)
+
+cat("Antibiotics in analysis:", paste(antibiotics, collapse = ", "), "\n")
+cat("Number of possible pairwise comparisons:", choose(n_antibiotics, 2), "\n\n")
+
+# Store all results
+all_pairwise_results <- list()
+pairwise_summary <- data.frame()
+
+# Counter for comparison
+comparison_num <- 1
+
+# Perform all pairwise comparisons
+for(i in 1:(n_antibiotics-1)) {
+  for(j in (i+1):n_antibiotics) {
+
+    ab1 <- antibiotics[i]
+    ab2 <- antibiotics[j]
+
+    cat("\n")
+    cat("-" %>% rep(70) %>% paste(collapse = ""), "\n")
+    cat("Comparison", comparison_num, ":", ab1, "vs", ab2, "\n")
+    cat("-" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+    # Perform meta-analysis
+    result <- perform_pairwise_meta(oto_clean, ab1, ab2)
+
+    all_pairwise_results[[comparison_num]] <- result
+
+    if(result$n_studies > 0) {
+      cat("Number of studies:", result$n_studies, "\n\n")
+
+      # Display study data
+      cat("Study-specific data:\n")
+      study_display <- result$study_data %>%
+        mutate(
+          Ab1_rate = Ab1_ototox / Ab1_total,
+          Ab2_rate = Ab2_ototox / Ab2_total,
+          Individual_OR = ifelse((Ab1_no_ototox * Ab2_ototox) == 0, NA,
+                                 (Ab1_ototox * Ab2_no_ototox) /
+                                 (Ab1_no_ototox * Ab2_ototox))
+        ) %>%
+        select(Study, Ab1_ototox, Ab1_total, Ab1_rate,
+               Ab2_ototox, Ab2_total, Ab2_rate, Individual_OR)
+
+      kable(study_display, digits = 3,
+            col.names = c("Study",
+                         paste(ab1, "- Events"), paste(ab1, "- N"), paste(ab1, "- Rate"),
+                         paste(ab2, "- Events"), paste(ab2, "- N"), paste(ab2, "- Rate"),
+                         "OR"))
+
+      # Extract results
+      pooled_OR <- exp(result$result$beta)
+      CI_lower <- exp(result$result$ci.lb)
+      CI_upper <- exp(result$result$ci.ub)
+      p_value <- result$result$pval
+
+      cat("\n\nMETA-ANALYSIS RESULTS:\n")
+      cat("----------------------\n")
+      cat("Pooled Odds Ratio (OR):", round(pooled_OR, 3), "\n")
+      cat("95% Confidence Interval: (", round(CI_lower, 3), ",",
+          round(CI_upper, 3), ")\n")
+      cat("Two-sided p-value:", format.pval(p_value, digits = 4), "\n")
+
+      # Interpretation
+      cat("\nINTERPRETATION:\n")
+      if(!is.na(p_value) && p_value < 0.05) {
+        if(pooled_OR > 1) {
+          cat("- ", ab1, "has SIGNIFICANTLY HIGHER odds of ototoxicity\n",
+              "  compared to", ab2, "(p < 0.05)\n", sep = "")
+        } else {
+          cat("- ", ab1, "has SIGNIFICANTLY LOWER odds of ototoxicity\n",
+              "  compared to", ab2, "(p < 0.05)\n", sep = "")
+        }
+      } else if(!is.na(p_value)) {
+        cat("- No statistically significant difference in ototoxicity\n")
+        cat("  between", ab1, "and", ab2, "(p >= 0.05)\n")
+      } else {
+        cat("- Unable to calculate p-value (insufficient data)\n")
+      }
+
+      # Store summary
+      pairwise_summary <- bind_rows(pairwise_summary, data.frame(
+        Comparison_num = comparison_num,
+        Antibiotic_1 = as.character(ab1),
+        Antibiotic_2 = as.character(ab2),
+        N_studies = result$n_studies,
+        Pooled_OR = pooled_OR,
+        CI_lower = CI_lower,
+        CI_upper = CI_upper,
+        p_value = p_value,
+        Significant = !is.na(p_value) && p_value < 0.05
+      ))
+
+    } else {
+      cat(result$message, "\n")
+
+      # Still add to summary with NA values
+      pairwise_summary <- bind_rows(pairwise_summary, data.frame(
+        Comparison_num = comparison_num,
+        Antibiotic_1 = as.character(ab1),
+        Antibiotic_2 = as.character(ab2),
+        N_studies = 0,
+        Pooled_OR = NA,
+        CI_lower = NA,
+        CI_upper = NA,
+        p_value = NA,
+        Significant = FALSE
+      ))
+    }
+
+    comparison_num <- comparison_num + 1
+  }
+}
+```
+
+# Summary of All Pairwise Comparisons
+
+```{r summary-table}
+cat("\n\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("SUMMARY TABLE: ALL PAIRWISE COMPARISONS\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Create comprehensive summary table
+summary_table <- pairwise_summary %>%
+  mutate(
+    Comparison = paste(Antibiotic_1, "vs", Antibiotic_2),
+    OR_with_CI = ifelse(!is.na(Pooled_OR),
+                        paste0(round(Pooled_OR, 3), " (",
+                               round(CI_lower, 3), ", ",
+                               round(CI_upper, 3), ")"),
+                        "N/A"),
+    p_value_formatted = ifelse(!is.na(p_value),
+                               format.pval(p_value, digits = 3),
+                               "N/A"),
+    Significance = ifelse(Significant, "Yes *", "No")
+  ) %>%
+  select(Comparison, N_studies, OR_with_CI, p_value_formatted, Significance)
+
+kable(summary_table,
+      col.names = c("Comparison", "N Studies", "OR (95% CI)", "p-value", "Significant"),
+      caption = "Summary of All Pairwise Meta-Analyses for Ototoxicity")
+
+cat("\n* Significant at α = 0.05 level\n")
+```
+
+## Significant Comparisons Only
+
+```{r significant-only}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("SIGNIFICANT PAIRWISE DIFFERENCES (p < 0.05)\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+significant_comparisons <- pairwise_summary %>%
+  filter(Significant, !is.na(Pooled_OR)) %>%
+  arrange(p_value)
+
+if(nrow(significant_comparisons) > 0) {
+
+  cat("Number of significant comparisons:", nrow(significant_comparisons), "\n\n")
+
+  significant_table <- significant_comparisons %>%
+    mutate(
+      Comparison = paste(Antibiotic_1, "vs", Antibiotic_2),
+      Direction = ifelse(Pooled_OR > 1,
+                        paste(Antibiotic_1, "> ", Antibiotic_2),
+                        paste(Antibiotic_1, "< ", Antibiotic_2))
+    ) %>%
+    select(Comparison, N_studies, Pooled_OR, CI_lower, CI_upper, p_value, Direction)
+
+  kable(significant_table, digits = 4,
+        col.names = c("Comparison", "N Studies", "Pooled OR",
+                     "95% CI Lower", "95% CI Upper", "p-value", "Direction"),
+        caption = "Statistically Significant Pairwise Comparisons")
+
+  cat("\n\nKEY FINDINGS:\n")
+  for(i in 1:nrow(significant_comparisons)) {
+    row <- significant_comparisons[i, ]
+    cat("\n", i, ". ", row$Antibiotic_1, " vs ", row$Antibiotic_2, ":\n", sep = "")
+    cat("   - Pooled OR = ", round(row$Pooled_OR, 3),
+        " (95% CI: ", round(row$CI_lower, 3), " - ", round(row$CI_upper, 3), ")\n", sep = "")
+    cat("   - p-value = ", format.pval(row$p_value, digits = 4), "\n", sep = "")
+
+    if(row$Pooled_OR > 1) {
+      cat("   - ", row$Antibiotic_1, " has ", round((row$Pooled_OR - 1) * 100, 1),
+          "% higher odds of ototoxicity\n", sep = "")
+    } else {
+      cat("   - ", row$Antibiotic_1, " has ", round((1 - row$Pooled_OR) * 100, 1),
+          "% lower odds of ototoxicity\n", sep = "")
+    }
+  }
+
+} else {
+  cat("No statistically significant pairwise differences were found.\n")
+}
+```
+
+# Visualizations of Meta-Analysis Results
+
+## Forest Plots
+
+```{r forest-plots, fig.height=12, fig.width=10}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("FOREST PLOTS FOR PAIRWISE COMPARISONS\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Create forest plots for comparisons with data
+comparisons_with_data <- pairwise_summary %>%
+  filter(N_studies > 0, !is.na(Pooled_OR))
+
+if(nrow(comparisons_with_data) > 0) {
+
+  # Forest plot using ggplot
+  forest_data <- comparisons_with_data %>%
+    mutate(
+      Comparison = paste(Antibiotic_1, "vs", Antibiotic_2),
+      Comparison = factor(Comparison, levels = rev(Comparison))
+    )
+
+  ggplot(forest_data, aes(x = Pooled_OR, y = Comparison)) +
+    geom_point(size = 4, aes(color = Significant)) +
+    geom_errorbarh(aes(xmin = CI_lower, xmax = CI_upper, color = Significant),
+                   height = 0.2, linewidth = 1) +
+    geom_vline(xintercept = 1, linetype = "dashed", color = "red", linewidth = 1) +
+    scale_x_log10(breaks = c(0.1, 0.25, 0.5, 1, 2, 4, 8)) +
+    scale_color_manual(values = c("FALSE" = "gray50", "TRUE" = "#D32F2F"),
+                      labels = c("Not significant", "Significant (p<0.05)")) +
+    labs(title = "Forest Plot: Pairwise Odds Ratios for Ototoxicity",
+         subtitle = "Red dashed line at OR = 1 (no difference)",
+         x = "Odds Ratio (log scale)",
+         y = "Comparison",
+         color = "Statistical Significance") +
+    theme_minimal() +
+    theme(legend.position = "bottom",
+          axis.text.y = element_text(size = 10))
+
+} else {
+  cat("No comparisons with sufficient data for forest plot.\n")
+}
+```
+
+## OR Comparison Plot
+
+```{r or-comparison-plot, fig.width=12}
+if(nrow(comparisons_with_data) > 0) {
+
+  # Bar plot of ORs
+  ggplot(comparisons_with_data,
+         aes(x = reorder(paste(Antibiotic_1, "vs", Antibiotic_2), Pooled_OR),
+             y = Pooled_OR, fill = Significant)) +
+    geom_col(alpha = 0.7) +
+    geom_hline(yintercept = 1, linetype = "dashed", color = "red", linewidth = 1) +
+    geom_text(aes(label = round(Pooled_OR, 2)),
+              hjust = -0.2, size = 3.5) +
+    scale_fill_manual(values = c("FALSE" = "steelblue", "TRUE" = "#D32F2F"),
+                     labels = c("Not significant", "Significant (p<0.05)")) +
+    labs(title = "Pooled Odds Ratios: Ototoxicity Comparisons",
+         subtitle = "OR > 1: First antibiotic has higher ototoxicity",
+         x = "Comparison",
+         y = "Pooled Odds Ratio",
+         fill = "Statistical Significance") +
+    coord_flip() +
+    theme_minimal() +
+    theme(legend.position = "bottom")
+}
+```
+
+## p-value Distribution
+
+```{r p-value-plot, fig.width=10}
+if(nrow(comparisons_with_data) > 0) {
+
+  # P-value plot
+  ggplot(comparisons_with_data,
+         aes(x = reorder(paste(Antibiotic_1, "vs", Antibiotic_2), -p_value),
+             y = p_value, fill = Significant)) +
+    geom_col(alpha = 0.7) +
+    geom_hline(yintercept = 0.05, linetype = "dashed", color = "red", linewidth = 1) +
+    geom_text(aes(label = format.pval(p_value, digits = 3)),
+              vjust = -0.5, size = 3) +
+    scale_fill_manual(values = c("FALSE" = "steelblue", "TRUE" = "#D32F2F"),
+                     labels = c("Not significant", "Significant (p<0.05)")) +
+    labs(title = "Two-Sided p-values for Pairwise Comparisons",
+         subtitle = "Red line at α = 0.05",
+         x = "Comparison",
+         y = "Two-sided p-value",
+         fill = "Statistical Significance") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          legend.position = "bottom")
+}
+```
+
+## Comparison: Ototoxicity vs Nephrotoxicity Patterns
+
+```{r toxicity-comparison}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("OTOTOXICITY PATTERN ANALYSIS\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Compare rates across antibiotics
+rate_comparison <- antibiotic_summary %>%
+  arrange(Pooled_ototox_rate) %>%
+  mutate(Rank = row_number()) %>%
+  select(Rank, Antibiotic, Pooled_ototox_rate, Total_patients, N_studies)
+
+cat("ANTIBIOTICS RANKED BY OTOTOXICITY (Lowest to Highest):\n\n")
+kable(rate_comparison, digits = 4,
+      col.names = c("Rank", "Antibiotic", "Pooled Ototoxicity Rate",
+                   "Total Patients", "N Studies"),
+      caption = "Ranking of Antibiotics by Ototoxicity Rate")
+```
+
+# Conclusions and Clinical Implications
+
+```{r conclusions}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("CONCLUSIONS: PROBLEM 13.35\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+cat("STUDY OVERVIEW:\n")
+cat("- Total number of studies analyzed:", overall_summary$Total_studies, "\n")
+cat("- Total patients in ototoxicity analysis:", overall_summary$Total_patients, "\n")
+cat("- Overall ototoxicity rate:",
+    round(overall_summary$Overall_ototox_rate * 100, 2), "%\n\n")
+
+cat("PAIRWISE META-ANALYSIS RESULTS:\n")
+cat("- Total possible pairwise comparisons:", nrow(pairwise_summary), "\n")
+cat("- Comparisons with available data:",
+    sum(pairwise_summary$N_studies > 0, na.rm = TRUE), "\n")
+cat("- Statistically significant comparisons (p < 0.05):",
+    sum(pairwise_summary$Significant, na.rm = TRUE), "\n\n")
+
+if(sum(pairwise_summary$Significant, na.rm = TRUE) > 0) {
+  cat("ANTIBIOTICS RANKED BY OTOTOXICITY (from lowest to highest):\n")
+
+  # Calculate average ototoxicity considering all comparisons
+  antibiotic_ranking <- antibiotic_summary %>%
+    arrange(Pooled_ototox_rate) %>%
+    select(Antibiotic, Pooled_ototox_rate, Total_patients)
+
+  for(i in 1:nrow(antibiotic_ranking)) {
+    cat(i, ". ", as.character(antibiotic_ranking$Antibiotic[i]), " - ",
+        round(antibiotic_ranking$Pooled_ototox_rate[i] * 100, 2), "% ",
+        "(n = ", antibiotic_ranking$Total_patients[i], ")\n", sep = "")
+  }
+}
+
+cat("\n\nCLINICAL IMPLICATIONS:\n")
+cat("- Ototoxicity risk varies among aminoglycosides\n")
+cat("- Irreversible hearing loss makes ototoxicity particularly concerning\n")
+cat("- Antibiotic selection should consider both efficacy and toxicity profiles\n")
+cat("- Audiometric monitoring is essential during aminoglycoside therapy\n")
+cat("- Patient factors (age, renal function, duration) affect ototoxicity risk\n")
+
+cat("\n\nCOMPARISON WITH NEPHROTOXICITY:\n")
+cat("- Ototoxicity is generally less common than nephrotoxicity\n")
+cat("- However, ototoxic effects are often irreversible\n")
+cat("- Nephrotoxicity may be reversible with drug discontinuation\n")
+cat("- Both toxicities should be considered in clinical decision-making\n")
+
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+```
+
+# Answer to Problem 13.35
+
+**Summary**: Using meta-analysis methods with the Mantel-Haenszel approach, we assessed pairwise differences in ototoxicity between all combinations of the five aminoglycoside antibiotics. For each comparison where head-to-head trial data existed, we calculated:
+
+- **Point estimates** of the pooled odds ratio (OR)
+- **95% confidence intervals** for the OR
+- **Two-sided p-values** testing the null hypothesis of OR = 1
+
+The analysis identified `r sum(pairwise_summary$Significant, na.rm = TRUE)` statistically significant pairwise difference(s) at the α = 0.05 level. Complete results are presented in the summary tables and forest plots above.
+
+**Clinical Relevance**: Ototoxicity results in permanent hearing damage, making it particularly important to identify antibiotics with lower ototoxic potential. The overall ototoxicity rate of `r round(overall_summary$Overall_ototox_rate * 100, 2)`% across all studies demonstrates that this is a real clinical concern that should inform antibiotic selection, especially for patients at higher risk of auditory complications.
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

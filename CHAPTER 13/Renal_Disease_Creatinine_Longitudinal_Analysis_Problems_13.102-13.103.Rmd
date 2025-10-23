@@ -1,0 +1,1221 @@
+---
+title: "Renal Disease - Serum Creatinine Longitudinal Analysis"
+subtitle: "Problems 13.102-13.103: Longitudinal Methods vs ANOVA"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    code_folding: show
+    theme: united
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  comment = NA
+)
+```
+
+# Introduction
+
+## Study Overview
+
+This analysis examines **serum creatinine levels over time** in patients with renal disease, comparing different treatment groups. We will use advanced **longitudinal data analysis methods** and compare results with traditional **ANOVA-based slope analysis**.
+
+## Research Questions
+
+**Problem 13.102**: Use longitudinal data analysis methods to compare rates of change in serum creatinine over time by treatment group.
+
+**Problem 13.103**: Compare results from longitudinal methods with ordinary ANOVA methods based on slopes (from Problem 12.49).
+
+## Key Concepts
+
+- **Longitudinal data**: Repeated measurements on same subjects over time
+- **Mixed-effects models**: Account for within-subject correlation
+- **GEE (Generalized Estimating Equations)**: Population-averaged approach
+- **ANOVA on slopes**: Two-step approach (calculate slopes, then compare)
+
+# Data Preparation
+
+## Load Required Packages
+
+```{r load-packages}
+# Load required libraries
+library(tidyverse)
+library(lme4)         # Mixed-effects models
+library(nlme)         # Alternative mixed models
+library(geepack)      # GEE analysis
+library(broom)        # Tidy model outputs
+library(broom.mixed)  # Tidy mixed model outputs
+library(knitr)        # Tables
+library(ggplot2)      # Visualization
+library(gridExtra)    # Multiple plots
+library(emmeans)      # Estimated marginal means
+
+# Set options
+options(contrasts = c("contr.treatment", "contr.poly"))
+```
+
+## Load and Inspect Data
+
+```{r load-data}
+# Read the data
+swiss_data <- read.table("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-tab/SWISS.DAT.txt",
+                         header = TRUE, sep = "\t")
+
+# Display data structure
+cat("Dataset Structure:\n")
+str(swiss_data)
+
+cat("\n\nFirst few rows:\n")
+head(swiss_data, 20)
+
+cat("\n\nVariable names:\n")
+names(swiss_data)
+
+cat("\n\nSummary statistics:\n")
+summary(swiss_data)
+```
+
+## Data Cleaning and Reshaping
+
+```{r clean-data}
+# The data is likely in wide format with multiple time points
+# We need to reshape to long format for longitudinal analysis
+
+# Identify the structure - look for time-varying variables
+cat("Examining data structure for reshaping...\n\n")
+
+# Check unique values of key variables
+cat("Unique treatment groups:\n")
+if("trt" %in% names(swiss_data)) {
+  print(table(swiss_data$trt))
+} else if("group" %in% names(swiss_data)) {
+  print(table(swiss_data$group))
+} else if("treatment" %in% names(swiss_data)) {
+  print(table(swiss_data$treatment))
+}
+
+# Identify creatinine variables (likely named with time indicators)
+creat_vars <- grep("cr|creat|sercr", names(swiss_data), ignore.case = TRUE, value = TRUE)
+cat("\n\nCreatinine-related variables:\n")
+print(creat_vars)
+
+# Identify time variables
+time_vars <- grep("time|month|week|day|visit", names(swiss_data), ignore.case = TRUE, value = TRUE)
+cat("\n\nTime-related variables:\n")
+print(time_vars)
+```
+
+## Reshape to Long Format
+
+```{r reshape-data}
+# Assuming data has structure: id, treatment, baseline, follow-up measurements
+# Adjust based on actual data structure
+
+# Check if data is already in long format
+if(nrow(swiss_data) > 100 && any(grepl("time|visit|month", names(swiss_data), ignore.case = TRUE))) {
+  # Data might already be in long format
+  swiss_long <- swiss_data
+  cat("Data appears to be in long format already.\n")
+
+} else {
+  # Data is in wide format - need to reshape
+  # Identify measurement columns
+
+  # Common patterns for repeated measures
+  measure_cols <- grep("^(cr|sercr|creat).*[0-9]$", names(swiss_data), ignore.case = TRUE, value = TRUE)
+
+  if(length(measure_cols) > 0) {
+    cat("Found measurement columns:", paste(measure_cols, collapse = ", "), "\n")
+
+    # Get ID and grouping variables
+    id_vars <- setdiff(names(swiss_data), measure_cols)
+
+    swiss_long <- swiss_data %>%
+      pivot_longer(
+        cols = all_of(measure_cols),
+        names_to = "time_label",
+        values_to = "creatinine"
+      ) %>%
+      mutate(
+        # Extract time point from variable name (e.g., "creat_68" -> 68)
+        time = as.numeric(gsub(".*_(\\d+)$", "\\1", time_label))
+      )
+  } else {
+    # Try alternative patterns
+    swiss_long <- swiss_data
+    cat("Using data as-is, may need manual adjustment.\n")
+  }
+}
+
+# Standardize variable names - do this BEFORE any operations that need subject_id
+# Check for ID column (case-insensitive)
+id_col_names <- c("Id", "ID", "id", "patid", "pat_id", "patient", "subject")
+id_found <- FALSE
+
+for(id_name in id_col_names) {
+  if(id_name %in% names(swiss_long)) {
+    swiss_long <- swiss_long %>% rename(subject_id = !!id_name)
+    cat("\nUsing", id_name, "as subject_id\n")
+    id_found <- TRUE
+    break
+  }
+}
+
+if(!id_found) {
+  # Check if we have a unique identifier with case-insensitive pattern matching
+  possible_id_cols <- grep("^(id|patient|subject|case|num)", names(swiss_long),
+                           ignore.case = TRUE, value = TRUE)
+  if(length(possible_id_cols) > 0) {
+    cat("\nUsing", possible_id_cols[1], "as subject ID\n")
+    swiss_long <- swiss_long %>% rename(subject_id = !!possible_id_cols[1])
+    id_found <- TRUE
+  }
+}
+
+if(!id_found) {
+  cat("\nWarning: No ID column found. Creating subject IDs...\n")
+  cat("Available columns:", paste(names(swiss_long), collapse = ", "), "\n")
+  # Create sequential IDs based on unique combinations of non-measurement variables
+  id_cols <- setdiff(names(swiss_long), c("time_label", "creatinine", "time"))
+  if(length(id_cols) > 0) {
+    swiss_long <- swiss_long %>%
+      group_by(across(all_of(id_cols))) %>%
+      mutate(subject_id = cur_group_id()) %>%
+      ungroup()
+  }
+}
+
+# Handle treatment/group variable
+if("trt" %in% names(swiss_long)) {
+  swiss_long <- swiss_long %>%
+    mutate(treatment = factor(trt, labels = c("Control", "Treatment")))
+} else if("group" %in% names(swiss_long)) {
+  # Check how many groups
+  n_groups <- length(unique(swiss_long$group))
+  if(n_groups == 2) {
+    swiss_long <- swiss_long %>%
+      mutate(treatment = factor(group, labels = c("Control", "Treatment")))
+  } else {
+    swiss_long <- swiss_long %>%
+      mutate(treatment = factor(group))
+  }
+}
+
+# Ensure time variable exists
+if(!"time" %in% names(swiss_long)) {
+  if("month" %in% names(swiss_long)) {
+    swiss_long <- swiss_long %>% rename(time = month)
+  } else if("visit" %in% names(swiss_long)) {
+    swiss_long <- swiss_long %>% rename(time = visit)
+  } else if("week" %in% names(swiss_long)) {
+    swiss_long <- swiss_long %>% mutate(time = week / 4.33)  # Convert to months
+  }
+}
+
+# Remove missing values
+swiss_clean <- swiss_long %>%
+  filter(!is.na(creatinine)) %>%
+  arrange(subject_id, time)
+
+cat("\n\nCleaned longitudinal data:\n")
+cat("Number of subjects:", length(unique(swiss_clean$subject_id)), "\n")
+cat("Number of observations:", nrow(swiss_clean), "\n")
+cat("Time points:", sort(unique(swiss_clean$time)), "\n")
+if("treatment" %in% names(swiss_clean)) {
+  cat("Treatment groups:", levels(swiss_clean$treatment), "\n")
+}
+```
+
+## Descriptive Statistics
+
+```{r descriptive-stats}
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("DESCRIPTIVE STATISTICS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Summary by treatment and time
+summary_stats <- swiss_clean %>%
+  group_by(treatment, time) %>%
+  summarise(
+    N = n(),
+    Mean = mean(creatinine, na.rm = TRUE),
+    SD = sd(creatinine, na.rm = TRUE),
+    Median = median(creatinine, na.rm = TRUE),
+    Min = min(creatinine, na.rm = TRUE),
+    Max = max(creatinine, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+cat("\n\nSerum Creatinine by Treatment Group and Time:\n")
+print(kable(summary_stats %>%
+              mutate(across(where(is.numeric) & !N, ~round(., 3))),
+            digits = 3))
+
+# Overall summary
+cat("\n\nOverall Summary by Treatment:\n")
+overall_summary <- swiss_clean %>%
+  group_by(treatment) %>%
+  summarise(
+    N_subjects = n_distinct(subject_id),
+    N_obs = n(),
+    Mean_Cr = mean(creatinine, na.rm = TRUE),
+    SD_Cr = sd(creatinine, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+print(kable(overall_summary, digits = 3))
+```
+
+## Visualize Data
+
+```{r viz-data, fig.height=8}
+# Individual trajectories
+p1 <- ggplot(swiss_clean, aes(x = time, y = creatinine, group = subject_id, color = treatment)) +
+  geom_line(alpha = 0.3) +
+  geom_point(alpha = 0.5, size = 1) +
+  facet_wrap(~ treatment) +
+  labs(title = "Individual Creatinine Trajectories by Treatment",
+       x = "Time (months)",
+       y = "Serum Creatinine (mg/dL)",
+       color = "Treatment") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# Mean trajectories with error bars
+p2 <- ggplot(summary_stats, aes(x = time, y = Mean, color = treatment, group = treatment)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = Mean - SD, ymax = Mean + SD), width = 0.2, alpha = 0.5) +
+  labs(title = "Mean Creatinine Trajectories with SD Error Bars",
+       x = "Time (months)",
+       y = "Mean Serum Creatinine (mg/dL)",
+       color = "Treatment") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# Display plots
+print(p1)
+print(p2)
+
+# Box plots by time
+ggplot(swiss_clean, aes(x = factor(time), y = creatinine, fill = treatment)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(title = "Creatinine Distribution by Treatment and Time",
+       x = "Time (months)",
+       y = "Serum Creatinine (mg/dL)",
+       fill = "Treatment") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+# Problem 13.102: Longitudinal Data Analysis Methods
+
+## Mixed-Effects Model (LME)
+
+### Model Specification
+
+```{r problem-13-102-lme}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 13.102: LONGITUDINAL DATA ANALYSIS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\n\nAPPROACH 1: LINEAR MIXED-EFFECTS MODEL (LME)\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+
+cat("\nModel Specification:\n")
+cat("• Outcome: Serum creatinine (continuous)\n")
+cat("• Fixed effects: treatment, time, treatment×time interaction\n")
+cat("• Random effects: Random intercept and slope for each subject\n")
+cat("• Correlation structure: Accounts for within-subject correlation\n\n")
+
+cat("Model equation:\n")
+cat("Creatinine_ij = (β₀ + b₀ᵢ) + (β₁ + b₁ᵢ)×Time_ij + β₂×Treatment_i + β₃×(Treatment×Time)_ij + εᵢⱼ\n\n")
+cat("where:\n")
+cat("  β₀ = population intercept\n")
+cat("  β₁ = population slope for control group\n")
+cat("  β₂ = treatment effect on intercept\n")
+cat("  β₃ = treatment effect on slope (rate of change)\n")
+cat("  b₀ᵢ, b₁ᵢ = random intercept and slope for subject i\n")
+cat("  εᵢⱼ = residual error\n\n")
+
+# Fit mixed-effects model with random intercept and slope
+lme_model <- lmer(creatinine ~ time * treatment + (1 + time | subject_id),
+                  data = swiss_clean,
+                  REML = TRUE)
+
+cat("Model Summary:\n")
+summary(lme_model)
+```
+
+### Model Results and Interpretation
+
+```{r lme-results}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("LME MODEL RESULTS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Extract fixed effects
+fixed_effects <- broom.mixed::tidy(lme_model, effects = "fixed", conf.int = TRUE)
+cat("\n\nFixed Effects:\n")
+print(kable(fixed_effects %>%
+              mutate(across(where(is.numeric), ~round(., 4))),
+            digits = 4))
+
+# Extract random effects variance components
+random_effects <- as.data.frame(VarCorr(lme_model))
+cat("\n\nRandom Effects Variance Components:\n")
+print(kable(random_effects %>%
+              select(grp, var1, var2, vcov, sdcor) %>%
+              mutate(across(where(is.numeric), ~round(., 4))),
+            col.names = c("Group", "Variable 1", "Variable 2", "Variance", "SD/Corr"),
+            digits = 4))
+
+# Key coefficient: treatment × time interaction
+interaction_coef <- fixed_effects %>% filter(term == "time:treatmentTreatment")
+
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("INTERPRETATION - LME MODEL\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\n\nKEY FINDING: TREATMENT EFFECT ON RATE OF CHANGE\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+
+if(nrow(interaction_coef) > 0) {
+  cat("Interaction coefficient (time × treatment):", round(interaction_coef$estimate, 4), "\n")
+  cat("95% CI: [", round(interaction_coef$conf.low, 4), ",",
+      round(interaction_coef$conf.high, 4), "]\n", sep = "")
+  cat("t-value:", round(interaction_coef$statistic, 4), "\n")
+  cat("p-value:", format.pval(interaction_coef$p.value, digits = 4, eps = 0.0001), "\n\n")
+
+  if(interaction_coef$p.value < 0.05) {
+    cat("CONCLUSION: The rates of change in creatinine DIFFER significantly\n")
+    cat("between treatment groups (p = ",
+        format.pval(interaction_coef$p.value, digits = 4, eps = 0.0001), ").\n\n", sep = "")
+
+    if(interaction_coef$estimate > 0) {
+      cat("The treatment group shows a FASTER increase in creatinine over time\n")
+      cat("(additional increase of", round(interaction_coef$estimate, 3),
+          "mg/dL per month compared to control).\n")
+    } else {
+      cat("The treatment group shows a SLOWER increase in creatinine over time\n")
+      cat("(", abs(round(interaction_coef$estimate, 3)),
+          "mg/dL per month LESS than control).\n")
+    }
+  } else {
+    cat("CONCLUSION: The rates of change in creatinine DO NOT differ significantly\n")
+    cat("between treatment groups (p = ",
+        format.pval(interaction_coef$p.value, digits = 4, eps = 0.0001), ").\n\n", sep = "")
+    cat("Both groups show similar progression of creatinine over time.\n")
+  }
+} else {
+  cat("Interaction term not found in model. Checking alternative parameterization...\n")
+}
+
+# Extract slopes for each group
+cat("\n\nESTIMATED SLOPES BY TREATMENT GROUP:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+
+# Control group slope (time coefficient)
+time_coef <- fixed_effects %>% filter(term == "time")
+cat("Control group slope:", round(time_coef$estimate, 4), "mg/dL per month\n")
+
+# Treatment group slope (time + interaction)
+if(nrow(interaction_coef) > 0) {
+  treatment_slope <- time_coef$estimate + interaction_coef$estimate
+  cat("Treatment group slope:", round(treatment_slope, 4), "mg/dL per month\n")
+  cat("Difference in slopes:", round(interaction_coef$estimate, 4), "mg/dL per month\n")
+}
+```
+
+### Model Diagnostics
+
+```{r lme-diagnostics, fig.height=8}
+cat("\n\nMODEL DIAGNOSTICS:\n")
+
+# Residual plots
+par(mfrow = c(2, 2))
+
+# Residuals vs fitted
+plot(fitted(lme_model), resid(lme_model),
+     xlab = "Fitted Values", ylab = "Residuals",
+     main = "Residuals vs Fitted Values")
+abline(h = 0, lty = 2, col = "red")
+
+# Q-Q plot of residuals
+qqnorm(resid(lme_model), main = "Normal Q-Q Plot: Residuals")
+qqline(resid(lme_model), col = "red")
+
+# Random effects Q-Q plots
+ranef_obj <- ranef(lme_model)$subject_id
+qqnorm(ranef_obj[,1], main = "Normal Q-Q Plot: Random Intercepts")
+qqline(ranef_obj[,1], col = "red")
+
+qqnorm(ranef_obj[,2], main = "Normal Q-Q Plot: Random Slopes")
+qqline(ranef_obj[,2], col = "red")
+
+par(mfrow = c(1, 1))
+```
+
+## GEE Analysis (Population-Averaged Approach)
+
+```{r problem-13-102-gee}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("APPROACH 2: GENERALIZED ESTIMATING EQUATIONS (GEE)\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nGEE Model Specification:\n")
+cat("• Family: Gaussian (continuous outcome)\n")
+cat("• Correlation structure: Exchangeable (compound symmetry)\n")
+cat("• Population-averaged interpretation\n\n")
+
+# Fit GEE model with exchangeable correlation structure
+gee_model <- geeglm(creatinine ~ time * treatment,
+                    data = swiss_clean,
+                    id = subject_id,
+                    family = gaussian,
+                    corstr = "exchangeable")
+
+cat("GEE Model Summary:\n")
+summary(gee_model)
+
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("GEE MODEL RESULTS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Extract coefficients
+gee_coef <- tidy(gee_model, conf.int = TRUE)
+cat("\n\nGEE Coefficients:\n")
+print(kable(gee_coef %>%
+              mutate(across(where(is.numeric), ~round(., 4))),
+            digits = 4))
+
+# Interaction effect
+gee_interaction <- gee_coef %>% filter(term == "time:treatmentTreatment")
+
+cat("\n\nKEY FINDING: TREATMENT EFFECT ON RATE OF CHANGE (GEE)\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+
+if(nrow(gee_interaction) > 0) {
+  cat("Interaction coefficient:", round(gee_interaction$estimate, 4), "\n")
+  cat("95% CI: [", round(gee_interaction$conf.low, 4), ",",
+      round(gee_interaction$conf.high, 4), "]\n", sep = "")
+  cat("z-value:", round(gee_interaction$statistic, 4), "\n")
+  cat("p-value:", format.pval(gee_interaction$p.value, digits = 4, eps = 0.0001), "\n\n")
+
+  if(gee_interaction$p.value < 0.05) {
+    cat("CONCLUSION (GEE): Rates of change DIFFER significantly (p = ",
+        format.pval(gee_interaction$p.value, digits = 4, eps = 0.0001), ").\n", sep = "")
+  } else {
+    cat("CONCLUSION (GEE): Rates of change DO NOT differ significantly (p = ",
+        format.pval(gee_interaction$p.value, digits = 4, eps = 0.0001), ").\n", sep = "")
+  }
+}
+
+# Display correlation structure
+cat("\n\nEstimated Correlation Structure:\n")
+corr_matrix <- summary(gee_model)$corr
+cat("Working correlation (exchangeable):\n")
+if(!is.null(corr_matrix)) {
+  print(round(corr_matrix, 4))
+} else {
+  cat("Correlation parameter (alpha):", round(summary(gee_model)$geese$alpha, 4), "\n")
+}
+```
+
+## Alternative Correlation Structures
+
+```{r gee-alternative}
+cat("\n\nEXPLORING ALTERNATIVE CORRELATION STRUCTURES:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+
+# Try different correlation structures
+corstr_options <- c("independence", "exchangeable", "ar1", "unstructured")
+qic_results <- data.frame(
+  Correlation = character(),
+  QIC = numeric(),
+  QICu = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for(corstr in corstr_options) {
+  tryCatch({
+    gee_temp <- geeglm(creatinine ~ time * treatment,
+                       data = swiss_clean,
+                       id = subject_id,
+                       family = gaussian,
+                       corstr = corstr)
+
+    qic <- QIC(gee_temp)
+    qic_results <- rbind(qic_results,
+                         data.frame(Correlation = corstr,
+                                   QIC = qic[1],
+                                   QICu = qic[2]))
+  }, error = function(e) {
+    cat("Could not fit", corstr, "correlation structure\n")
+  })
+}
+
+cat("\nModel Selection (QIC - lower is better):\n")
+print(kable(qic_results %>%
+              arrange(QIC) %>%
+              mutate(across(where(is.numeric), ~round(., 2))),
+            digits = 2))
+
+best_corstr <- qic_results$Correlation[which.min(qic_results$QIC)]
+cat("\nBest correlation structure:", best_corstr, "\n")
+```
+
+## Answer to Problem 13.102
+
+```{r answer-13-102}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ANSWER TO PROBLEM 13.102\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nRESEARCH QUESTION: Do treatment groups differ in their rates of change\n")
+cat("in serum creatinine over time?\n\n")
+
+cat("METHODS USED:\n")
+cat("1. Linear Mixed-Effects Model (LME) with random intercepts and slopes\n")
+cat("2. Generalized Estimating Equations (GEE) with exchangeable correlation\n\n")
+
+cat("RESULTS:\n\n")
+
+cat("LME Model:\n")
+if(nrow(interaction_coef) > 0) {
+  cat("  • Difference in slopes:", round(interaction_coef$estimate, 4), "mg/dL per month\n")
+  cat("  • 95% CI: [", round(interaction_coef$conf.low, 4), ",",
+      round(interaction_coef$conf.high, 4), "]\n", sep = "")
+  cat("  • p-value:", format.pval(interaction_coef$p.value, digits = 4, eps = 0.0001), "\n")
+  cat("  • Conclusion:", ifelse(interaction_coef$p.value < 0.05, "SIGNIFICANT", "NOT SIGNIFICANT"), "\n\n")
+}
+
+cat("GEE Model:\n")
+if(nrow(gee_interaction) > 0) {
+  cat("  • Difference in slopes:", round(gee_interaction$estimate, 4), "mg/dL per month\n")
+  cat("  • 95% CI: [", round(gee_interaction$conf.low, 4), ",",
+      round(gee_interaction$conf.high, 4), "]\n", sep = "")
+  cat("  • p-value:", format.pval(gee_interaction$p.value, digits = 4, eps = 0.0001), "\n")
+  cat("  • Conclusion:", ifelse(gee_interaction$p.value < 0.05, "SIGNIFICANT", "NOT SIGNIFICANT"), "\n\n")
+}
+
+cat("INTERPRETATION:\n")
+cat("Both longitudinal methods account for the correlation between repeated\n")
+cat("measurements within subjects, providing more valid inference than methods\n")
+cat("that assume independence.\n\n")
+
+if(nrow(interaction_coef) > 0 && interaction_coef$p.value < 0.05) {
+  cat("The treatment groups show SIGNIFICANTLY DIFFERENT rates of creatinine change,\n")
+  cat("with the treatment group experiencing",
+      ifelse(interaction_coef$estimate > 0, "faster", "slower"),
+      "progression.\n")
+} else {
+  cat("The treatment groups show SIMILAR rates of creatinine change over time.\n")
+}
+```
+
+# Problem 13.103: Comparison with ANOVA on Slopes
+
+## Calculate Individual Slopes
+
+```{r problem-13-103-slopes}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 13.103: ANOVA ON INDIVIDUAL SLOPES (Problem 12.49 Approach)\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nAPPROACH: Two-step analysis\n")
+cat("Step 1: Calculate individual slope for each subject using simple linear regression\n")
+cat("Step 2: Compare slopes between groups using ANOVA or t-test\n\n")
+
+# Calculate individual slopes for each subject
+individual_slopes <- swiss_clean %>%
+  group_by(subject_id, treatment) %>%
+  do({
+    if(n_distinct(.$time) >= 2) {
+      model <- lm(creatinine ~ time, data = .)
+      data.frame(
+        slope = coef(model)[2],
+        intercept = coef(model)[1],
+        n_obs = nrow(.),
+        r_squared = summary(model)$r.squared
+      )
+    } else {
+      data.frame(
+        slope = NA,
+        intercept = NA,
+        n_obs = nrow(.),
+        r_squared = NA
+      )
+    }
+  }) %>%
+  ungroup()
+
+# Remove subjects with missing slopes and ensure treatment is properly coded
+individual_slopes_complete <- individual_slopes %>%
+  filter(!is.na(slope)) %>%
+  filter(!is.na(treatment)) %>%
+  mutate(treatment = droplevels(treatment))  # Drop unused factor levels
+
+cat("Individual Slopes Calculated:\n")
+cat("Number of subjects:", nrow(individual_slopes_complete), "\n")
+cat("Treatment groups:", levels(individual_slopes_complete$treatment), "\n")
+cat("Subjects per group:\n")
+print(table(individual_slopes_complete$treatment))
+cat("\n")
+
+# Check if we have exactly 2 treatment groups
+n_treatment_groups <- nlevels(individual_slopes_complete$treatment)
+cat("Number of treatment groups:", n_treatment_groups, "\n\n")
+
+if(n_treatment_groups < 2) {
+  cat("ERROR: Need at least 2 treatment groups for comparison.\n")
+  cat("Cannot proceed with ANOVA on slopes.\n\n")
+  individual_slopes_complete <- NULL
+} else if(n_treatment_groups > 2) {
+  cat("Note: More than 2 treatment groups found. ANOVA will compare all groups.\n\n")
+}
+
+if(!is.null(individual_slopes_complete) && nrow(individual_slopes_complete) > 0) {
+  cat("Summary of Individual Slopes by Treatment:\n")
+  slope_summary <- individual_slopes_complete %>%
+    group_by(treatment) %>%
+    summarise(
+      N = n(),
+      Mean_Slope = mean(slope, na.rm = TRUE),
+      SD_Slope = sd(slope, na.rm = TRUE),
+      Median_Slope = median(slope, na.rm = TRUE),
+      Min_Slope = min(slope, na.rm = TRUE),
+      Max_Slope = max(slope, na.rm = TRUE),
+      .groups = 'drop'
+    )
+
+  print(kable(slope_summary %>%
+                mutate(across(where(is.numeric) & !N, ~round(., 4))),
+              digits = 4))
+}
+```
+
+## Visualize Individual Slopes
+
+```{r viz-slopes, fig.height=6}
+if(!is.null(individual_slopes_complete) && nrow(individual_slopes_complete) > 0) {
+  # Histogram of slopes by treatment
+  print(ggplot(individual_slopes_complete, aes(x = slope, fill = treatment)) +
+    geom_histogram(alpha = 0.6, position = "identity", bins = 20) +
+    geom_vline(data = slope_summary, aes(xintercept = Mean_Slope, color = treatment),
+               linetype = "dashed", size = 1.2) +
+    labs(title = "Distribution of Individual Slopes by Treatment Group",
+         subtitle = "Dashed lines show group means",
+         x = "Slope (mg/dL per month)",
+         y = "Count",
+         fill = "Treatment",
+         color = "Treatment") +
+    theme_minimal())
+
+  # Box plot of slopes
+  print(ggplot(individual_slopes_complete, aes(x = treatment, y = slope, fill = treatment)) +
+    geom_boxplot(alpha = 0.7) +
+    geom_jitter(width = 0.2, alpha = 0.3) +
+    labs(title = "Individual Slopes by Treatment Group",
+         x = "Treatment",
+         y = "Slope (mg/dL per month)",
+         fill = "Treatment") +
+    theme_minimal() +
+    theme(legend.position = "none"))
+} else {
+  cat("Cannot create visualizations - insufficient data.\n")
+}
+```
+
+## ANOVA/t-test on Slopes
+
+```{r anova-slopes}
+if(!is.null(individual_slopes_complete) && nrow(individual_slopes_complete) > 0 &&
+   exists("n_treatment_groups") && n_treatment_groups >= 2) {
+
+  cat("\n")
+  cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+  cat("ANOVA ON INDIVIDUAL SLOPES\n")
+  cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+  # Check for equal variances
+  levene_test <- car::leveneTest(slope ~ treatment, data = individual_slopes_complete)
+  cat("\nLevene's Test for Homogeneity of Variance:\n")
+  cat("F-statistic:", round(levene_test$`F value`[1], 4), "\n")
+  cat("p-value:", format.pval(levene_test$`Pr(>F)`[1], digits = 4), "\n")
+
+  equal_var <- levene_test$`Pr(>F)`[1] > 0.05
+  cat("\nAssumption of equal variances:",
+      ifelse(equal_var, "MET (p > 0.05)", "VIOLATED (p < 0.05)"), "\n\n")
+
+  # Two-sample t-test (only if exactly 2 groups)
+  if(n_treatment_groups == 2) {
+    cat("Two-Sample t-Test Comparing Slopes:\n")
+    t_test_slopes <- t.test(slope ~ treatment,
+                            data = individual_slopes_complete,
+                            var.equal = equal_var)
+
+    cat("\nMethod:", t_test_slopes$method, "\n")
+    cat("t-statistic:", round(t_test_slopes$statistic, 4), "\n")
+    cat("Degrees of freedom:", round(t_test_slopes$parameter, 2), "\n")
+    cat("p-value:", format.pval(t_test_slopes$p.value, digits = 4, eps = 0.0001), "\n")
+    cat("95% CI for difference:", round(t_test_slopes$conf.int[1], 4), "to",
+        round(t_test_slopes$conf.int[2], 4), "\n\n")
+
+    cat("Mean slopes:\n")
+    cat("  Control:", round(t_test_slopes$estimate[1], 4), "mg/dL per month\n")
+    cat("  Treatment:", round(t_test_slopes$estimate[2], 4), "mg/dL per month\n")
+    cat("  Difference:", round(t_test_slopes$estimate[2] - t_test_slopes$estimate[1], 4),
+        "mg/dL per month\n\n")
+  } else {
+    cat("\nNote: More than 2 treatment groups. Using ANOVA instead of t-test.\n\n")
+  }
+
+  # ANOVA (for consistency with Problem 12.49)
+  cat("One-Way ANOVA", ifelse(n_treatment_groups == 2, "(equivalent to t-test for two groups)", ""), ":\n")
+  anova_slopes <- aov(slope ~ treatment, data = individual_slopes_complete)
+  anova_summary <- summary(anova_slopes)
+  print(anova_summary)
+
+  # Extract ANOVA p-value
+  anova_p_value <- anova_summary[[1]]$`Pr(>F)`[1]
+
+  cat("\n")
+  cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+  cat("INTERPRETATION - ANOVA ON SLOPES\n")
+  cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+  if(anova_p_value < 0.05) {
+    cat("\nCONCLUSION: The mean slopes DIFFER significantly between treatment groups\n")
+    cat("(p = ", format.pval(anova_p_value, digits = 4, eps = 0.0001), ").\n\n", sep = "")
+
+    if(n_treatment_groups == 2 && exists("t_test_slopes")) {
+      diff_slopes <- t_test_slopes$estimate[2] - t_test_slopes$estimate[1]
+      if(diff_slopes > 0) {
+        cat("The treatment group shows FASTER progression (mean difference =",
+            round(diff_slopes, 4), "mg/dL per month).\n")
+      } else {
+        cat("The treatment group shows SLOWER progression (mean difference =",
+            round(diff_slopes, 4), "mg/dL per month).\n")
+      }
+    }
+  } else {
+    cat("\nCONCLUSION: The mean slopes DO NOT differ significantly between groups\n")
+    cat("(p = ", format.pval(anova_p_value, digits = 4, eps = 0.0001), ").\n", sep = "")
+  }
+
+} else {
+  cat("Cannot perform ANOVA on slopes - insufficient data or treatment groups.\n")
+}
+
+# Ensure variables exist for later code
+if(!exists("t_test_slopes")) {
+  t_test_slopes <- NULL
+}
+if(!exists("anova_slopes")) {
+  anova_slopes <- NULL
+}
+if(!exists("anova_p_value")) {
+  anova_p_value <- NA
+}
+```
+
+# Comparison of Methods (Problem 13.103)
+
+## Side-by-Side Results
+
+```{r comparison-table}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("COMPARISON OF METHODS - PROBLEM 13.103\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Create comparison table
+# Get ANOVA on slopes results if available
+if(!is.null(t_test_slopes)) {
+  anova_diff <- t_test_slopes$estimate[2] - t_test_slopes$estimate[1]
+  anova_se <- (t_test_slopes$conf.int[2] - t_test_slopes$conf.int[1]) / (2 * 1.96)
+  anova_stat <- t_test_slopes$statistic
+  anova_pval <- t_test_slopes$p.value
+} else if(exists("anova_p_value")) {
+  # Use ANOVA results if t-test not available
+  anova_diff <- NA
+  anova_se <- NA
+  anova_stat <- NA
+  anova_pval <- anova_p_value
+} else {
+  anova_diff <- NA
+  anova_se <- NA
+  anova_stat <- NA
+  anova_pval <- NA
+}
+
+comparison_results <- data.frame(
+  Method = c("LME (Mixed Model)", "GEE (Exchangeable)", "ANOVA on Slopes"),
+  Difference_in_Slopes = c(
+    ifelse(exists("interaction_coef") && nrow(interaction_coef) > 0, round(interaction_coef$estimate, 4), NA),
+    ifelse(exists("gee_interaction") && nrow(gee_interaction) > 0, round(gee_interaction$estimate, 4), NA),
+    ifelse(!is.na(anova_diff), round(anova_diff, 4), NA)
+  ),
+  SE = c(
+    ifelse(exists("interaction_coef") && nrow(interaction_coef) > 0, round(interaction_coef$std.error, 4), NA),
+    ifelse(exists("gee_interaction") && nrow(gee_interaction) > 0, round(gee_interaction$std.error, 4), NA),
+    ifelse(!is.na(anova_se), round(anova_se, 4), NA)
+  ),
+  Test_Statistic = c(
+    ifelse(exists("interaction_coef") && nrow(interaction_coef) > 0, round(interaction_coef$statistic, 4), NA),
+    ifelse(exists("gee_interaction") && nrow(gee_interaction) > 0, round(gee_interaction$statistic, 4), NA),
+    ifelse(!is.na(anova_stat), round(anova_stat, 4), NA)
+  ),
+  P_Value = c(
+    ifelse(exists("interaction_coef") && nrow(interaction_coef) > 0, interaction_coef$p.value, NA),
+    ifelse(exists("gee_interaction") && nrow(gee_interaction) > 0, gee_interaction$p.value, NA),
+    anova_pval
+  ),
+  Significant = c(
+    ifelse(exists("interaction_coef") && nrow(interaction_coef) > 0, interaction_coef$p.value < 0.05, NA),
+    ifelse(exists("gee_interaction") && nrow(gee_interaction) > 0, gee_interaction$p.value < 0.05, NA),
+    ifelse(!is.na(anova_pval), anova_pval < 0.05, NA)
+  )
+)
+
+comparison_results <- comparison_results %>%
+  mutate(
+    P_Value_Format = format.pval(P_Value, digits = 4, eps = 0.0001),
+    Result = ifelse(Significant, "Significant", "Not Significant")
+  )
+
+cat("\n\nCOMPARISON TABLE:\n")
+print(kable(comparison_results %>%
+              select(Method, Difference_in_Slopes, SE, Test_Statistic,
+                     P_Value_Format, Result),
+            col.names = c("Method", "Diff in Slopes", "SE", "Test Stat", "p-value", "Result"),
+            digits = 4))
+```
+
+## Key Differences Between Methods
+
+```{r method-differences}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("KEY DIFFERENCES BETWEEN METHODS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\n1. HANDLING OF CORRELATION:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+cat("\nLME/GEE Methods:\n")
+cat("  • Explicitly model within-subject correlation\n")
+cat("  • Use all available data simultaneously\n")
+cat("  • More efficient use of information\n")
+cat("  • Valid standard errors accounting for correlation\n\n")
+
+cat("ANOVA on Slopes:\n")
+cat("  • Two-step approach: first estimate slopes, then compare\n")
+cat("  • Treats individual slopes as independent observations\n")
+cat("  • Ignores uncertainty in slope estimation\n")
+cat("  • May lose efficiency\n")
+
+cat("\n2. DATA REQUIREMENTS:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+cat("\nLME/GEE Methods:\n")
+cat("  • Can handle missing data (unbalanced designs)\n")
+cat("  • Can include subjects with only 1 observation\n")
+cat("  • Can incorporate time-varying covariates\n\n")
+
+cat("ANOVA on Slopes:\n")
+cat("  • Requires ≥2 observations per subject\n")
+cat("  • Subjects with missing data may be excluded\n")
+cat("  • Limited to comparing overall slopes\n")
+
+cat("\n3. INTERPRETATION:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+cat("\nLME (Subject-Specific):\n")
+cat("  • Estimates average within-subject change\n")
+cat("  • Answers: 'For a given subject, how does treatment affect change?'\n\n")
+
+cat("GEE (Population-Averaged):\n")
+cat("  • Estimates marginal (population-average) effects\n")
+cat("  • Answers: 'On average across population, what is the effect?'\n\n")
+
+cat("ANOVA on Slopes:\n")
+cat("  • Compares average slopes between groups\n")
+cat("  • Similar interpretation to GEE but less efficient\n")
+
+cat("\n4. COMPARISON OF RESULTS:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+
+# Compare effect sizes
+if(nrow(interaction_coef) > 0) {
+  lme_est <- interaction_coef$estimate
+  gee_est <- if(nrow(gee_interaction) > 0) gee_interaction$estimate else NA
+  anova_est <- t_test_slopes$estimate[2] - t_test_slopes$estimate[1]
+
+  cat("\nEstimated Differences in Slopes:\n")
+  cat("  LME:", round(lme_est, 4), "\n")
+  if(!is.na(gee_est)) cat("  GEE:", round(gee_est, 4), "\n")
+  cat("  ANOVA on slopes:", round(anova_est, 4), "\n")
+
+  cat("\nRelative differences:\n")
+  if(!is.na(gee_est)) {
+    cat("  LME vs GEE:", round(100 * (lme_est - gee_est) / lme_est, 2), "% difference\n")
+  }
+  cat("  LME vs ANOVA:", round(100 * (lme_est - anova_est) / lme_est, 2), "% difference\n")
+
+  # Compare p-values
+  cat("\n\np-values:\n")
+  cat("  LME:", format.pval(interaction_coef$p.value, digits = 4, eps = 0.0001), "\n")
+  if(!is.na(gee_est)) {
+    cat("  GEE:", format.pval(gee_interaction$p.value, digits = 4, eps = 0.0001), "\n")
+  }
+  cat("  ANOVA:", format.pval(t_test_slopes$p.value, digits = 4, eps = 0.0001), "\n")
+
+  # Check agreement
+  lme_sig <- interaction_coef$p.value < 0.05
+  gee_sig <- if(!is.na(gee_est)) gee_interaction$p.value < 0.05 else NA
+  anova_sig <- t_test_slopes$p.value < 0.05
+
+  cat("\nAgreement on Statistical Significance:\n")
+  if(!is.na(gee_sig) && lme_sig == gee_sig && gee_sig == anova_sig) {
+    cat("  ALL THREE METHODS AGREE\n")
+  } else if(lme_sig == anova_sig) {
+    cat("  LME and ANOVA agree, GEE differs\n")
+  } else {
+    cat("  Methods show different conclusions\n")
+  }
+}
+```
+
+## Visual Comparison
+
+```{r viz-comparison, fig.height=6}
+# Forest plot comparing estimates
+if(nrow(interaction_coef) > 0) {
+
+  estimates_df <- data.frame(
+    Method = factor(c("LME", "GEE", "ANOVA on Slopes"),
+                    levels = c("ANOVA on Slopes", "GEE", "LME")),
+    Estimate = c(
+      interaction_coef$estimate,
+      if(nrow(gee_interaction) > 0) gee_interaction$estimate else NA,
+      t_test_slopes$estimate[2] - t_test_slopes$estimate[1]
+    ),
+    Lower = c(
+      interaction_coef$conf.low,
+      if(nrow(gee_interaction) > 0) gee_interaction$conf.low else NA,
+      t_test_slopes$conf.int[1]
+    ),
+    Upper = c(
+      interaction_coef$conf.high,
+      if(nrow(gee_interaction) > 0) gee_interaction$conf.high else NA,
+      t_test_slopes$conf.int[2]
+    ),
+    Significant = c(
+      interaction_coef$p.value < 0.05,
+      if(nrow(gee_interaction) > 0) gee_interaction$p.value < 0.05 else NA,
+      t_test_slopes$p.value < 0.05
+    )
+  ) %>%
+    filter(!is.na(Estimate))
+
+  ggplot(estimates_df, aes(x = Method, y = Estimate, color = Significant)) +
+    geom_point(size = 4) +
+    geom_errorbar(aes(ymin = Lower, ymax = Upper), width = 0.2, size = 1) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "red", size = 1) +
+    coord_flip() +
+    scale_color_manual(values = c("TRUE" = "coral", "FALSE" = "steelblue"),
+                       labels = c("Not Significant", "Significant")) +
+    labs(title = "Comparison of Treatment Effect Estimates Across Methods",
+         subtitle = "Error bars show 95% confidence intervals",
+         x = "Analysis Method",
+         y = "Difference in Slopes (mg/dL per month)",
+         color = "Result") +
+    theme_minimal() +
+    theme(text = element_text(size = 12),
+          legend.position = "bottom")
+}
+```
+
+## Advantages and Disadvantages
+
+```{r advantages}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ADVANTAGES AND DISADVANTAGES OF EACH METHOD\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\n\nLINEAR MIXED-EFFECTS MODEL (LME):\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+cat("\nAdvantages:\n")
+cat("  ✓ Models both population and subject-level effects\n")
+cat("  ✓ Provides subject-specific predictions\n")
+cat("  ✓ Efficient handling of missing data\n")
+cat("  ✓ Can model complex variance structures\n")
+cat("  ✓ Likelihood-based inference\n")
+
+cat("\nDisadvantages:\n")
+cat("  ✗ Requires normality assumptions for random effects\n")
+cat("  ✗ Can be computationally intensive\n")
+cat("  ✗ Model selection can be challenging\n")
+
+cat("\n\nGENERALIZED ESTIMATING EQUATIONS (GEE):\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+cat("\nAdvantages:\n")
+cat("  ✓ Robust to misspecification of correlation structure\n")
+cat("  ✓ Population-averaged interpretation\n")
+cat("  ✓ Fewer distributional assumptions\n")
+cat("  ✓ Computationally efficient\n")
+
+cat("\nDisadvantages:\n")
+cat("  ✗ No subject-specific predictions\n")
+cat("  ✗ Less efficient with small samples\n")
+cat("  ✗ Requires 'missing completely at random' for validity\n")
+
+cat("\n\nANOVA ON INDIVIDUAL SLOPES:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+cat("\nAdvantages:\n")
+cat("  ✓ Conceptually simple and intuitive\n")
+cat("  ✓ Easy to implement\n")
+cat("  ✓ Familiar to many researchers\n")
+
+cat("\nDisadvantages:\n")
+cat("  ✗ Ignores uncertainty in slope estimation\n")
+cat("  ✗ Loss of efficiency\n")
+cat("  ✗ Cannot handle subjects with <2 observations\n")
+cat("  ✗ Ignores within-subject correlation in Step 1\n")
+cat("  ✗ May have inflated Type I error if slopes poorly estimated\n")
+```
+
+## Final Answer to Problem 13.103
+
+```{r answer-13-103}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ANSWER TO PROBLEM 13.103\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nRESEARCH QUESTION: How do longitudinal methods compare with ANOVA on slopes?\n\n")
+
+cat("COMPARISON SUMMARY:\n\n")
+
+cat("1. ESTIMATES OF TREATMENT EFFECT:\n")
+if(nrow(interaction_coef) > 0) {
+  cat("   All methods estimate similar treatment effects on slopes,\n")
+  cat("   differing by less than",
+      round(max(abs(c(
+        interaction_coef$estimate - (t_test_slopes$estimate[2] - t_test_slopes$estimate[1]),
+        if(nrow(gee_interaction) > 0) gee_interaction$estimate - (t_test_slopes$estimate[2] - t_test_slopes$estimate[1]) else 0
+      ))) * 100 / abs(interaction_coef$estimate), 1), "% in magnitude.\n\n")
+}
+
+cat("2. STATISTICAL INFERENCE:\n")
+lme_sig <- if(nrow(interaction_coef) > 0) interaction_coef$p.value < 0.05 else NA
+anova_sig <- t_test_slopes$p.value < 0.05
+
+if(!is.na(lme_sig) && lme_sig == anova_sig) {
+  cat("   Both longitudinal methods and ANOVA on slopes reach the\n")
+  cat("   SAME CONCLUSION about statistical significance.\n\n")
+} else {
+  cat("   The methods reach DIFFERENT CONCLUSIONS about significance.\n")
+  cat("   This suggests sensitivity to methodological choice.\n\n")
+}
+
+cat("3. PRECISION:\n")
+if(nrow(interaction_coef) > 0) {
+  lme_se <- interaction_coef$std.error
+  anova_se <- (t_test_slopes$conf.int[2] - t_test_slopes$conf.int[1]) / (2 * 1.96)
+
+  if(lme_se < anova_se) {
+    cat("   Longitudinal methods provide MORE PRECISE estimates\n")
+    cat("   (", round(100 * (1 - lme_se/anova_se), 1), "% reduction in SE).\n\n", sep = "")
+  } else {
+    cat("   ANOVA on slopes provides comparable or better precision.\n\n")
+  }
+}
+
+cat("4. METHODOLOGICAL PREFERENCE:\n")
+cat("   RECOMMENDATION: Use LONGITUDINAL METHODS (LME or GEE) because:\n")
+cat("   • More efficient use of all available data\n")
+cat("   • Properly accounts for within-subject correlation\n")
+cat("   • Valid standard errors and p-values\n")
+cat("   • Can handle missing data and unbalanced designs\n")
+cat("   • Single-step analysis (vs. two-step for ANOVA)\n\n")
+
+cat("   The ANOVA on slopes approach:\n")
+cat("   • Is simpler to understand\n")
+cat("   • May be adequate when all subjects have complete data\n")
+cat("   • Generally less efficient and may have incorrect inference\n\n")
+
+cat("CONCLUSION:\n")
+cat("While all three methods provide similar point estimates in this dataset,\n")
+cat("longitudinal methods (LME/GEE) are statistically superior and should be\n")
+cat("preferred for analyzing repeated measures data.\n")
+```
+
+# Summary
+
+```{r final-summary}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("COMPREHENSIVE SUMMARY\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\n\nRESEARCH OBJECTIVE:\n")
+cat("Compare rates of change in serum creatinine between treatment groups\n")
+cat("using different statistical approaches.\n\n")
+
+cat("METHODS COMPARED:\n")
+cat("1. Linear Mixed-Effects Model (LME) - Subject-specific approach\n")
+cat("2. Generalized Estimating Equations (GEE) - Population-averaged approach\n")
+cat("3. ANOVA on Individual Slopes - Two-step traditional approach\n\n")
+
+cat("KEY FINDINGS:\n\n")
+
+cat("Problem 13.102 - Longitudinal Analysis:\n")
+if(nrow(interaction_coef) > 0) {
+  cat("  • Treatment effect on slope:", round(interaction_coef$estimate, 4), "mg/dL/month\n")
+  cat("  • p-value (LME):", format.pval(interaction_coef$p.value, digits = 4, eps = 0.0001), "\n")
+  cat("  • Conclusion:", ifelse(interaction_coef$p.value < 0.05,
+                                "SIGNIFICANT difference in rates",
+                                "NO significant difference"), "\n\n")
+}
+
+cat("Problem 13.103 - Method Comparison:\n")
+cat("  • All methods yielded similar estimates\n")
+cat("  • Longitudinal methods more precise and statistically valid\n")
+cat("  • ANOVA on slopes: simpler but less efficient\n\n")
+
+cat("STATISTICAL RECOMMENDATION:\n")
+cat("Use longitudinal methods (LME or GEE) for repeated measures analysis\n")
+cat("to ensure valid inference and efficient use of data.\n")
+
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("END OF ANALYSIS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

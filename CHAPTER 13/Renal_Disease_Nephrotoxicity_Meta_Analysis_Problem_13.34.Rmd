@@ -1,0 +1,741 @@
+---
+title: "Renal Disease: Nephrotoxicity Meta-Analysis of Aminoglycoside Antibiotics"
+subtitle: "Problem 13.34 - Pairwise Meta-Analysis with Odds Ratios and 95% CIs"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    code_folding: show
+    theme: flatly
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Problem Statement
+
+**Problem 13.34**: Use methods of meta-analysis to assess whether there are differences in nephrotoxicity between each pair of antibiotics. Obtain point estimates and 95% CIs for the OR, and provide a two-sided p-value.
+
+# Background
+
+This analysis examines nephrotoxicity (kidney toxicity) data from randomized controlled trials comparing five aminoglycoside antibiotics:
+
+1. **Amikacin** (Code: 1)
+2. **Gentamicin** (Code: 2)
+3. **Netilmicin** (Code: 3)
+4. **Sisomicin** (Code: 4)
+5. **Tobramycin** (Code: 5)
+
+## Clinical Relevance
+
+Nephrotoxicity is a major concern with aminoglycoside antibiotics. This meta-analysis synthesizes data from multiple trials to:
+
+- Detect differences in nephrotoxicity rates between antibiotics
+- Provide more precise estimates of relative toxicity
+- Guide clinical decision-making in antibiotic selection
+
+# Load Required Libraries
+
+```{r load-libraries}
+library(tidyverse)      # Data manipulation and visualization
+library(knitr)          # Tables
+library(meta)           # Meta-analysis functions
+library(metafor)        # Advanced meta-analysis
+library(ggplot2)        # Advanced plotting
+library(gridExtra)      # Multiple plots
+library(scales)         # Scale functions
+library(broom)          # Tidy outputs
+```
+
+# Load and Prepare Data
+
+## Load NEPHRO.DAT
+
+```{r load-data}
+# Load Nephrotoxicity data
+nephro_data <- read.table("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/NEPHRO.DAT.txt",
+                          header = TRUE,
+                          sep = ",",
+                          quote = "'\"",
+                          strip.white = TRUE)
+
+cat("Dataset dimensions:", nrow(nephro_data), "records\n")
+cat("\nFirst 10 rows:\n")
+kable(head(nephro_data, 10),
+      caption = "NEPHRO.DAT - First 10 Records")
+```
+
+## Data Structure and Validation
+
+```{r data-structure}
+# Display structure
+str(nephro_data)
+
+# Check endpoint values (should all be 2 for nephrotoxicity)
+cat("\nEndpoint distribution:\n")
+table(nephro_data$Endpnt)
+
+# Check antibiotics present
+cat("\n\nAntibiotics in dataset:\n")
+table(nephro_data$Antibio)
+```
+
+## Add Descriptive Labels
+
+```{r add-labels}
+# Add descriptive antibiotic names
+nephro_clean <- nephro_data %>%
+  mutate(
+    Antibiotic = factor(Antibio,
+                       levels = 1:5,
+                       labels = c("Amikacin", "Gentamicin", "Netilmicin",
+                                 "Sisomicin", "Tobramycin")),
+    # Calculate proportion with nephrotoxicity
+    Nephrotox_prop = Side_eff / Samp_sz,
+    # Calculate number without nephrotoxicity
+    No_nephrotox = Samp_sz - Side_eff
+  )
+
+cat("Data preparation complete.\n")
+cat("Total records:", nrow(nephro_clean), "\n")
+cat("\nRecords by antibiotic:\n")
+table(nephro_clean$Antibiotic)
+```
+
+## Overall Summary Statistics
+
+```{r overall-summary}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("OVERALL NEPHROTOXICITY SUMMARY\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+overall_summary <- nephro_clean %>%
+  summarise(
+    Total_studies = n_distinct(Name),
+    Total_records = n(),
+    Total_patients = sum(Samp_sz),
+    Total_nephrotoxic = sum(Side_eff),
+    Overall_nephrotox_rate = sum(Side_eff) / sum(Samp_sz)
+  )
+
+cat("Total number of studies:", overall_summary$Total_studies, "\n")
+cat("Total number of records:", overall_summary$Total_records, "\n")
+cat("Total number of patients:", overall_summary$Total_patients, "\n")
+cat("Total with nephrotoxicity:", overall_summary$Total_nephrotoxic, "\n")
+cat("Overall nephrotoxicity rate:",
+    round(overall_summary$Overall_nephrotox_rate * 100, 2), "%\n")
+```
+
+## Summary by Antibiotic
+
+```{r summary-by-antibiotic}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("SUMMARY BY ANTIBIOTIC\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+antibiotic_summary <- nephro_clean %>%
+  group_by(Antibiotic) %>%
+  summarise(
+    N_studies = n_distinct(Name),
+    N_records = n(),
+    Total_patients = sum(Samp_sz),
+    Total_nephrotoxic = sum(Side_eff),
+    Total_no_nephrotox = sum(No_nephrotox),
+    Mean_nephrotox_rate = mean(Nephrotox_prop),
+    SD_nephrotox_rate = sd(Nephrotox_prop),
+    Min_nephrotox_rate = min(Nephrotox_prop),
+    Max_nephrotox_rate = max(Nephrotox_prop),
+    Pooled_nephrotox_rate = sum(Side_eff) / sum(Samp_sz),
+    .groups = 'drop'
+  )
+
+kable(antibiotic_summary, digits = 4,
+      caption = "Summary Statistics by Antibiotic")
+```
+
+# Visualization of Nephrotoxicity Rates
+
+```{r visualization, fig.height=10}
+# Box plot
+p1 <- ggplot(nephro_clean, aes(x = Antibiotic, y = Nephrotox_prop,
+                                fill = Antibiotic)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 2) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "red", color = "darkred") +
+  labs(title = "Distribution of Nephrotoxicity Rates by Antibiotic",
+       subtitle = "Red diamonds indicate mean rates",
+       x = "Antibiotic",
+       y = "Nephrotoxicity Rate (Proportion)") +
+  scale_y_continuous(labels = percent_format()) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Bar plot with pooled rates
+p2 <- ggplot(antibiotic_summary, aes(x = Antibiotic, y = Pooled_nephrotox_rate,
+                                      fill = Antibiotic)) +
+  geom_col(alpha = 0.7) +
+  geom_text(aes(label = paste0(round(Pooled_nephrotox_rate * 100, 1), "%")),
+            vjust = -0.5, size = 4) +
+  labs(title = "Pooled Nephrotoxicity Rates by Antibiotic",
+       x = "Antibiotic",
+       y = "Pooled Nephrotoxicity Rate") +
+  scale_y_continuous(labels = percent_format(), limits = c(0, max(antibiotic_summary$Pooled_nephrotox_rate) * 1.2)) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Sample size by antibiotic
+p3 <- ggplot(antibiotic_summary, aes(x = Antibiotic, y = Total_patients,
+                                      fill = Antibiotic)) +
+  geom_col(alpha = 0.7) +
+  geom_text(aes(label = Total_patients), vjust = -0.5, size = 4) +
+  labs(title = "Total Sample Size by Antibiotic",
+       x = "Antibiotic",
+       y = "Total Number of Patients") +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Number of studies by antibiotic
+p4 <- ggplot(antibiotic_summary, aes(x = Antibiotic, y = N_studies,
+                                      fill = Antibiotic)) +
+  geom_col(alpha = 0.7) +
+  geom_text(aes(label = N_studies), vjust = -0.5, size = 4) +
+  labs(title = "Number of Studies by Antibiotic",
+       x = "Antibiotic",
+       y = "Number of Studies") +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Arrange plots
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+# Problem 13.34: Pairwise Meta-Analysis
+
+## Methodology
+
+For each pair of antibiotics, we will:
+
+1. **Identify studies** that directly compared the two antibiotics
+2. **Calculate the odds ratio (OR)** for each study
+3. **Perform meta-analysis** using the Mantel-Haenszel method
+4. **Report**:
+   - Point estimate of the pooled OR
+   - 95% confidence interval
+   - Two-sided p-value
+
+**Interpretation of Odds Ratio**:
+
+- OR = 1: No difference in nephrotoxicity between antibiotics
+- OR > 1: First antibiotic has higher odds of nephrotoxicity
+- OR < 1: First antibiotic has lower odds of nephrotoxicity
+
+## Identify All Pairwise Comparisons
+
+```{r identify-pairs}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("IDENTIFYING PAIRWISE COMPARISONS FROM STUDIES\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Get list of studies and their antibiotics
+study_antibiotics <- nephro_clean %>%
+  group_by(Name, Id) %>%
+  summarise(
+    Antibiotics = paste(sort(unique(as.character(Antibiotic))), collapse = " vs "),
+    N_antibiotics = n_distinct(Antibiotic),
+    .groups = 'drop'
+  ) %>%
+  arrange(Id)
+
+cat("Studies and their antibiotic comparisons:\n\n")
+kable(study_antibiotics,
+      caption = "Studies and Antibiotic Comparisons")
+
+# Count studies by number of antibiotics compared
+cat("\n\nStudy distribution by number of arms:\n")
+table(study_antibiotics$N_antibiotics)
+```
+
+## Pairwise Meta-Analysis Function
+
+```{r meta-analysis-function}
+# Function to perform pairwise meta-analysis
+perform_pairwise_meta <- function(data, antibiotic1, antibiotic2) {
+
+  # Filter studies that contain both antibiotics
+  studies_with_both <- data %>%
+    group_by(Name, Id) %>%
+    filter(all(c(antibiotic1, antibiotic2) %in% Antibiotic)) %>%
+    ungroup()
+
+  # Get unique study names
+  study_names <- unique(studies_with_both$Name)
+
+  if(length(study_names) == 0) {
+    return(list(
+      comparison = paste(antibiotic1, "vs", antibiotic2),
+      n_studies = 0,
+      result = NULL,
+      message = "No studies directly compared these antibiotics"
+    ))
+  }
+
+  # Prepare data for meta-analysis
+  meta_data <- data.frame()
+
+  for(study in study_names) {
+    # Get data for this study
+    study_data <- studies_with_both %>%
+      filter(Name == study)
+
+    # Get data for each antibiotic
+    ab1_data <- study_data %>% filter(Antibiotic == antibiotic1)
+    ab2_data <- study_data %>% filter(Antibiotic == antibiotic2)
+
+    # Create 2x2 table for this study
+    # Rows: Antibiotic 1, Antibiotic 2
+    # Columns: Nephrotoxic, Not nephrotoxic
+
+    meta_data <- bind_rows(meta_data, data.frame(
+      Study = study,
+      Ab1_nephrotox = ab1_data$Side_eff,
+      Ab1_no_nephrotox = ab1_data$No_nephrotox,
+      Ab2_nephrotox = ab2_data$Side_eff,
+      Ab2_no_nephrotox = ab2_data$No_nephrotox,
+      Ab1_total = ab1_data$Samp_sz,
+      Ab2_total = ab2_data$Samp_sz
+    ))
+  }
+
+  # Perform meta-analysis using metafor
+  # Calculate OR for each study
+  meta_data <- meta_data %>%
+    mutate(
+      # Add continuity correction for zero cells
+      Ab1_nephrotox_adj = ifelse(Ab1_nephrotox == 0 | Ab1_no_nephrotox == 0,
+                                   Ab1_nephrotox + 0.5, Ab1_nephrotox),
+      Ab1_no_nephrotox_adj = ifelse(Ab1_nephrotox == 0 | Ab1_no_nephrotox == 0,
+                                      Ab1_no_nephrotox + 0.5, Ab1_no_nephrotox),
+      Ab2_nephrotox_adj = ifelse(Ab2_nephrotox == 0 | Ab2_no_nephrotox == 0,
+                                   Ab2_nephrotox + 0.5, Ab2_nephrotox),
+      Ab2_no_nephrotox_adj = ifelse(Ab2_nephrotox == 0 | Ab2_no_nephrotox == 0,
+                                      Ab2_no_nephrotox + 0.5, Ab2_no_nephrotox)
+    )
+
+  # Use metafor for meta-analysis
+  # Mantel-Haenszel method
+  ma_result <- tryCatch({
+    rma.mh(ai = meta_data$Ab1_nephrotox,
+           bi = meta_data$Ab1_no_nephrotox,
+           ci = meta_data$Ab2_nephrotox,
+           di = meta_data$Ab2_no_nephrotox,
+           measure = "OR",
+           method = "FE")  # Fixed effects
+  }, error = function(e) {
+    message("Error in meta-analysis: ", e$message)
+    return(NULL)
+  })
+
+  if(is.null(ma_result)) {
+    return(list(
+      comparison = paste(antibiotic1, "vs", antibiotic2),
+      n_studies = 0,
+      result = NULL,
+      message = "Error performing meta-analysis"
+    ))
+  }
+
+  return(list(
+    comparison = paste(antibiotic1, "vs", antibiotic2),
+    n_studies = nrow(meta_data),
+    study_data = meta_data,
+    result = ma_result,
+    message = "Meta-analysis completed successfully"
+  ))
+}
+```
+
+## Conduct All Pairwise Meta-Analyses
+
+```{r pairwise-meta-analyses}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("PROBLEM 13.34: PAIRWISE META-ANALYSES\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Get all unique antibiotics
+antibiotics <- sort(unique(nephro_clean$Antibiotic))
+n_antibiotics <- length(antibiotics)
+
+cat("Antibiotics in analysis:", paste(antibiotics, collapse = ", "), "\n")
+cat("Number of possible pairwise comparisons:", choose(n_antibiotics, 2), "\n\n")
+
+# Store all results
+all_pairwise_results <- list()
+pairwise_summary <- data.frame()
+
+# Counter for comparison
+comparison_num <- 1
+
+# Perform all pairwise comparisons
+for(i in 1:(n_antibiotics-1)) {
+  for(j in (i+1):n_antibiotics) {
+
+    ab1 <- antibiotics[i]
+    ab2 <- antibiotics[j]
+
+    cat("\n")
+    cat("-" %>% rep(70) %>% paste(collapse = ""), "\n")
+    cat("Comparison", comparison_num, ":", ab1, "vs", ab2, "\n")
+    cat("-" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+    # Perform meta-analysis
+    result <- perform_pairwise_meta(nephro_clean, ab1, ab2)
+
+    all_pairwise_results[[comparison_num]] <- result
+
+    if(result$n_studies > 0) {
+      cat("Number of studies:", result$n_studies, "\n\n")
+
+      # Display study data
+      cat("Study-specific data:\n")
+      study_display <- result$study_data %>%
+        mutate(
+          Ab1_rate = Ab1_nephrotox / Ab1_total,
+          Ab2_rate = Ab2_nephrotox / Ab2_total,
+          Individual_OR = (Ab1_nephrotox * Ab2_no_nephrotox) /
+                          (Ab1_no_nephrotox * Ab2_nephrotox)
+        ) %>%
+        select(Study, Ab1_nephrotox, Ab1_total, Ab1_rate,
+               Ab2_nephrotox, Ab2_total, Ab2_rate, Individual_OR)
+
+      kable(study_display, digits = 3,
+            col.names = c("Study",
+                         paste(ab1, "- Events"), paste(ab1, "- N"), paste(ab1, "- Rate"),
+                         paste(ab2, "- Events"), paste(ab2, "- N"), paste(ab2, "- Rate"),
+                         "OR"))
+
+      # Extract results
+      pooled_OR <- exp(result$result$beta)
+      CI_lower <- exp(result$result$ci.lb)
+      CI_upper <- exp(result$result$ci.ub)
+      p_value <- result$result$pval
+
+      cat("\n\nMETA-ANALYSIS RESULTS:\n")
+      cat("----------------------\n")
+      cat("Pooled Odds Ratio (OR):", round(pooled_OR, 3), "\n")
+      cat("95% Confidence Interval: (", round(CI_lower, 3), ",",
+          round(CI_upper, 3), ")\n")
+      cat("Two-sided p-value:", format.pval(p_value, digits = 4), "\n")
+
+      # Interpretation
+      cat("\nINTERPRETATION:\n")
+      if(!is.na(p_value) && p_value < 0.05) {
+        if(pooled_OR > 1) {
+          cat("- ", ab1, "has SIGNIFICANTLY HIGHER odds of nephrotoxicity\n",
+              "  compared to", ab2, "(p < 0.05)\n", sep = "")
+        } else {
+          cat("- ", ab1, "has SIGNIFICANTLY LOWER odds of nephrotoxicity\n",
+              "  compared to", ab2, "(p < 0.05)\n", sep = "")
+        }
+      } else if(!is.na(p_value)) {
+        cat("- No statistically significant difference in nephrotoxicity\n")
+        cat("  between", ab1, "and", ab2, "(p >= 0.05)\n")
+      } else {
+        cat("- Unable to calculate p-value (insufficient data)\n")
+      }
+
+      # Store summary
+      pairwise_summary <- bind_rows(pairwise_summary, data.frame(
+        Comparison_num = comparison_num,
+        Antibiotic_1 = as.character(ab1),
+        Antibiotic_2 = as.character(ab2),
+        N_studies = result$n_studies,
+        Pooled_OR = pooled_OR,
+        CI_lower = CI_lower,
+        CI_upper = CI_upper,
+        p_value = p_value,
+        Significant = !is.na(p_value) && p_value < 0.05
+      ))
+
+    } else {
+      cat(result$message, "\n")
+
+      # Still add to summary with NA values
+      pairwise_summary <- bind_rows(pairwise_summary, data.frame(
+        Comparison_num = comparison_num,
+        Antibiotic_1 = as.character(ab1),
+        Antibiotic_2 = as.character(ab2),
+        N_studies = 0,
+        Pooled_OR = NA,
+        CI_lower = NA,
+        CI_upper = NA,
+        p_value = NA,
+        Significant = FALSE
+      ))
+    }
+
+    comparison_num <- comparison_num + 1
+  }
+}
+```
+
+# Summary of All Pairwise Comparisons
+
+```{r summary-table}
+cat("\n\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("SUMMARY TABLE: ALL PAIRWISE COMPARISONS\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Create comprehensive summary table
+summary_table <- pairwise_summary %>%
+  mutate(
+    Comparison = paste(Antibiotic_1, "vs", Antibiotic_2),
+    OR_with_CI = ifelse(!is.na(Pooled_OR),
+                        paste0(round(Pooled_OR, 3), " (",
+                               round(CI_lower, 3), ", ",
+                               round(CI_upper, 3), ")"),
+                        "N/A"),
+    p_value_formatted = ifelse(!is.na(p_value),
+                               format.pval(p_value, digits = 3),
+                               "N/A"),
+    Significance = ifelse(Significant, "Yes *", "No")
+  ) %>%
+  select(Comparison, N_studies, OR_with_CI, p_value_formatted, Significance)
+
+kable(summary_table,
+      col.names = c("Comparison", "N Studies", "OR (95% CI)", "p-value", "Significant"),
+      caption = "Summary of All Pairwise Meta-Analyses for Nephrotoxicity")
+
+cat("\n* Significant at α = 0.05 level\n")
+```
+
+## Significant Comparisons Only
+
+```{r significant-only}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("SIGNIFICANT PAIRWISE DIFFERENCES (p < 0.05)\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+significant_comparisons <- pairwise_summary %>%
+  filter(Significant, !is.na(Pooled_OR)) %>%
+  arrange(p_value)
+
+if(nrow(significant_comparisons) > 0) {
+
+  cat("Number of significant comparisons:", nrow(significant_comparisons), "\n\n")
+
+  significant_table <- significant_comparisons %>%
+    mutate(
+      Comparison = paste(Antibiotic_1, "vs", Antibiotic_2),
+      Direction = ifelse(Pooled_OR > 1,
+                        paste(Antibiotic_1, "> ", Antibiotic_2),
+                        paste(Antibiotic_1, "< ", Antibiotic_2))
+    ) %>%
+    select(Comparison, N_studies, Pooled_OR, CI_lower, CI_upper, p_value, Direction)
+
+  kable(significant_table, digits = 4,
+        col.names = c("Comparison", "N Studies", "Pooled OR",
+                     "95% CI Lower", "95% CI Upper", "p-value", "Direction"),
+        caption = "Statistically Significant Pairwise Comparisons")
+
+  cat("\n\nKEY FINDINGS:\n")
+  for(i in 1:nrow(significant_comparisons)) {
+    row <- significant_comparisons[i, ]
+    cat("\n", i, ". ", row$Antibiotic_1, " vs ", row$Antibiotic_2, ":\n", sep = "")
+    cat("   - Pooled OR = ", round(row$Pooled_OR, 3),
+        " (95% CI: ", round(row$CI_lower, 3), " - ", round(row$CI_upper, 3), ")\n", sep = "")
+    cat("   - p-value = ", format.pval(row$p_value, digits = 4), "\n", sep = "")
+
+    if(row$Pooled_OR > 1) {
+      cat("   - ", row$Antibiotic_1, " has ", round((row$Pooled_OR - 1) * 100, 1),
+          "% higher odds of nephrotoxicity\n", sep = "")
+    } else {
+      cat("   - ", row$Antibiotic_1, " has ", round((1 - row$Pooled_OR) * 100, 1),
+          "% lower odds of nephrotoxicity\n", sep = "")
+    }
+  }
+
+} else {
+  cat("No statistically significant pairwise differences were found.\n")
+}
+```
+
+# Visualizations of Meta-Analysis Results
+
+## Forest Plots
+
+```{r forest-plots, fig.height=12, fig.width=10}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("FOREST PLOTS FOR PAIRWISE COMPARISONS\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Create forest plots for comparisons with data
+comparisons_with_data <- pairwise_summary %>%
+  filter(N_studies > 0, !is.na(Pooled_OR))
+
+if(nrow(comparisons_with_data) > 0) {
+
+  # Forest plot using ggplot
+  forest_data <- comparisons_with_data %>%
+    mutate(
+      Comparison = paste(Antibiotic_1, "vs", Antibiotic_2),
+      Comparison = factor(Comparison, levels = rev(Comparison))
+    )
+
+  ggplot(forest_data, aes(x = Pooled_OR, y = Comparison)) +
+    geom_point(size = 4, aes(color = Significant)) +
+    geom_errorbarh(aes(xmin = CI_lower, xmax = CI_upper, color = Significant),
+                   height = 0.2, linewidth = 1) +
+    geom_vline(xintercept = 1, linetype = "dashed", color = "red", linewidth = 1) +
+    scale_x_log10(breaks = c(0.25, 0.5, 1, 2, 4, 8)) +
+    scale_color_manual(values = c("FALSE" = "gray50", "TRUE" = "darkred"),
+                      labels = c("Not significant", "Significant (p<0.05)")) +
+    labs(title = "Forest Plot: Pairwise Odds Ratios for Nephrotoxicity",
+         subtitle = "Red dashed line at OR = 1 (no difference)",
+         x = "Odds Ratio (log scale)",
+         y = "Comparison",
+         color = "Statistical Significance") +
+    theme_minimal() +
+    theme(legend.position = "bottom",
+          axis.text.y = element_text(size = 10))
+
+} else {
+  cat("No comparisons with sufficient data for forest plot.\n")
+}
+```
+
+## OR Comparison Plot
+
+```{r or-comparison-plot, fig.width=12}
+if(nrow(comparisons_with_data) > 0) {
+
+  # Bar plot of ORs
+  ggplot(comparisons_with_data,
+         aes(x = reorder(paste(Antibiotic_1, "vs", Antibiotic_2), Pooled_OR),
+             y = Pooled_OR, fill = Significant)) +
+    geom_col(alpha = 0.7) +
+    geom_hline(yintercept = 1, linetype = "dashed", color = "red", linewidth = 1) +
+    geom_text(aes(label = round(Pooled_OR, 2)),
+              hjust = -0.2, size = 3.5) +
+    scale_fill_manual(values = c("FALSE" = "steelblue", "TRUE" = "darkred"),
+                     labels = c("Not significant", "Significant (p<0.05)")) +
+    labs(title = "Pooled Odds Ratios: Nephrotoxicity Comparisons",
+         subtitle = "OR > 1: First antibiotic has higher nephrotoxicity",
+         x = "Comparison",
+         y = "Pooled Odds Ratio",
+         fill = "Statistical Significance") +
+    coord_flip() +
+    theme_minimal() +
+    theme(legend.position = "bottom")
+}
+```
+
+## p-value Distribution
+
+```{r p-value-plot, fig.width=10}
+if(nrow(comparisons_with_data) > 0) {
+
+  # P-value plot
+  ggplot(comparisons_with_data,
+         aes(x = reorder(paste(Antibiotic_1, "vs", Antibiotic_2), -p_value),
+             y = p_value, fill = Significant)) +
+    geom_col(alpha = 0.7) +
+    geom_hline(yintercept = 0.05, linetype = "dashed", color = "red", linewidth = 1) +
+    geom_text(aes(label = format.pval(p_value, digits = 3)),
+              vjust = -0.5, size = 3) +
+    scale_fill_manual(values = c("FALSE" = "steelblue", "TRUE" = "darkred"),
+                     labels = c("Not significant", "Significant (p<0.05)")) +
+    labs(title = "Two-Sided p-values for Pairwise Comparisons",
+         subtitle = "Red line at α = 0.05",
+         x = "Comparison",
+         y = "Two-sided p-value",
+         fill = "Statistical Significance") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          legend.position = "bottom")
+}
+```
+
+# Conclusions and Clinical Implications
+
+```{r conclusions}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("CONCLUSIONS: PROBLEM 13.34\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+cat("STUDY OVERVIEW:\n")
+cat("- Total number of studies analyzed:", overall_summary$Total_studies, "\n")
+cat("- Total patients in nephrotoxicity analysis:", overall_summary$Total_patients, "\n")
+cat("- Overall nephrotoxicity rate:",
+    round(overall_summary$Overall_nephrotox_rate * 100, 2), "%\n\n")
+
+cat("PAIRWISE META-ANALYSIS RESULTS:\n")
+cat("- Total possible pairwise comparisons:", nrow(pairwise_summary), "\n")
+cat("- Comparisons with available data:",
+    sum(pairwise_summary$N_studies > 0, na.rm = TRUE), "\n")
+cat("- Statistically significant comparisons (p < 0.05):",
+    sum(pairwise_summary$Significant, na.rm = TRUE), "\n\n")
+
+if(sum(pairwise_summary$Significant, na.rm = TRUE) > 0) {
+  cat("ANTIBIOTICS RANKED BY NEPHROTOXICITY (from lowest to highest):\n")
+
+  # Calculate average nephrotoxicity considering all comparisons
+  antibiotic_ranking <- antibiotic_summary %>%
+    arrange(Pooled_nephrotox_rate) %>%
+    select(Antibiotic, Pooled_nephrotox_rate, Total_patients)
+
+  for(i in 1:nrow(antibiotic_ranking)) {
+    cat(i, ". ", as.character(antibiotic_ranking$Antibiotic[i]), " - ",
+        round(antibiotic_ranking$Pooled_nephrotox_rate[i] * 100, 2), "% ",
+        "(n = ", antibiotic_ranking$Total_patients[i], ")\n", sep = "")
+  }
+}
+
+cat("\n\nCLINICAL IMPLICATIONS:\n")
+cat("- Nephrotoxicity remains an important consideration in aminoglycoside selection\n")
+cat("- Significant differences between some antibiotics suggest that choice matters\n")
+cat("- Clinical decision-making should balance efficacy with toxicity profile\n")
+cat("- Patient-specific factors (renal function, comorbidities) are critical\n")
+
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+```
+
+# Answer to Problem 13.34
+
+**Summary**: Using meta-analysis methods with the Mantel-Haenszel approach, we assessed pairwise differences in nephrotoxicity between all combinations of the five aminoglycoside antibiotics. For each comparison where head-to-head trial data existed, we calculated:
+
+- **Point estimates** of the pooled odds ratio (OR)
+- **95% confidence intervals** for the OR
+- **Two-sided p-values** testing the null hypothesis of OR = 1
+
+The analysis identified `r sum(pairwise_summary$Significant, na.rm = TRUE)` statistically significant pairwise difference(s) at the α = 0.05 level. Complete results are presented in the summary tables and forest plots above, providing clinicians with evidence-based guidance for antibiotic selection when nephrotoxicity is a concern.
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

@@ -1,0 +1,952 @@
+---
+title: "Environmental Health - Lead Exposure and IQ Analysis"
+subtitle: "Problems 13.82-13.84: Complete-Case vs Multiple Imputation"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    code_folding: show
+    theme: united
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  comment = NA
+)
+```
+
+# Introduction
+
+## Study Overview
+
+This analysis examines the relationship between **lead exposure levels in 1972** and **full-scale IQ scores** in children, while controlling for age and sex. A key challenge is handling missing data for lead levels (coded as 99).
+
+## Research Questions
+
+**Problem 13.82**: Use complete-case analysis to relate lead levels (LD72) to IQ (IQF), controlling for age and sex.
+
+**Problem 13.83**: Use multiple imputation methods for the same analysis.
+
+**Problem 13.84**: Compare results from both approaches.
+
+## Key Variables
+
+- **LD72**: Lead level in 1972 (μg/dL), missing coded as 99
+- **IQF**: Full-scale IQ score (outcome)
+- **AGE**: Child's age
+- **SEX**: Child's sex (1 = Male, 2 = Female)
+
+# Data Preparation
+
+## Load Required Packages
+
+```{r load-packages}
+# Load required libraries
+library(tidyverse)
+library(mice)        # Multiple imputation
+library(broom)       # Tidy model outputs
+library(knitr)       # Tables
+library(ggplot2)     # Visualization
+library(gridExtra)   # Multiple plots
+library(naniar)      # Missing data visualization
+library(VIM)         # Missing data patterns
+
+# Set seed for reproducibility
+set.seed(42)
+```
+
+## Load and Clean Data
+
+```{r load-data}
+# Read the data (file has headers)
+lead_data <- read.table("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-tab/LEAD.DAT.txt",
+                        header = TRUE, sep = "\t")
+
+# The key variables are:
+# - id: Subject ID
+# - ageyrs: Age in years
+# - sex: Sex (1 = Male, 2 = Female)
+# - ld72: Lead level in 1972 (μg/dL), 99 = missing
+# - iqf: Full-scale IQ score
+# - iqv: Verbal IQ
+# - iqp: Performance IQ
+# - maxfwt: Maximum finger-wrist tapping score
+
+# Display data structure
+cat("Dataset Structure:\n")
+str(lead_data)
+
+cat("\n\nFirst few rows:\n")
+head(lead_data)
+
+cat("\n\nKey variables summary (before cleaning):\n")
+summary(lead_data %>% select(id, ageyrs, sex, ld72, iqf))
+```
+
+## Identify and Handle Missing Data
+
+```{r identify-missing}
+# Convert 99 in ld72 to NA (missing data indicator)
+lead_clean <- lead_data %>%
+  mutate(
+    ld72_original = ld72,  # Keep original for tracking
+    ld72 = ifelse(ld72 == 99, NA, ld72),
+    sex_factor = factor(sex, levels = c(1, 2), labels = c("Male", "Female"))
+  )
+
+# Count missing values
+missing_ld72 <- sum(is.na(lead_clean$ld72))
+total_n <- nrow(lead_clean)
+missing_pct <- 100 * missing_ld72 / total_n
+
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("MISSING DATA SUMMARY\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("\nTotal observations:", total_n, "\n")
+cat("Missing ld72 values:", missing_ld72, "\n")
+cat("Percentage missing:", round(missing_pct, 2), "%\n\n")
+
+# Check for missing in other variables
+cat("Missing values in other key variables:\n")
+cat("  ageyrs:", sum(is.na(lead_clean$ageyrs)), "\n")
+cat("  sex:", sum(is.na(lead_clean$sex)), "\n")
+cat("  iqf:", sum(is.na(lead_clean$iqf)), "\n")
+```
+
+## Visualize Missing Data Pattern
+
+```{r viz-missing, fig.height=8}
+# Create missing data visualization
+par(mfrow = c(2, 2))
+
+# Missing data pattern
+lead_subset <- lead_clean %>%
+  select(ld72, iqf, ageyrs, sex)
+
+# Visualize missingness
+gg_miss_var(lead_subset) +
+  labs(title = "Missing Data by Variable",
+       y = "Number of Missing Values") +
+  theme_minimal()
+
+# Missing data pattern matrix
+aggr(lead_subset,
+     col = c('lightblue', 'coral'),
+     numbers = TRUE,
+     sortVars = TRUE,
+     labels = names(lead_subset),
+     cex.axis = 0.7,
+     gap = 3,
+     ylab = c("Missing Data Pattern", "Pattern"))
+```
+
+## Compare Complete vs Incomplete Cases
+
+```{r compare-cases}
+# Create complete case dataset
+lead_complete <- lead_clean %>%
+  filter(!is.na(ld72))
+
+n_complete <- nrow(lead_complete)
+n_excluded <- total_n - n_complete
+
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("COMPLETE-CASE ANALYSIS: DATA AVAILABILITY\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("\nComplete cases (with LD72):", n_complete, "\n")
+cat("Excluded cases (missing LD72):", n_excluded, "\n")
+cat("Percentage of data used:", round(100 * n_complete / total_n, 2), "%\n\n")
+
+# Compare characteristics of complete vs incomplete cases
+cat("Comparison of Complete vs Incomplete Cases:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+
+comparison_stats <- lead_clean %>%
+  mutate(Complete = ifelse(is.na(ld72), "Missing ld72", "Complete")) %>%
+  group_by(Complete) %>%
+  summarise(
+    N = n(),
+    Mean_IQF = mean(iqf, na.rm = TRUE),
+    SD_IQF = sd(iqf, na.rm = TRUE),
+    Mean_AGE = mean(ageyrs, na.rm = TRUE),
+    SD_AGE = sd(ageyrs, na.rm = TRUE),
+    Pct_Male = 100 * mean(sex == 1, na.rm = TRUE)
+  )
+
+print(comparison_stats)
+
+# Test for systematic differences
+cat("\n\nTesting for systematic differences:\n")
+
+# IQ difference
+t_test_iq <- t.test(iqf ~ is.na(ld72), data = lead_clean)
+cat("\nIQ comparison (complete vs missing ld72):\n")
+cat("  t-statistic:", round(t_test_iq$statistic, 4), "\n")
+cat("  p-value:", format.pval(t_test_iq$p.value, digits = 4), "\n")
+
+# Age difference
+t_test_age <- t.test(ageyrs ~ is.na(ld72), data = lead_clean)
+cat("\nAge comparison (complete vs missing ld72):\n")
+cat("  t-statistic:", round(t_test_age$statistic, 4), "\n")
+cat("  p-value:", format.pval(t_test_age$p.value, digits = 4), "\n")
+
+# Sex difference
+chi_test_sex <- chisq.test(table(lead_clean$sex, is.na(lead_clean$ld72)))
+cat("\nSex distribution (complete vs missing ld72):\n")
+cat("  Chi-square:", round(chi_test_sex$statistic, 4), "\n")
+cat("  p-value:", format.pval(chi_test_sex$p.value, digits = 4), "\n")
+```
+
+# Problem 13.82: Complete-Case Analysis
+
+## Linear Regression Model
+
+```{r problem-13-82}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 13.82: COMPLETE-CASE ANALYSIS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("\nResearch Question: What is the effect of lead level (ld72) on IQ (iqf),\n")
+cat("controlling for age and sex?\n\n")
+
+# Fit linear regression using complete cases only
+model_complete <- lm(iqf ~ ld72 + ageyrs + sex, data = lead_complete)
+
+# Display results
+cat("Model: iqf ~ ld72 + ageyrs + sex\n")
+cat("Method: Complete-case analysis (listwise deletion)\n")
+cat("Sample size:", n_complete, "observations\n\n")
+
+summary(model_complete)
+```
+
+## Model Diagnostics
+
+```{r diagnostics-complete, fig.height=8}
+# Diagnostic plots
+par(mfrow = c(2, 2))
+plot(model_complete, which = 1:4)
+par(mfrow = c(1, 1))
+
+# Additional diagnostics
+cat("\n\nModel Diagnostics:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+
+# Residual standard error
+cat("\nResidual standard error:", round(sigma(model_complete), 4), "\n")
+
+# R-squared
+cat("Multiple R-squared:", round(summary(model_complete)$r.squared, 4), "\n")
+cat("Adjusted R-squared:", round(summary(model_complete)$adj.r.squared, 4), "\n")
+
+# F-statistic
+f_stat <- summary(model_complete)$fstatistic
+cat("\nF-statistic:", round(f_stat[1], 4),
+    "on", f_stat[2], "and", f_stat[3], "DF\n")
+cat("p-value:", format.pval(pf(f_stat[1], f_stat[2], f_stat[3],
+                              lower.tail = FALSE), digits = 4), "\n")
+```
+
+## Interpretation - Complete Case
+
+```{r interpret-complete}
+# Extract coefficients
+coef_complete <- tidy(model_complete, conf.int = TRUE)
+
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("INTERPRETATION - PROBLEM 13.82\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nRegression Coefficients:\n")
+print(coef_complete %>%
+        mutate(across(where(is.numeric), ~round(., 4))))
+
+# Focus on lead effect
+lead_coef <- coef_complete %>% filter(term == "ld72")
+
+cat("\n\nLEAD EFFECT (LD72):\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+cat("Coefficient:", round(lead_coef$estimate, 4), "\n")
+cat("95% CI: [", round(lead_coef$conf.low, 4), ",",
+    round(lead_coef$conf.high, 4), "]\n", sep = "")
+cat("Standard error:", round(lead_coef$std.error, 4), "\n")
+cat("t-statistic:", round(lead_coef$statistic, 4), "\n")
+cat("p-value:", format.pval(lead_coef$p.value, digits = 4), "\n\n")
+
+if(lead_coef$p.value < 0.05) {
+  cat("CONCLUSION: Lead level in 1972 has a STATISTICALLY SIGNIFICANT effect on IQ.\n")
+  if(lead_coef$estimate < 0) {
+    cat("\nInterpretation: For each 1 μg/dL increase in lead level, IQ score\n")
+    cat("DECREASES by", abs(round(lead_coef$estimate, 2)),
+        "points, after controlling for age and sex.\n")
+  } else {
+    cat("\nInterpretation: For each 1 μg/dL increase in lead level, IQ score\n")
+    cat("INCREASES by", round(lead_coef$estimate, 2),
+        "points, after controlling for age and sex.\n")
+  }
+} else {
+  cat("CONCLUSION: Lead level in 1972 does NOT have a statistically significant\n")
+  cat("effect on IQ (p = ", format.pval(lead_coef$p.value, digits = 4),
+      "), after controlling for age and sex.\n", sep = "")
+}
+
+cat("\n\nANSWER TO PROBLEM 13.82:\n")
+cat("Using complete-case analysis with n =", n_complete, "observations:\n")
+cat("β(ld72) =", round(lead_coef$estimate, 4),
+    ", 95% CI: [", round(lead_coef$conf.low, 4), ",",
+    round(lead_coef$conf.high, 4), "]\n", sep = "")
+cat("p-value =", format.pval(lead_coef$p.value, digits = 4), "\n")
+```
+
+# Problem 13.83: Multiple Imputation Analysis
+
+## Imputation Setup
+
+```{r problem-13-83-setup}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 13.83: MULTIPLE IMPUTATION ANALYSIS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nMultiple Imputation Strategy:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+cat("• Method: Multivariate Imputation by Chained Equations (MICE)\n")
+cat("• Number of imputations: m = 20\n")
+cat("• Variables in imputation model: ld72, iqf, ageyrs, sex\n")
+cat("• Imputation method for ld72: Predictive mean matching (PMM)\n\n")
+
+# Prepare data for imputation
+lead_impute <- lead_clean %>%
+  select(id, ld72, iqf, ageyrs, sex)
+
+# Check imputation method
+init_imp <- mice(lead_impute, maxit = 0, print = FALSE)
+meth <- init_imp$method
+predM <- init_imp$predictorMatrix
+
+cat("Default imputation methods:\n")
+print(meth)
+
+cat("\n\nPredictor matrix (which variables predict which):\n")
+print(predM)
+```
+
+## Perform Multiple Imputation
+
+```{r perform-imputation}
+cat("\n\nPerforming multiple imputation...\n")
+
+# Perform imputation with m=20 imputations
+m_imputations <- 20
+imp_result <- mice(lead_impute,
+                   m = m_imputations,
+                   method = "pmm",  # Predictive mean matching
+                   maxit = 50,      # Maximum iterations
+                   seed = 42,
+                   print = FALSE)
+
+cat("Imputation complete!\n\n")
+
+# Check convergence
+cat("Checking convergence of imputation algorithm:\n")
+print(plot(imp_result, c("ld72"), main = "Convergence Plot for ld72 Imputation"))
+
+# Summary of imputed values
+cat("\n\nSummary of imputed ld72 values:\n")
+
+# For each imputation, get summary of imputed values
+imp_summaries <- complete(imp_result, "long") %>%
+  filter(.imp > 0) %>%
+  left_join(lead_clean %>% select(id, ld72_original), by = c(".id" = "id")) %>%
+  filter(is.na(ld72_original) | ld72_original == 99) %>%
+  group_by(.imp) %>%
+  summarise(
+    N_imputed = n(),
+    Mean_ld72 = mean(ld72, na.rm = TRUE),
+    SD_ld72 = sd(ld72, na.rm = TRUE),
+    Min_ld72 = min(ld72, na.rm = TRUE),
+    Max_ld72 = max(ld72, na.rm = TRUE)
+  )
+
+cat("\nSummary across", m_imputations, "imputations:\n")
+cat("Mean of imputed ld72:", round(mean(imp_summaries$Mean_ld72), 2), "\n")
+cat("SD of imputed ld72 means:", round(sd(imp_summaries$Mean_ld72), 2), "\n")
+```
+
+## Visualize Imputed Values
+
+```{r viz-imputed, fig.height=6}
+# Compare observed vs imputed distributions
+lead_long <- complete(imp_result, "long", include = TRUE)
+
+# Add indicator for observed vs imputed
+lead_long <- lead_long %>%
+  left_join(lead_clean %>% select(id, ld72_original),
+            by = c(".id" = "id")) %>%
+  mutate(
+    Observed = ifelse(.imp == 0, "Original",
+                     ifelse(is.na(ld72_original) | ld72_original == 99,
+                            "Imputed", "Observed"))
+  )
+
+# Density plot
+ggplot(lead_long %>% filter(.imp <= 5),  # Show first 5 imputations
+       aes(x = ld72, fill = Observed, color = Observed)) +
+  geom_density(alpha = 0.4) +
+  facet_wrap(~ .imp, labeller = labeller(.imp = function(x) {
+    ifelse(x == "0", "Original Data", paste("Imputation", x))
+  })) +
+  scale_fill_manual(values = c("Original" = "gray",
+                                "Observed" = "lightblue",
+                                "Imputed" = "coral")) +
+  scale_color_manual(values = c("Original" = "gray30",
+                                 "Observed" = "blue",
+                                 "Imputed" = "red")) +
+  labs(title = "Distribution of LD72: Observed vs Imputed Values",
+       subtitle = "First 5 Imputations Shown",
+       x = "Lead Level (μg/dL)",
+       y = "Density") +
+  theme_minimal()
+
+# Stripplot of imputed values
+stripplot(imp_result, ld72, pch = 20, cex = 1.2)
+```
+
+## Fit Models to Imputed Data
+
+```{r fit-imputed-models}
+cat("\n\nFitting linear regression to each imputed dataset...\n")
+
+# Fit the same model to each imputed dataset
+model_imputed <- with(imp_result,
+                      lm(iqf ~ ld72 + ageyrs + sex))
+
+cat("Models fitted to", m_imputations, "imputed datasets.\n")
+
+# Display individual model results (first 3)
+cat("\n\nSample results from first 3 imputed datasets:\n")
+for(i in 1:min(3, m_imputations)) {
+  cat("\nImputation", i, ":\n")
+  print(summary(model_imputed$analyses[[i]])$coefficients)
+}
+```
+
+## Pool Results Across Imputations
+
+```{r pool-results}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("POOLED RESULTS - RUBIN'S RULES\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Pool results using Rubin's rules
+pooled_result <- pool(model_imputed)
+
+# Display pooled estimates
+cat("\nPooled estimates:\n")
+pooled_summary <- summary(pooled_result, conf.int = TRUE)
+print(pooled_summary %>%
+        mutate(across(where(is.numeric), ~round(., 4))))
+
+# Extract lead coefficient from pooled results
+lead_pooled <- pooled_summary %>% filter(term == "ld72")
+
+cat("\n\nDetailed information about pooling:\n")
+cat("Number of imputations (m):", m_imputations, "\n")
+cat("Degrees of freedom method: Barnard-Rubin adjusted\n\n")
+
+# Check what columns are available and display FMI if it exists
+cat("Available pooling statistics:\n")
+if("fmi" %in% names(pooled_summary)) {
+  cat("\nFraction of Missing Information (FMI) for each parameter:\n")
+  print(pooled_summary %>% select(term, fmi) %>%
+          mutate(fmi = round(fmi, 4)))
+} else if("lambda" %in% names(pooled_summary)) {
+  cat("\nFraction of Missing Information (lambda) for each parameter:\n")
+  print(pooled_summary %>% select(term, lambda) %>%
+          mutate(lambda = round(lambda, 4)))
+} else {
+  cat("Column names in pooled summary:\n")
+  print(names(pooled_summary))
+}
+```
+
+## Interpretation - Multiple Imputation
+
+```{r interpret-imputed}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("INTERPRETATION - PROBLEM 13.83\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\n\nLEAD EFFECT (LD72) - POOLED ACROSS IMPUTATIONS:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+cat("Coefficient:", round(lead_pooled$estimate, 4), "\n")
+cat("95% CI: [", round(lead_pooled$`2.5 %`, 4), ",",
+    round(lead_pooled$`97.5 %`, 4), "]\n", sep = "")
+cat("Standard error:", round(lead_pooled$std.error, 4), "\n")
+cat("t-statistic:", round(lead_pooled$statistic, 4), "\n")
+cat("Degrees of freedom:", round(lead_pooled$df, 2), "\n")
+cat("p-value:", format.pval(lead_pooled$p.value, digits = 4), "\n\n")
+
+# Display FMI and RIV if available
+if("fmi" %in% names(lead_pooled)) {
+  cat("Fraction of Missing Information (FMI):", round(lead_pooled$fmi, 4), "\n")
+}
+if("lambda" %in% names(lead_pooled)) {
+  cat("Fraction of Missing Information (lambda):", round(lead_pooled$lambda, 4), "\n")
+}
+if("riv" %in% names(lead_pooled)) {
+  cat("Relative Increase in Variance (RIV):", round(lead_pooled$riv, 4), "\n")
+}
+cat("\n")
+
+if(lead_pooled$p.value < 0.05) {
+  cat("CONCLUSION: Lead level in 1972 has a STATISTICALLY SIGNIFICANT effect on IQ.\n")
+  if(lead_pooled$estimate < 0) {
+    cat("\nInterpretation: For each 1 μg/dL increase in lead level, IQ score\n")
+    cat("DECREASES by", abs(round(lead_pooled$estimate, 2)),
+        "points, after controlling for age and sex.\n")
+  } else {
+    cat("\nInterpretation: For each 1 μg/dL increase in lead level, IQ score\n")
+    cat("INCREASES by", round(lead_pooled$estimate, 2),
+        "points, after controlling for age and sex.\n")
+  }
+} else {
+  cat("CONCLUSION: Lead level in 1972 does NOT have a statistically significant\n")
+  cat("effect on IQ (p = ", format.pval(lead_pooled$p.value, digits = 4),
+      "), after controlling for age and sex.\n", sep = "")
+}
+
+cat("\n\nANSWER TO PROBLEM 13.83:\n")
+cat("Using multiple imputation with m =", m_imputations, "imputations:\n")
+cat("β(ld72) =", round(lead_pooled$estimate, 4),
+    ", 95% CI: [", round(lead_pooled$`2.5 %`, 4), ",",
+    round(lead_pooled$`97.5 %`, 4), "]\n", sep = "")
+cat("p-value =", format.pval(lead_pooled$p.value, digits = 4), "\n")
+```
+
+# Problem 13.84: Comparison of Methods
+
+## Side-by-Side Comparison
+
+```{r problem-13-84}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 13.84: COMPARISON OF COMPLETE-CASE vs MULTIPLE IMPUTATION\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Create comparison table
+comparison_table <- data.frame(
+  Characteristic = c("Sample Size",
+                     "Lead Coefficient (β)",
+                     "Standard Error",
+                     "95% CI Lower",
+                     "95% CI Upper",
+                     "t-statistic",
+                     "p-value",
+                     "Significant at α=0.05"),
+  Complete_Case = c(
+    as.character(n_complete),
+    round(lead_coef$estimate, 4),
+    round(lead_coef$std.error, 4),
+    round(lead_coef$conf.low, 4),
+    round(lead_coef$conf.high, 4),
+    round(lead_coef$statistic, 4),
+    format.pval(lead_coef$p.value, digits = 4),
+    ifelse(lead_coef$p.value < 0.05, "Yes", "No")
+  ),
+  Multiple_Imputation = c(
+    as.character(total_n),
+    round(lead_pooled$estimate, 4),
+    round(lead_pooled$std.error, 4),
+    round(lead_pooled$`2.5 %`, 4),
+    round(lead_pooled$`97.5 %`, 4),
+    round(lead_pooled$statistic, 4),
+    format.pval(lead_pooled$p.value, digits = 4),
+    ifelse(lead_pooled$p.value < 0.05, "Yes", "No")
+  )
+)
+
+cat("\nCOMPARISON TABLE:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+print(kable(comparison_table,
+            col.names = c("Characteristic", "Complete-Case", "Multiple Imputation"),
+            align = c("l", "r", "r")))
+
+# Calculate differences
+diff_estimate <- lead_pooled$estimate - lead_coef$estimate
+pct_diff_estimate <- 100 * diff_estimate / lead_coef$estimate
+
+diff_se <- lead_pooled$std.error - lead_coef$std.error
+pct_diff_se <- 100 * diff_se / lead_coef$std.error
+
+cat("\n\nKEY DIFFERENCES:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+
+cat("\n1. SAMPLE SIZE:\n")
+cat("   Complete-case:", n_complete, "observations\n")
+cat("   Multiple imputation:", total_n, "observations\n")
+cat("   Difference:", total_n - n_complete, "additional observations utilized\n")
+cat("   → Multiple imputation uses", round(100 * (total_n - n_complete) / n_complete, 1),
+    "% more data\n")
+
+cat("\n2. LEAD COEFFICIENT ESTIMATE:\n")
+cat("   Complete-case: β =", round(lead_coef$estimate, 4), "\n")
+cat("   Multiple imputation: β =", round(lead_pooled$estimate, 4), "\n")
+cat("   Absolute difference:", round(diff_estimate, 4), "\n")
+cat("   Relative difference:", round(pct_diff_estimate, 2), "%\n")
+
+cat("\n3. PRECISION (STANDARD ERROR):\n")
+cat("   Complete-case: SE =", round(lead_coef$std.error, 4), "\n")
+cat("   Multiple imputation: SE =", round(lead_pooled$std.error, 4), "\n")
+cat("   Absolute difference:", round(diff_se, 4), "\n")
+cat("   Relative difference:", round(pct_diff_se, 2), "%\n")
+
+if(lead_pooled$std.error < lead_coef$std.error) {
+  cat("   → Multiple imputation provides MORE precise estimates\n")
+  cat("      (smaller standard error)\n")
+} else {
+  cat("   → Complete-case provides MORE precise estimates\n")
+  cat("      (smaller standard error)\n")
+}
+
+cat("\n4. CONFIDENCE INTERVAL WIDTH:\n")
+ci_width_complete <- lead_coef$conf.high - lead_coef$conf.low
+ci_width_imputed <- lead_pooled$`97.5 %` - lead_pooled$`2.5 %`
+cat("   Complete-case: Width =", round(ci_width_complete, 4), "\n")
+cat("   Multiple imputation: Width =", round(ci_width_imputed, 4), "\n")
+cat("   Difference:", round(ci_width_imputed - ci_width_complete, 4), "\n")
+
+if(ci_width_imputed < ci_width_complete) {
+  cat("   → Multiple imputation gives NARROWER confidence interval\n")
+} else {
+  cat("   → Multiple imputation gives WIDER confidence interval\n")
+}
+
+cat("\n5. STATISTICAL SIGNIFICANCE:\n")
+cat("   Complete-case: p =", format.pval(lead_coef$p.value, digits = 4), "\n")
+cat("   Multiple imputation: p =", format.pval(lead_pooled$p.value, digits = 4), "\n")
+
+if(lead_coef$p.value < 0.05 && lead_pooled$p.value < 0.05) {
+  cat("   → BOTH methods find significant effect\n")
+} else if(lead_coef$p.value >= 0.05 && lead_pooled$p.value >= 0.05) {
+  cat("   → BOTH methods find non-significant effect\n")
+} else {
+  cat("   → Methods DISAGREE on significance!\n")
+}
+```
+
+## Visualization - Method Comparison
+
+```{r viz-comparison, fig.height=8}
+# Create comparison visualization
+par(mfrow = c(2, 1))
+
+# Forest plot comparing estimates
+estimates <- c(lead_coef$estimate, lead_pooled$estimate)
+se <- c(lead_coef$std.error, lead_pooled$std.error)
+ci_low <- c(lead_coef$conf.low, lead_pooled$`2.5 %`)
+ci_high <- c(lead_coef$conf.high, lead_pooled$`97.5 %`)
+methods <- c("Complete-Case", "Multiple Imputation")
+
+# Plot 1: Forest plot
+plot(1:2, estimates,
+     xlim = c(0.5, 2.5),
+     ylim = c(min(ci_low) * 1.2, max(ci_high) * 1.2),
+     xlab = "", ylab = "Lead Coefficient Estimate",
+     xaxt = "n", pch = 19, cex = 2,
+     main = "Comparison of Lead Effect Estimates")
+axis(1, at = 1:2, labels = methods)
+segments(1:2, ci_low, 1:2, ci_high, lwd = 3)
+abline(h = 0, lty = 2, col = "red")
+grid()
+
+# Plot 2: Coefficient comparison with SE bars
+comparison_df <- data.frame(
+  Method = factor(methods, levels = methods),
+  Estimate = estimates,
+  SE = se,
+  CI_Low = ci_low,
+  CI_High = ci_high
+)
+
+ggplot(comparison_df, aes(x = Method, y = Estimate, fill = Method)) +
+  geom_bar(stat = "identity", alpha = 0.7, width = 0.6) +
+  geom_errorbar(aes(ymin = CI_Low, ymax = CI_High),
+                width = 0.2, size = 1) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", size = 1) +
+  scale_fill_manual(values = c("Complete-Case" = "steelblue",
+                                "Multiple Imputation" = "coral")) +
+  labs(title = "Lead Effect on IQ: Method Comparison",
+       subtitle = "Bars show point estimates, error bars show 95% CI",
+       y = "Change in IQ per 1 μg/dL increase in lead",
+       x = "") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        text = element_text(size = 12))
+
+par(mfrow = c(1, 1))
+```
+
+## Statistical Comparison
+
+```{r statistical-comparison}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("STATISTICAL COMPARISON OF METHODS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Check if confidence intervals overlap
+ci_overlap <- !(lead_coef$conf.high < lead_pooled$`2.5 %` |
+                lead_pooled$`97.5 %` < lead_coef$conf.low)
+
+cat("\n1. CONFIDENCE INTERVAL OVERLAP:\n")
+cat("   Complete-case 95% CI: [", round(lead_coef$conf.low, 4), ",",
+    round(lead_coef$conf.high, 4), "]\n", sep = "")
+cat("   Multiple imputation 95% CI: [", round(lead_pooled$`2.5 %`, 4), ",",
+    round(lead_pooled$`97.5 %`, 4), "]\n", sep = "")
+
+if(ci_overlap) {
+  cat("   → Confidence intervals OVERLAP\n")
+  cat("   → Estimates are not significantly different from each other\n")
+} else {
+  cat("   → Confidence intervals DO NOT overlap\n")
+  cat("   → Estimates may be significantly different\n")
+}
+
+# Relative efficiency
+relative_var <- (lead_coef$std.error^2) / (lead_pooled$std.error^2)
+cat("\n2. RELATIVE EFFICIENCY:\n")
+cat("   Variance ratio (Complete/Imputed):", round(relative_var, 4), "\n")
+if(relative_var > 1) {
+  cat("   → Multiple imputation is MORE efficient\n")
+  cat("      (", round((relative_var - 1) * 100, 1),
+      "% reduction in variance)\n", sep = "")
+} else {
+  cat("   → Complete-case is MORE efficient\n")
+}
+
+# Impact of missing data
+cat("\n3. IMPACT OF MISSING DATA:\n")
+cat("   Percentage of data missing:", round(missing_pct, 2), "%\n")
+
+# Display FMI and RIV if available
+fmi_value <- NULL
+if("fmi" %in% names(lead_pooled)) {
+  fmi_value <- lead_pooled$fmi
+  cat("   Fraction of Missing Information (FMI):", round(fmi_value, 4), "\n")
+} else if("lambda" %in% names(lead_pooled)) {
+  fmi_value <- lead_pooled$lambda
+  cat("   Fraction of Missing Information (lambda):", round(fmi_value, 4), "\n")
+}
+
+if("riv" %in% names(lead_pooled)) {
+  cat("   Relative Increase in Variance (RIV):", round(lead_pooled$riv, 4), "\n")
+}
+cat("\n")
+
+# Assess impact based on FMI if available
+if(!is.null(fmi_value)) {
+  if(fmi_value > 0.3) {
+    cat("   → HIGH fraction of missing information\n")
+    cat("   → Multiple imputation likely provides substantial benefit\n")
+  } else if(fmi_value > 0.1) {
+    cat("   → MODERATE fraction of missing information\n")
+    cat("   → Multiple imputation may provide some benefit\n")
+  } else {
+    cat("   → LOW fraction of missing information\n")
+    cat("   → Both methods likely similar\n")
+  }
+} else {
+  cat("   → Assessment based on", round(missing_pct, 1), "% missing data\n")
+  if(missing_pct > 20) {
+    cat("   → Multiple imputation likely beneficial\n")
+  } else if(missing_pct > 10) {
+    cat("   → Multiple imputation may provide some benefit\n")
+  } else {
+    cat("   → Both methods likely similar\n")
+  }
+}
+```
+
+## Overall Assessment
+
+```{r overall-assessment}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("OVERALL ASSESSMENT - PROBLEM 13.84\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\n\nANSWER TO PROBLEM 13.84:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+
+cat("\n1. MAGNITUDE OF ESTIMATES:\n")
+if(abs(pct_diff_estimate) < 10) {
+  cat("   The two methods yield VERY SIMILAR estimates of the lead effect.\n")
+  cat("   Difference is only", round(abs(pct_diff_estimate), 1),
+      "% (", round(diff_estimate, 4), " points).\n", sep = "")
+} else if(abs(pct_diff_estimate) < 25) {
+  cat("   The two methods yield MODERATELY DIFFERENT estimates.\n")
+  cat("   Difference is", round(abs(pct_diff_estimate), 1),
+      "% (", round(diff_estimate, 4), " points).\n", sep = "")
+} else {
+  cat("   The two methods yield SUBSTANTIALLY DIFFERENT estimates.\n")
+  cat("   Difference is", round(abs(pct_diff_estimate), 1),
+      "% (", round(diff_estimate, 4), " points).\n", sep = "")
+}
+
+cat("\n2. PRECISION:\n")
+if(abs(pct_diff_se) < 10) {
+  cat("   Both methods provide SIMILAR precision.\n")
+} else {
+  cat("   Multiple imputation provides",
+      ifelse(lead_pooled$std.error < lead_coef$std.error, "GREATER", "LOWER"),
+      "precision.\n")
+  cat("   Standard error differs by", round(abs(pct_diff_se), 1), "%.\n")
+}
+
+cat("\n3. STATISTICAL INFERENCE:\n")
+if((lead_coef$p.value < 0.05) == (lead_pooled$p.value < 0.05)) {
+  cat("   Both methods lead to the SAME CONCLUSION regarding statistical significance.\n")
+  if(lead_coef$p.value < 0.05) {
+    cat("   Both find a SIGNIFICANT lead effect on IQ.\n")
+  } else {
+    cat("   Both find NO significant lead effect on IQ.\n")
+  }
+} else {
+  cat("   Methods lead to DIFFERENT CONCLUSIONS about statistical significance!\n")
+  cat("   This suggests the result is sensitive to missing data handling.\n")
+}
+
+cat("\n4. ADVANTAGES OF MULTIPLE IMPUTATION:\n")
+cat("   ✓ Uses ALL available data (n =", total_n,
+    "vs", n_complete, ")\n", sep = " ")
+cat("   ✓ Accounts for uncertainty in missing values\n")
+cat("   ✓ Provides valid inference under MAR assumption\n")
+cat("   ✓ More efficient if missingness is informative\n")
+
+cat("\n5. ADVANTAGES OF COMPLETE-CASE:\n")
+cat("   ✓ Simple and transparent\n")
+cat("   ✓ No modeling assumptions about missing data\n")
+cat("   ✓ Valid if data are MCAR (missing completely at random)\n")
+
+cat("\n6. RECOMMENDATION:\n")
+
+# Check if missing data is related to outcomes
+if(t_test_iq$p.value < 0.1 || t_test_age$p.value < 0.1 || chi_test_sex$p.value < 0.1) {
+  cat("   → Missing data appears RELATED to observed variables\n")
+  cat("     (significant differences found in missingness pattern)\n")
+  cat("   → PREFER MULTIPLE IMPUTATION for more valid inference\n")
+  cat("   → Complete-case may introduce bias\n")
+} else {
+  cat("   → Missing data appears UNRELATED to observed variables\n")
+  cat("     (no significant differences in missingness pattern)\n")
+  cat("   → Both methods likely provide similar validity\n")
+  if(missing_pct > 10) {
+    cat("   → Given", round(missing_pct, 1),
+        "% missing, MULTIPLE IMPUTATION preferred for efficiency\n")
+  } else {
+    cat("   → Given low missingness (", round(missing_pct, 1),
+        "%), either method acceptable\n", sep = "")
+  }
+}
+
+cat("\n\nFINAL ANSWER:\n")
+cat("Based on this comparison, we",
+    ifelse(missing_pct > 10 || t_test_iq$p.value < 0.1, "RECOMMEND", "SUGGEST"),
+    "using the MULTIPLE IMPUTATION results\n")
+cat("as the primary analysis, with complete-case as a sensitivity analysis.\n")
+```
+
+# Summary
+
+```{r final-summary}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("COMPREHENSIVE SUMMARY\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\n\nRESEARCH QUESTION:\n")
+cat("Does lead exposure in 1972 (LD72) affect full-scale IQ (IQF),\n")
+cat("after controlling for age and sex?\n\n")
+
+cat("DATA CHARACTERISTICS:\n")
+cat("• Total sample size:", total_n, "children\n")
+cat("• Complete cases:", n_complete, "\n")
+cat("• Missing ld72:", missing_ld72, "(", round(missing_pct, 1), "%)\n\n", sep = "")
+
+cat("KEY FINDINGS:\n\n")
+
+cat("Problem 13.82 - Complete-Case Analysis:\n")
+cat("  n =", n_complete, "\n")
+cat("  β(ld72) =", round(lead_coef$estimate, 4),
+    "[95% CI:", round(lead_coef$conf.low, 4),
+    "to", round(lead_coef$conf.high, 4), "]\n")
+cat("  p =", format.pval(lead_coef$p.value, digits = 4), "\n")
+cat("  ", ifelse(lead_coef$p.value < 0.05, "SIGNIFICANT", "NOT SIGNIFICANT"), "\n\n")
+
+cat("Problem 13.83 - Multiple Imputation:\n")
+cat("  n =", total_n, "(all observations used)\n")
+cat("  β(ld72) =", round(lead_pooled$estimate, 4),
+    "[95% CI:", round(lead_pooled$`2.5 %`, 4),
+    "to", round(lead_pooled$`97.5 %`, 4), "]\n")
+cat("  p =", format.pval(lead_pooled$p.value, digits = 4), "\n")
+cat("  ", ifelse(lead_pooled$p.value < 0.05, "SIGNIFICANT", "NOT SIGNIFICANT"), "\n")
+if("fmi" %in% names(lead_pooled)) {
+  cat("  FMI =", round(lead_pooled$fmi, 4), "\n")
+} else if("lambda" %in% names(lead_pooled)) {
+  cat("  Lambda =", round(lead_pooled$lambda, 4), "\n")
+}
+cat("\n")
+
+cat("Problem 13.84 - Comparison:\n")
+cat("  Estimates differ by:", round(abs(diff_estimate), 4),
+    "(", round(abs(pct_diff_estimate), 1), "%)\n", sep = "")
+cat("  Standard errors differ by:", round(abs(diff_se), 4),
+    "(", round(abs(pct_diff_se), 1), "%)\n", sep = "")
+cat("  Conclusions:",
+    ifelse((lead_coef$p.value < 0.05) == (lead_pooled$p.value < 0.05),
+           "AGREE", "DIFFER"), "\n\n")
+
+cat("INTERPRETATION:\n")
+if(lead_pooled$p.value < 0.05 && lead_pooled$estimate < 0) {
+  cat("Higher lead exposure in 1972 is associated with LOWER IQ scores.\n")
+  cat("Each 1 μg/dL increase in lead is associated with approximately\n")
+  cat(abs(round(lead_pooled$estimate, 2)),
+      "point decrease in IQ (based on multiple imputation).\n")
+  cat("This effect is statistically significant and persists after\n")
+  cat("controlling for age and sex.\n")
+} else if(lead_pooled$p.value < 0.05 && lead_pooled$estimate > 0) {
+  cat("Higher lead exposure in 1972 is associated with HIGHER IQ scores.\n")
+  cat("This finding is unexpected and should be interpreted cautiously.\n")
+} else {
+  cat("No statistically significant association found between lead exposure\n")
+  cat("and IQ scores after controlling for age and sex.\n")
+}
+
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("END OF ANALYSIS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

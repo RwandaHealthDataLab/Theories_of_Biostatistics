@@ -1,0 +1,654 @@
+---
+title: "Otolaryngology: Ear Infection Treatment - GEE Analysis"
+subtitle: "Problem 13.53 - Correlated Binary Data Analysis Using Ear as Unit"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    code_folding: show
+    theme: simplex
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Problem Statement
+
+**Problem 13.53**: Use correlated binary data methods to relate clearance of an ear by 14 days to antibiotic type and age. Use the **ear as the unit of analysis**.
+
+**Hint**: Use generalized estimating equation (GEE) methods.
+
+# Background
+
+## Clinical Context
+
+This analysis differs from Problem 13.52:
+
+- **Problem 13.52**: Subject-level analysis (subject cured if both ears clear for bilateral cases)
+- **Problem 13.53**: **Ear-level analysis** (each ear is a separate observation)
+
+## Why GEE?
+
+For subjects with bilateral ear infections:
+
+- **Two ears from the same subject are correlated** (not independent)
+- Standard logistic regression assumes independence
+- **GEE accounts for within-subject correlation** while providing valid inference
+
+### Key Features of GEE:
+
+1. **Working correlation structure**: Models how two ears from same subject relate
+2. **Robust standard errors**: Valid even if correlation structure misspecified
+3. **Population-averaged effects**: Marginal interpretation (average effect across population)
+
+# Load Required Libraries
+
+```{r load-libraries}
+library(tidyverse)      # Data manipulation and visualization
+library(knitr)          # Tables
+library(ggplot2)        # Advanced plotting
+library(gee)            # Generalized Estimating Equations
+library(geepack)        # GEE with more options
+library(broom)          # Tidy model outputs
+library(gridExtra)      # Multiple plots
+library(scales)         # Scale functions
+```
+
+# Load and Prepare Data
+
+## Load EAR.DAT
+
+```{r load-data}
+# Load ear infection data
+ear_data <- read.table("../EAR.DAT.txt",
+                       header = TRUE,
+                       sep = ",",
+                       quote = "'\"",
+                       strip.white = TRUE)
+
+cat("Dataset dimensions:", nrow(ear_data), "records (ears)\n")
+cat("\nFirst 20 rows:\n")
+kable(head(ear_data, 20),
+      caption = "EAR.DAT - Ear-Level Data (First 20 Records)")
+```
+
+## Data Structure for Ear-Level Analysis
+
+```{r data-structure}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("DATA STRUCTURE FOR EAR-LEVEL ANALYSIS\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# For GEE, we use the ear-level data directly
+# Each row represents one ear
+
+# Add descriptive labels
+ear_gee_data <- ear_data %>%
+  mutate(
+    # Outcome: ear cleared (1=yes, 0=no)
+    cleared = Clear,
+
+    # Predictors
+    antibiotic = factor(Antibo, levels = 1:2,
+                       labels = c("Antibiotic 1", "Antibiotic 2")),
+    age_group = factor(Age, levels = 1:3,
+                      labels = c("Age Group 1", "Age Group 2", "Age Group 3")),
+    ear_side = factor(Ear, levels = 1:2,
+                     labels = c("Left", "Right")),
+
+    # Subject ID for clustering
+    subject_id = Id
+  ) %>%
+  arrange(subject_id, ear_side)  # Important: sort by subject and ear
+
+cat("Ear-level dataset prepared.\n")
+cat("Total observations (ears):", nrow(ear_gee_data), "\n\n")
+
+# Summary
+str(ear_gee_data)
+```
+
+## Count Observations per Subject
+
+```{r obs-per-subject}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("OBSERVATIONS PER SUBJECT\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+obs_per_subject <- ear_gee_data %>%
+  group_by(subject_id) %>%
+  summarise(
+    n_ears = n(),
+    .groups = 'drop'
+  )
+
+cat("Distribution of ears per subject:\n")
+table(obs_per_subject$n_ears)
+
+cat("\n\nUnilateral cases (1 ear): ", sum(obs_per_subject$n_ears == 1), " subjects\n")
+cat("Bilateral cases (2 ears): ", sum(obs_per_subject$n_ears == 2), " subjects\n")
+cat("\nTotal subjects:", nrow(obs_per_subject), "\n")
+cat("Total ears:", nrow(ear_gee_data), "\n")
+```
+
+## Summary Statistics (Ear-Level)
+
+```{r summary-stats}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("SUMMARY STATISTICS (EAR-LEVEL)\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Overall clearance rate
+overall_clear <- ear_gee_data %>%
+  summarise(
+    n_ears = n(),
+    n_cleared = sum(cleared),
+    clearance_rate = mean(cleared)
+  )
+
+cat("Overall:\n")
+cat("  Total ears:", overall_clear$n_ears, "\n")
+cat("  Cleared:", overall_clear$n_cleared, "\n")
+cat("  Clearance rate:", round(overall_clear$clearance_rate * 100, 2), "%\n\n")
+
+# By antibiotic
+by_antibiotic <- ear_gee_data %>%
+  group_by(antibiotic) %>%
+  summarise(
+    n_ears = n(),
+    n_cleared = sum(cleared),
+    clearance_rate = mean(cleared),
+    .groups = 'drop'
+  )
+
+cat("By Antibiotic:\n")
+kable(by_antibiotic, digits = 3,
+      caption = "Clearance Rates by Antibiotic (Ear-Level)")
+
+# By age group
+by_age <- ear_gee_data %>%
+  group_by(age_group) %>%
+  summarise(
+    n_ears = n(),
+    n_cleared = sum(cleared),
+    clearance_rate = mean(cleared),
+    .groups = 'drop'
+  )
+
+cat("\n\nBy Age Group:\n")
+kable(by_age, digits = 3,
+      caption = "Clearance Rates by Age Group (Ear-Level)")
+
+# By ear side
+by_ear <- ear_gee_data %>%
+  group_by(ear_side) %>%
+  summarise(
+    n_ears = n(),
+    n_cleared = sum(cleared),
+    clearance_rate = mean(cleared),
+    .groups = 'drop'
+  )
+
+cat("\n\nBy Ear Side:\n")
+kable(by_ear, digits = 3,
+      caption = "Clearance Rates by Ear Side")
+
+# Cross-tabulation
+cross_tab <- ear_gee_data %>%
+  group_by(antibiotic, age_group) %>%
+  summarise(
+    n_ears = n(),
+    n_cleared = sum(cleared),
+    clearance_rate = mean(cleared),
+    .groups = 'drop'
+  )
+
+cat("\n\nCross-tabulation: Antibiotic × Age Group\n")
+kable(cross_tab, digits = 3)
+```
+
+# Exploratory Visualizations
+
+```{r exploratory-viz, fig.height=10}
+# Clearance rates by antibiotic
+p1 <- ggplot(by_antibiotic, aes(x = antibiotic, y = clearance_rate,
+                                 fill = antibiotic)) +
+  geom_col(alpha = 0.7) +
+  geom_text(aes(label = paste0(round(clearance_rate * 100, 1), "%")),
+            vjust = -0.5, size = 5) +
+  labs(title = "Ear Clearance Rates by Antibiotic",
+       subtitle = "Ear-level analysis",
+       x = "Antibiotic",
+       y = "Clearance Rate") +
+  scale_y_continuous(labels = percent_format(), limits = c(0, 1)) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Clearance rates by age
+p2 <- ggplot(by_age, aes(x = age_group, y = clearance_rate, fill = age_group)) +
+  geom_col(alpha = 0.7) +
+  geom_text(aes(label = paste0(round(clearance_rate * 100, 1), "%")),
+            vjust = -0.5, size = 5) +
+  labs(title = "Ear Clearance Rates by Age Group",
+       x = "Age Group",
+       y = "Clearance Rate") +
+  scale_y_continuous(labels = percent_format(), limits = c(0, 1)) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Grouped bar plot
+p3 <- ggplot(cross_tab, aes(x = antibiotic, y = clearance_rate, fill = age_group)) +
+  geom_col(position = position_dodge(0.9), alpha = 0.7) +
+  geom_text(aes(label = paste0(round(clearance_rate * 100, 1), "%")),
+            position = position_dodge(0.9), vjust = -0.5, size = 3) +
+  labs(title = "Ear Clearance Rates by Antibiotic and Age",
+       x = "Antibiotic",
+       y = "Clearance Rate",
+       fill = "Age Group") +
+  scale_y_continuous(labels = percent_format(), limits = c(0, 1)) +
+  scale_fill_brewer(palette = "Set3") +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+# Clearance by ear side
+p4 <- ggplot(by_ear, aes(x = ear_side, y = clearance_rate, fill = ear_side)) +
+  geom_col(alpha = 0.7) +
+  geom_text(aes(label = paste0(round(clearance_rate * 100, 1), "%")),
+            vjust = -0.5, size = 5) +
+  labs(title = "Ear Clearance Rates by Side",
+       x = "Ear Side",
+       y = "Clearance Rate") +
+  scale_y_continuous(labels = percent_format(), limits = c(0, 1)) +
+  scale_fill_brewer(palette = "Dark2") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+# Problem 13.53: GEE Analysis
+
+## GEE Model with Exchangeable Correlation
+
+```{r gee-exchangeable}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("PROBLEM 13.53: GEE ANALYSIS - EXCHANGEABLE CORRELATION\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Fit GEE model with exchangeable correlation structure
+# This assumes two ears from same subject have same correlation
+
+gee_exch <- geeglm(cleared ~ antibiotic + age_group,
+                   data = ear_gee_data,
+                   id = subject_id,
+                   family = binomial(link = "logit"),
+                   corstr = "exchangeable")
+
+summary(gee_exch)
+
+cat("\n\nModel Formula:\n")
+cat("logit(P(ear cleared)) = β0 + β1·(Antibiotic 2) + β2·(Age Group 2) + β3·(Age Group 3)\n")
+cat("\nClustering: Subject ID\n")
+cat("Correlation Structure: Exchangeable (same correlation for both ears)\n")
+```
+
+## Working Correlation
+
+```{r working-correlation}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("ESTIMATED WORKING CORRELATION\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Extract correlation
+cat("Working correlation parameter (alpha):\n")
+print(summary(gee_exch)$corr)
+
+cat("\n\nInterpretation:\n")
+cat("- This represents the estimated correlation between two ears\n")
+cat("  from the same subject\n")
+cat("- Positive correlation indicates ears from same subject tend to\n")
+cat("  have similar outcomes\n")
+```
+
+## Coefficient Interpretation
+
+```{r gee-interpretation}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("GEE COEFFICIENT INTERPRETATION\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Get coefficients and odds ratios
+gee_coef <- tidy(gee_exch)
+gee_coef$OR <- exp(gee_coef$estimate)
+gee_coef$OR_lower <- exp(gee_coef$estimate - 1.96 * gee_coef$std.error)
+gee_coef$OR_upper <- exp(gee_coef$estimate + 1.96 * gee_coef$std.error)
+
+cat("COEFFICIENTS (Log-Odds Scale):\n")
+kable(gee_coef %>% select(term, estimate, std.error, statistic, p.value),
+      digits = 4,
+      caption = "GEE Coefficients with Robust Standard Errors")
+
+cat("\n\nODDS RATIOS (Population-Averaged):\n")
+kable(gee_coef %>% select(term, OR, OR_lower, OR_upper, p.value),
+      digits = 4,
+      col.names = c("Variable", "Odds Ratio", "95% CI Lower",
+                   "95% CI Upper", "p-value"),
+      caption = "Population-Averaged Odds Ratios from GEE")
+
+cat("\n\nINTERPRETATION:\n\n")
+
+# Antibiotic effect
+ab_row <- gee_coef %>% filter(grepl("Antibiotic 2", term))
+if(nrow(ab_row) > 0) {
+  cat("1. ANTIBIOTIC EFFECT:\n")
+  cat("   - Odds Ratio:", round(ab_row$OR, 3), "\n")
+  cat("   - 95% CI: (", round(ab_row$OR_lower, 3), ",",
+      round(ab_row$OR_upper, 3), ")\n")
+  cat("   - p-value:", format.pval(ab_row$p.value, digits = 4), "\n")
+  if(ab_row$p.value < 0.05) {
+    if(ab_row$OR > 1) {
+      cat("   - Antibiotic 2 has SIGNIFICANTLY HIGHER odds of ear clearance (p < 0.05)\n")
+    } else {
+      cat("   - Antibiotic 2 has SIGNIFICANTLY LOWER odds of ear clearance (p < 0.05)\n")
+    }
+  } else {
+    cat("   - No significant difference between antibiotics (p >= 0.05)\n")
+  }
+  cat("\n   Population interpretation: On average across the population,\n")
+  cat("   Antibiotic 2", ifelse(ab_row$OR > 1, "increases", "decreases"),
+      "the odds of ear clearance by\n")
+  cat("   a factor of", round(ab_row$OR, 2), "compared to Antibiotic 1.\n")
+}
+
+# Age effects
+cat("\n2. AGE EFFECTS:\n")
+age2_row <- gee_coef %>% filter(grepl("Age Group 2", term))
+age3_row <- gee_coef %>% filter(grepl("Age Group 3", term))
+
+if(nrow(age2_row) > 0) {
+  cat("   Age Group 2 vs Age Group 1:\n")
+  cat("     - Odds Ratio:", round(age2_row$OR, 3), "\n")
+  cat("     - 95% CI: (", round(age2_row$OR_lower, 3), ",",
+      round(age2_row$OR_upper, 3), ")\n")
+  cat("     - p-value:", format.pval(age2_row$p.value, digits = 4), "\n")
+  cat("     - ", ifelse(age2_row$p.value < 0.05, "Significant", "Not significant"), "\n\n")
+}
+
+if(nrow(age3_row) > 0) {
+  cat("   Age Group 3 vs Age Group 1:\n")
+  cat("     - Odds Ratio:", round(age3_row$OR, 3), "\n")
+  cat("     - 95% CI: (", round(age3_row$OR_lower, 3), ",",
+      round(age3_row$OR_upper, 3), ")\n")
+  cat("     - p-value:", format.pval(age3_row$p.value, digits = 4), "\n")
+  cat("     - ", ifelse(age3_row$p.value < 0.05, "Significant", "Not significant"), "\n")
+}
+```
+
+## Alternative Correlation Structures
+
+```{r alternative-corr}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("SENSITIVITY ANALYSIS: ALTERNATIVE CORRELATION STRUCTURES\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Independence
+gee_indep <- geeglm(cleared ~ antibiotic + age_group,
+                    data = ear_gee_data,
+                    id = subject_id,
+                    family = binomial(link = "logit"),
+                    corstr = "independence")
+
+# Unstructured (allows different correlations, but requires enough data)
+# For binary data with 2 observations per cluster, unstructured = exchangeable
+
+cat("Model comparison:\n\n")
+
+# Compare QIC (lower is better)
+cat("1. EXCHANGEABLE CORRELATION:\n")
+cat("   QIC:", QIC(gee_exch)[1], "\n")
+cat("   Working correlation:", summary(gee_exch)$corr[1], "\n\n")
+
+cat("2. INDEPENDENCE (naive model, ignores correlation):\n")
+cat("   QIC:", QIC(gee_indep)[1], "\n\n")
+
+cat("Conclusion: Lower QIC indicates better model fit.\n")
+if(QIC(gee_exch)[1] < QIC(gee_indep)[1]) {
+  cat("The exchangeable correlation model fits better, confirming\n")
+  cat("that ears from the same subject are correlated.\n")
+} else {
+  cat("The independence model fits better, suggesting minimal\n")
+  cat("within-subject correlation.\n")
+}
+```
+
+## Comparison with Naive Logistic Regression
+
+```{r naive-vs-gee}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("COMPARISON: NAIVE LOGISTIC REGRESSION vs GEE\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Naive logistic regression (ignores clustering)
+naive_logit <- glm(cleared ~ antibiotic + age_group,
+                   data = ear_gee_data,
+                   family = binomial(link = "logit"))
+
+naive_coef <- tidy(naive_logit, conf.int = TRUE)
+naive_coef$OR <- exp(naive_coef$estimate)
+
+cat("NAIVE LOGISTIC REGRESSION (ignores within-subject correlation):\n")
+kable(naive_coef %>% filter(term != "(Intercept)") %>%
+        select(term, estimate, std.error, p.value, OR),
+      digits = 4,
+      caption = "Naive Logistic Regression Results")
+
+cat("\n\nGEE (accounts for within-subject correlation):\n")
+kable(gee_coef %>% filter(term != "(Intercept)") %>%
+        select(term, estimate, std.error, p.value, OR),
+      digits = 4,
+      caption = "GEE Results with Robust Standard Errors")
+
+cat("\n\nKEY DIFFERENCES:\n")
+cat("1. Coefficient estimates are similar (both estimate same parameters)\n")
+cat("2. Standard errors differ:\n")
+cat("   - Naive SE ignores correlation → may be too small\n")
+cat("   - GEE robust SE accounts for correlation → more reliable\n")
+cat("3. P-values may differ due to different standard errors\n")
+cat("4. GEE provides valid inference even with correlation\n\n")
+
+# Compare standard errors
+cat("Standard Error Comparison:\n")
+se_compare <- data.frame(
+  Term = gee_coef$term[gee_coef$term != "(Intercept)"],
+  Naive_SE = naive_coef$std.error[naive_coef$term != "(Intercept)"],
+  GEE_SE = gee_coef$std.error[gee_coef$term != "(Intercept)"],
+  Ratio = gee_coef$std.error[gee_coef$term != "(Intercept)"] /
+          naive_coef$std.error[naive_coef$term != "(Intercept)"]
+)
+
+kable(se_compare, digits = 4,
+      col.names = c("Variable", "Naive SE", "GEE SE", "GEE/Naive Ratio"),
+      caption = "Standard Error Comparison")
+
+cat("\n\nInterpretation of SE Ratio:\n")
+cat("- Ratio > 1: GEE SE is larger (correlation increases uncertainty)\n")
+cat("- Ratio < 1: GEE SE is smaller (correlation reduces uncertainty)\n")
+cat("- Ratio ≈ 1: Little impact of correlation\n")
+```
+
+## Visualization of GEE Results
+
+```{r gee-viz, fig.height=8}
+# Forest plot of odds ratios
+forest_data <- gee_coef %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+    term_clean = case_when(
+      grepl("Antibiotic 2", term) ~ "Antibiotic 2 vs 1",
+      grepl("Age Group 2", term) ~ "Age Group 2 vs 1",
+      grepl("Age Group 3", term) ~ "Age Group 3 vs 1",
+      TRUE ~ term
+    ),
+    significant = p.value < 0.05
+  )
+
+ggplot(forest_data, aes(x = OR, y = reorder(term_clean, OR))) +
+  geom_point(size = 4, aes(color = significant)) +
+  geom_errorbarh(aes(xmin = OR_lower, xmax = OR_upper, color = significant),
+                 height = 0.2, linewidth = 1) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "red", linewidth = 1) +
+  scale_color_manual(values = c("FALSE" = "gray50", "TRUE" = "#2E7D32"),
+                    labels = c("Not significant", "Significant (p<0.05)")) +
+  labs(title = "GEE Analysis: Odds Ratios for Ear Clearance",
+       subtitle = "Population-averaged effects with 95% confidence intervals",
+       x = "Odds Ratio (log scale)",
+       y = "Predictor",
+       color = "Statistical Significance") +
+  scale_x_log10(breaks = c(0.25, 0.5, 1, 2, 4)) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+## Predicted Probabilities
+
+```{r predicted-probs}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("PREDICTED PROBABILITIES\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Create prediction dataset
+pred_data <- expand.grid(
+  antibiotic = factor(c("Antibiotic 1", "Antibiotic 2"),
+                     levels = c("Antibiotic 1", "Antibiotic 2")),
+  age_group = factor(c("Age Group 1", "Age Group 2", "Age Group 3"),
+                    levels = c("Age Group 1", "Age Group 2", "Age Group 3"))
+)
+
+# Get predictions
+pred_data$pred_logit <- predict(gee_exch, newdata = pred_data, type = "link")
+pred_data$pred_prob <- plogis(pred_data$pred_logit)
+
+# Calculate approximate 95% CI (using delta method approximation)
+# For simplicity, using ±1.96 SE on logit scale then transforming
+pred_data$se_logit <- sqrt(diag(predict(gee_exch, newdata = pred_data, type = "link",
+                                        se.fit = FALSE)))
+
+cat("Predicted Ear Clearance Probabilities:\n")
+kable(pred_data %>% select(antibiotic, age_group, pred_prob),
+      digits = 3,
+      col.names = c("Antibiotic", "Age Group", "Predicted Probability"),
+      caption = "Predicted Probabilities of Ear Clearance")
+
+# Visualization
+ggplot(pred_data, aes(x = age_group, y = pred_prob, fill = antibiotic)) +
+  geom_col(position = position_dodge(0.9), alpha = 0.7) +
+  geom_text(aes(label = paste0(round(pred_prob * 100, 1), "%")),
+            position = position_dodge(0.9), vjust = -0.5, size = 4) +
+  labs(title = "Predicted Ear Clearance Probabilities from GEE Model",
+       subtitle = "Population-averaged predictions",
+       x = "Age Group",
+       y = "Predicted Probability of Clearance",
+       fill = "Antibiotic") +
+  scale_y_continuous(labels = percent_format(), limits = c(0, 1)) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(legend.position = "top")
+```
+
+# Summary of Results
+
+```{r summary}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("SUMMARY: PROBLEM 13.53\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+cat("ANALYSIS APPROACH:\n")
+cat("  Method: Generalized Estimating Equations (GEE)\n")
+cat("  Unit of Analysis: Individual ear\n")
+cat("  Clustering: Ears within same subject\n")
+cat("  Correlation Structure: Exchangeable\n")
+cat("  Link Function: Logit\n\n")
+
+cat("DATA SUMMARY:\n")
+cat("  Total ears:", nrow(ear_gee_data), "\n")
+cat("  Total subjects:", length(unique(ear_gee_data$subject_id)), "\n")
+cat("  Unilateral cases:", sum(obs_per_subject$n_ears == 1), "\n")
+cat("  Bilateral cases:", sum(obs_per_subject$n_ears == 2), "\n")
+cat("  Overall clearance rate:", round(mean(ear_gee_data$cleared) * 100, 1), "%\n\n")
+
+cat("WORKING CORRELATION:\n")
+cat("  Estimated correlation between ears:", round(summary(gee_exch)$corr[1], 3), "\n")
+cat("  Interpretation: Ears from same subject have",
+    ifelse(summary(gee_exch)$corr[1] > 0, "positive", "negative"),
+    "correlation\n\n")
+
+cat("MODEL RESULTS (SIGNIFICANT PREDICTORS at α = 0.05):\n")
+sig_pred <- gee_coef %>% filter(p.value < 0.05, term != "(Intercept)")
+if(nrow(sig_pred) > 0) {
+  for(i in 1:nrow(sig_pred)) {
+    cat("  -", sig_pred$term[i], "\n")
+    cat("    OR =", round(sig_pred$OR[i], 3),
+        "(95% CI:", round(sig_pred$OR_lower[i], 3), "-",
+        round(sig_pred$OR_upper[i], 3), ")\n")
+    cat("    p =", format.pval(sig_pred$p.value[i], digits = 3), "\n")
+  }
+} else {
+  cat("  None\n")
+}
+
+cat("\nNON-SIGNIFICANT PREDICTORS:\n")
+nonsig_pred <- gee_coef %>% filter(p.value >= 0.05, term != "(Intercept)")
+if(nrow(nonsig_pred) > 0) {
+  for(i in 1:nrow(nonsig_pred)) {
+    cat("  -", nonsig_pred$term[i], "(p =", format.pval(nonsig_pred$p.value[i], digits = 3), ")\n")
+  }
+} else {
+  cat("  None\n")
+}
+
+cat("\nMODEL FIT:\n")
+cat("  QIC (exchangeable):", round(QIC(gee_exch)[1], 2), "\n")
+cat("  QIC (independence):", round(QIC(gee_indep)[1], 2), "\n")
+cat("  Preferred model:",
+    ifelse(QIC(gee_exch)[1] < QIC(gee_indep)[1], "Exchangeable", "Independence"), "\n\n")
+
+cat("COMPARISON WITH PROBLEM 13.52:\n")
+cat("  Problem 13.52: Subject-level analysis (both ears must clear)\n")
+cat("  Problem 13.53: Ear-level analysis (each ear analyzed separately)\n")
+cat("  Problem 13.52: Standard logistic regression\n")
+cat("  Problem 13.53: GEE to account for within-subject correlation\n\n")
+
+cat("CLINICAL INTERPRETATION:\n")
+cat("  GEE provides population-averaged effects of antibiotic and age\n")
+cat("  on ear clearance. The robust standard errors account for the\n")
+cat("  correlation between ears from the same subject, providing valid\n")
+cat("  statistical inference.\n")
+
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+```
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

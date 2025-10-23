@@ -1,0 +1,1004 @@
+---
+title: "Cancer - Breast Cancer Risk Factors Study"
+subtitle: "Problems 13.117-13.119: Matched Logistic Regression Analysis"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    code_folding: show
+    theme: united
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  comment = NA
+)
+```
+
+# Introduction
+
+## Study Overview
+
+This analysis examines a **matched case-control study** investigating plasma risk factors for **breast cancer**. The study design includes:
+
+- **Cases**: Women with breast cancer
+- **Controls**: 1-2 controls per case
+- **Matching variables**: Age at blood draw, fasting status, current PMH use
+- **Exposure of interest**: Testosterone levels
+- **Analysis approach**: Conditional logistic regression (matched analysis)
+
+## Research Questions
+
+**Problem 13.117**: Assess the association between testosterone (continuous, transformed if needed) and breast cancer risk, controlling for age and PMH use, accounting for matching.
+
+**Problem 13.118**: Assess the association using testosterone quartiles (categorical), with 1st quartile as reference.
+
+**Problem 13.119**: Compare and discuss results from both approaches.
+
+## Key Statistical Concepts
+
+- **Matched case-control design**: Requires conditional logistic regression
+- **Conditional likelihood**: Conditions on matched sets, eliminates matched set effects
+- **Odds ratios**: Primary measure of association
+- **Dose-response**: Assessed using categorical analysis
+- **Model comparison**: Continuous vs categorical exposure modeling
+
+# Data Preparation
+
+## Load Required Packages
+
+```{r load-packages}
+# Load required libraries
+library(tidyverse)
+library(survival)     # For conditional logistic regression (clogit)
+library(broom)        # Tidy model outputs
+library(knitr)        # Tables
+library(ggplot2)      # Visualization
+library(gridExtra)    # Multiple plots
+library(car)          # For VIF and diagnostic tests
+
+# Set options
+options(contrasts = c("contr.treatment", "contr.poly"))
+```
+
+## Load and Inspect Data
+
+```{r load-data}
+# Read the data
+blood_data <- read.table("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-tab/BLOOD.DAT.txt",
+                         header = TRUE, sep = "\t")
+
+# Display data structure
+cat("Dataset Structure:\n")
+str(blood_data)
+
+cat("\n\nFirst few rows:\n")
+head(blood_data, 15)
+
+cat("\n\nVariable names:\n")
+names(blood_data)
+
+cat("\n\nSummary statistics:\n")
+summary(blood_data)
+```
+
+## Data Cleaning and Preparation
+
+```{r clean-data}
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("DATA CLEANING AND PREPARATION\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Identify key variables
+# Expected variables: matchid, case status, age, testosterone, PMH use
+
+# Check for case/control indicator
+case_vars <- grep("case|status|cancer|outcome", names(blood_data), ignore.case = TRUE, value = TRUE)
+cat("\nPossible case/control variables:", paste(case_vars, collapse = ", "), "\n")
+
+# Check for testosterone variable
+test_vars <- grep("test|testo|hormone", names(blood_data), ignore.case = TRUE, value = TRUE)
+cat("Testosterone variables:", paste(test_vars, collapse = ", "), "\n")
+
+# Check for matching variable
+match_vars <- grep("match|id|set|pair", names(blood_data), ignore.case = TRUE, value = TRUE)
+cat("Matching variables:", paste(match_vars, collapse = ", "), "\n")
+
+# Check for age and PMH variables
+age_vars <- grep("age", names(blood_data), ignore.case = TRUE, value = TRUE)
+pmh_vars <- grep("pmh|hormone|hrt", names(blood_data), ignore.case = TRUE, value = TRUE)
+cat("Age variables:", paste(age_vars, collapse = ", "), "\n")
+cat("PMH/hormone variables:", paste(pmh_vars, collapse = ", "), "\n")
+
+# Create clean dataset with standardized names
+# Adjust based on actual variable names
+blood_clean <- blood_data %>%
+  # Remove rows with missing key variables
+  filter(!is.na(matchid))
+
+# Standardize variable names based on what we found
+# Case status
+if("case" %in% names(blood_clean)) {
+  blood_clean <- blood_clean %>% mutate(case_status = case)
+} else if("status" %in% names(blood_clean)) {
+  blood_clean <- blood_clean %>% mutate(case_status = status)
+} else {
+  stop("Case status variable not found")
+}
+
+# Testosterone
+if("testost" %in% names(blood_clean)) {
+  blood_clean <- blood_clean %>% mutate(testosterone_raw = testost)
+} else if("testosterone" %in% names(blood_clean)) {
+  blood_clean <- blood_clean %>% mutate(testosterone_raw = testosterone)
+} else if("test" %in% names(blood_clean)) {
+  blood_clean <- blood_clean %>% mutate(testosterone_raw = test)
+} else if("testo" %in% names(blood_clean)) {
+  blood_clean <- blood_clean %>% mutate(testosterone_raw = testo)
+} else {
+  stop("Testosterone variable not found")
+}
+
+# Age
+if("ageblood" %in% names(blood_clean)) {
+  blood_clean <- blood_clean %>% mutate(age = ageblood)
+} else if("age" %in% names(blood_clean)) {
+  # Already named age, do nothing
+} else {
+  cat("Warning: Age variable not found\n")
+}
+
+# PMH use
+if("curpmh" %in% names(blood_clean)) {
+  blood_clean <- blood_clean %>% mutate(pmh = curpmh)
+} else if("pmh" %in% names(blood_clean)) {
+  # Already named pmh, do nothing
+} else {
+  cat("Warning: PMH variable not found\n")
+}
+
+# Remove observations with missing testosterone
+blood_clean <- blood_clean %>%
+  filter(!is.na(testosterone_raw))
+
+cat("\n\nCleaned Dataset:\n")
+cat("Total observations:", nrow(blood_clean), "\n")
+cat("Number of matched sets:", length(unique(blood_clean$matchid)), "\n")
+cat("Cases:", sum(blood_clean$case_status == 1, na.rm = TRUE), "\n")
+cat("Controls:", sum(blood_clean$case_status == 0, na.rm = TRUE), "\n")
+```
+
+## Examine Matching Structure
+
+```{r examine-matching}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("MATCHED SET STRUCTURE\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Count subjects per matched set
+match_structure <- blood_clean %>%
+  group_by(matchid) %>%
+  summarise(
+    n_total = n(),
+    n_cases = sum(case_status == 1, na.rm = TRUE),
+    n_controls = sum(case_status == 0, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+cat("\nDistribution of matched set sizes:\n")
+print(table(match_structure$n_total))
+
+cat("\n\nDistribution of cases per matched set:\n")
+print(table(match_structure$n_cases))
+
+cat("\n\nDistribution of controls per matched set:\n")
+print(table(match_structure$n_controls))
+
+# Identify incomplete matched sets
+incomplete_sets <- match_structure %>%
+  filter(n_cases == 0 | n_controls == 0)
+
+if(nrow(incomplete_sets) > 0) {
+  cat("\n\nIncomplete matched sets (no case or no control):", nrow(incomplete_sets), "\n")
+  cat("These sets will be excluded from conditional logistic regression.\n")
+
+  # Remove incomplete sets
+  blood_clean <- blood_clean %>%
+    anti_join(incomplete_sets, by = "matchid")
+
+  cat("\nAfter removing incomplete sets:\n")
+  cat("Observations:", nrow(blood_clean), "\n")
+  cat("Matched sets:", length(unique(blood_clean$matchid)), "\n")
+}
+
+# Summary of final matching structure
+cat("\n\nFinal Matched Set Summary:\n")
+match_summary <- blood_clean %>%
+  group_by(matchid) %>%
+  summarise(
+    n_total = n(),
+    n_cases = sum(case_status == 1),
+    n_controls = sum(case_status == 0),
+    .groups = 'drop'
+  ) %>%
+  group_by(n_cases, n_controls) %>%
+  summarise(n_sets = n(), .groups = 'drop')
+
+print(kable(match_summary,
+            col.names = c("Cases per Set", "Controls per Set", "Number of Sets")))
+```
+
+## Descriptive Statistics
+
+```{r descriptive-stats}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("DESCRIPTIVE STATISTICS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Summary by case-control status
+cat("\n\nTestosterone Levels by Case-Control Status:\n")
+testo_summary <- blood_clean %>%
+  mutate(Status = factor(case_status, levels = c(0, 1), labels = c("Control", "Case"))) %>%
+  group_by(Status) %>%
+  summarise(
+    N = n(),
+    Mean = mean(testosterone_raw, na.rm = TRUE),
+    SD = sd(testosterone_raw, na.rm = TRUE),
+    Median = median(testosterone_raw, na.rm = TRUE),
+    Q1 = quantile(testosterone_raw, 0.25, na.rm = TRUE),
+    Q3 = quantile(testosterone_raw, 0.75, na.rm = TRUE),
+    Min = min(testosterone_raw, na.rm = TRUE),
+    Max = max(testosterone_raw, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+print(kable(testo_summary %>%
+              mutate(across(where(is.numeric) & !N, ~round(., 3))),
+            digits = 3))
+
+# Age summary if available
+if("age" %in% names(blood_clean)) {
+  cat("\n\nAge by Case-Control Status:\n")
+  age_summary <- blood_clean %>%
+    mutate(Status = factor(case_status, levels = c(0, 1), labels = c("Control", "Case"))) %>%
+    group_by(Status) %>%
+    summarise(
+      N = n(),
+      Mean = mean(age, na.rm = TRUE),
+      SD = sd(age, na.rm = TRUE),
+      Median = median(age, na.rm = TRUE),
+      .groups = 'drop'
+    )
+
+  print(kable(age_summary %>%
+                mutate(across(where(is.numeric) & !N, ~round(., 2))),
+              digits = 2))
+}
+
+# PMH use summary if available
+if("pmh" %in% names(blood_clean)) {
+  cat("\n\nPMH Use by Case-Control Status:\n")
+  pmh_table <- table(
+    Status = factor(blood_clean$case_status, levels = c(0, 1), labels = c("Control", "Case")),
+    PMH = factor(blood_clean$pmh, levels = c(0, 1), labels = c("No", "Yes"))
+  )
+  print(pmh_table)
+  print(prop.table(pmh_table, margin = 1))
+}
+```
+
+## Explore Testosterone Distribution
+
+```{r explore-testosterone, fig.height=8}
+cat("\n\nExamining testosterone distribution for transformation:\n")
+
+# Check distribution
+cat("Skewness:", round(e1071::skewness(blood_clean$testosterone_raw, na.rm = TRUE), 3), "\n")
+cat("Kurtosis:", round(e1071::kurtosis(blood_clean$testosterone_raw, na.rm = TRUE), 3), "\n")
+
+# Visualize distribution
+par(mfrow = c(2, 2))
+
+# Histogram
+hist(blood_clean$testosterone_raw, breaks = 30, main = "Raw Testosterone",
+     xlab = "Testosterone", col = "lightblue")
+
+# Log-transformed
+hist(log(blood_clean$testosterone_raw), breaks = 30, main = "Log(Testosterone)",
+     xlab = "Log(Testosterone)", col = "lightcoral")
+
+# Q-Q plot for raw
+qqnorm(blood_clean$testosterone_raw, main = "Q-Q Plot: Raw Testosterone")
+qqline(blood_clean$testosterone_raw, col = "red")
+
+# Q-Q plot for log
+qqnorm(log(blood_clean$testosterone_raw), main = "Q-Q Plot: Log(Testosterone)")
+qqline(log(blood_clean$testosterone_raw), col = "red")
+
+par(mfrow = c(1, 1))
+
+# Test for normality
+shapiro_raw <- shapiro.test(sample(blood_clean$testosterone_raw, min(5000, nrow(blood_clean))))
+shapiro_log <- shapiro.test(sample(log(blood_clean$testosterone_raw), min(5000, nrow(blood_clean))))
+
+cat("\nShapiro-Wilk test for normality:\n")
+cat("Raw testosterone: p =", format.pval(shapiro_raw$p.value, digits = 4), "\n")
+cat("Log testosterone: p =", format.pval(shapiro_log$p.value, digits = 4), "\n\n")
+
+if(shapiro_log$p.value > shapiro_raw$p.value) {
+  cat("DECISION: Log transformation improves normality.\n")
+  cat("Will use log(testosterone) in continuous analysis.\n")
+  use_log <- TRUE
+} else {
+  cat("DECISION: Raw testosterone distribution acceptable.\n")
+  use_log <- FALSE
+}
+
+# Create transformed variable
+blood_clean <- blood_clean %>%
+  mutate(
+    testosterone_log = log(testosterone_raw),
+    testosterone_cont = if(use_log) log(testosterone_raw) else testosterone_raw
+  )
+```
+
+## Box Plots by Case-Control Status
+
+```{r boxplots, fig.height=6}
+# Box plot comparing cases and controls
+blood_clean %>%
+  mutate(Status = factor(case_status, levels = c(0, 1), labels = c("Control", "Case"))) %>%
+  ggplot(aes(x = Status, y = testosterone_raw, fill = Status)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  labs(title = "Testosterone Levels: Cases vs Controls",
+       x = "Status",
+       y = "Testosterone (ng/dL)",
+       fill = "Status") +
+  scale_fill_manual(values = c("Control" = "lightblue", "Case" = "coral")) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Log-transformed version
+blood_clean %>%
+  mutate(Status = factor(case_status, levels = c(0, 1), labels = c("Control", "Case"))) %>%
+  ggplot(aes(x = Status, y = testosterone_log, fill = Status)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  labs(title = "Log(Testosterone) Levels: Cases vs Controls",
+       x = "Status",
+       y = "Log(Testosterone)",
+       fill = "Status") +
+  scale_fill_manual(values = c("Control" = "lightblue", "Case" = "coral")) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+# Problem 13.117: Continuous Testosterone Analysis
+
+## Conditional Logistic Regression Model
+
+```{r problem-13-117}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 13.117: CONTINUOUS TESTOSTERONE ANALYSIS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nModel Specification:\n")
+cat("• Outcome: Breast cancer case-control status\n")
+cat("• Exposure: ", ifelse(use_log, "Log(testosterone)", "Testosterone"), " (continuous)\n", sep = "")
+cat("• Covariates: Age at blood draw, Current PMH use\n")
+cat("• Method: Conditional logistic regression (accounts for matching)\n\n")
+
+# Prepare data for clogit
+# clogit requires Surv object with entry=0, exit=1, event=case_status
+# and strata for matched sets
+
+# Build formula based on available covariates
+formula_parts <- c("testosterone_cont")
+if("age" %in% names(blood_clean)) {
+  formula_parts <- c(formula_parts, "age")
+}
+if("pmh" %in% names(blood_clean)) {
+  formula_parts <- c(formula_parts, "pmh")
+}
+
+# For clogit, we don't need Surv() - just use case_status directly
+# clogit automatically treats it as entry time = 0, exit time = 1
+formula_str <- paste("case_status ~",
+                     paste(formula_parts, collapse = " + "),
+                     "+ strata(matchid)")
+
+cat("Model formula:\n")
+cat(formula_str, "\n\n")
+
+# Fit conditional logistic regression
+model_cont <- clogit(as.formula(formula_str), data = blood_clean)
+
+cat("Model Summary:\n")
+summary(model_cont)
+```
+
+## Model Results and Interpretation
+
+```{r results-continuous}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("RESULTS - CONTINUOUS TESTOSTERONE MODEL\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Extract coefficients
+coef_cont <- tidy(model_cont, exponentiate = TRUE, conf.int = TRUE)
+cat("\n\nModel Coefficients (Odds Ratios):\n")
+print(kable(coef_cont %>%
+              mutate(across(where(is.numeric), ~round(., 4))),
+            digits = 4))
+
+# Focus on testosterone effect
+testo_coef <- coef_cont %>% filter(term == "testosterone_cont")
+
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("KEY FINDING: TESTOSTERONE EFFECT\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nTestosterone (", ifelse(use_log, "per unit increase in log scale", "per unit increase"),
+    "):\n", sep = "")
+cat("  Odds Ratio:", round(testo_coef$estimate, 4), "\n")
+cat("  95% CI: [", round(testo_coef$conf.low, 4), ",",
+    round(testo_coef$conf.high, 4), "]\n", sep = "")
+cat("  p-value:", format.pval(testo_coef$p.value, digits = 4, eps = 0.0001), "\n\n")
+
+# Interpret based on transformation
+if(use_log) {
+  # For log transformation, OR is per unit increase in log scale
+  # Calculate OR for doubling of testosterone (log(2) increase)
+  or_double <- testo_coef$estimate^log(2)
+  ci_double_low <- testo_coef$conf.low^log(2)
+  ci_double_high <- testo_coef$conf.high^log(2)
+
+  cat("Interpretation for DOUBLING of testosterone:\n")
+  cat("  OR =", round(or_double, 4), "\n")
+  cat("  95% CI: [", round(ci_double_low, 4), ",",
+      round(ci_double_high, 4), "]\n\n", sep = "")
+}
+
+if(testo_coef$p.value < 0.05) {
+  cat("CONCLUSION: Testosterone is SIGNIFICANTLY associated with breast cancer risk\n")
+  cat("(p = ", format.pval(testo_coef$p.value, digits = 4, eps = 0.0001), ").\n\n", sep = "")
+
+  if(testo_coef$estimate > 1) {
+    cat("Higher testosterone levels are associated with INCREASED breast cancer risk.\n")
+    if(use_log) {
+      cat("Each doubling of testosterone is associated with a",
+          round((or_double - 1) * 100, 1), "% increase in odds of breast cancer.\n")
+    }
+  } else {
+    cat("Higher testosterone levels are associated with DECREASED breast cancer risk.\n")
+  }
+} else {
+  cat("CONCLUSION: Testosterone is NOT significantly associated with breast cancer risk\n")
+  cat("(p = ", format.pval(testo_coef$p.value, digits = 4, eps = 0.0001), ").\n", sep = "")
+}
+
+cat("\n\nANSWER TO PROBLEM 13.117:\n")
+cat("After controlling for age and PMH use, accounting for matching:\n")
+cat("OR (testosterone) =", round(testo_coef$estimate, 4),
+    ", 95% CI: [", round(testo_coef$conf.low, 4), ",",
+    round(testo_coef$conf.high, 4), "]\n", sep = "")
+cat("p-value =", format.pval(testo_coef$p.value, digits = 4, eps = 0.0001), "\n")
+```
+
+# Problem 13.118: Categorical Testosterone Analysis
+
+## Create Quartile Categories
+
+```{r create-quartiles}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 13.118: CATEGORICAL TESTOSTERONE ANALYSIS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nCreating testosterone quartiles:\n")
+
+# Calculate quartiles
+quartiles <- quantile(blood_clean$testosterone_raw, probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = TRUE)
+cat("\nQuartile cutpoints:\n")
+print(quartiles)
+
+# Create quartile variable
+blood_clean <- blood_clean %>%
+  mutate(
+    testosterone_quart = cut(testosterone_raw,
+                             breaks = quartiles,
+                             labels = c("Q1 (Lowest)", "Q2", "Q3", "Q4 (Highest)"),
+                             include.lowest = TRUE)
+  )
+
+# Distribution of cases and controls by quartile
+cat("\n\nDistribution by Quartile:\n")
+quart_table <- table(
+  Quartile = blood_clean$testosterone_quart,
+  Status = factor(blood_clean$case_status, levels = c(0, 1), labels = c("Control", "Case"))
+)
+print(quart_table)
+
+cat("\n\nProportions (row percentages):\n")
+print(round(prop.table(quart_table, margin = 1) * 100, 2))
+
+# Summary statistics by quartile
+cat("\n\nTestosterone Range by Quartile:\n")
+quart_summary <- blood_clean %>%
+  group_by(testosterone_quart) %>%
+  summarise(
+    N = n(),
+    Min = min(testosterone_raw, na.rm = TRUE),
+    Median = median(testosterone_raw, na.rm = TRUE),
+    Max = max(testosterone_raw, na.rm = TRUE),
+    N_Cases = sum(case_status == 1),
+    N_Controls = sum(case_status == 0),
+    Pct_Cases = 100 * mean(case_status == 1),
+    .groups = 'drop'
+  )
+
+print(kable(quart_summary %>%
+              mutate(across(c(Min, Median, Max), ~round(., 2))),
+            digits = 2))
+```
+
+## Conditional Logistic Regression with Quartiles
+
+```{r model-quartiles}
+cat("\n\nFitting Conditional Logistic Regression with Quartiles:\n")
+cat("Reference group: Q1 (Lowest quartile)\n\n")
+
+# Build formula for quartile model
+formula_parts_q <- c("testosterone_quart")
+if("age" %in% names(blood_clean)) {
+  formula_parts_q <- c(formula_parts_q, "age")
+}
+if("pmh" %in% names(blood_clean)) {
+  formula_parts_q <- c(formula_parts_q, "pmh")
+}
+
+formula_str_q <- paste("case_status ~",
+                       paste(formula_parts_q, collapse = " + "),
+                       "+ strata(matchid)")
+
+# Fit model
+model_quart <- clogit(as.formula(formula_str_q), data = blood_clean)
+
+cat("Model Summary:\n")
+summary(model_quart)
+```
+
+## Quartile Model Results
+
+```{r results-quartiles}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("RESULTS - QUARTILE TESTOSTERONE MODEL\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Extract coefficients
+coef_quart <- tidy(model_quart, exponentiate = TRUE, conf.int = TRUE)
+
+# Filter testosterone quartile effects
+testo_quart_coef <- coef_quart %>%
+  filter(grepl("testosterone_quart", term))
+
+cat("\n\nTestosterone Quartile Effects (vs Q1 Reference):\n")
+print(kable(testo_quart_coef %>%
+              mutate(across(where(is.numeric), ~round(., 4))),
+            col.names = c("Quartile", "OR", "SE", "Statistic", "p-value", "OR 95% CI Low", "OR 95% CI High"),
+            digits = 4))
+
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("INTERPRETATION - QUARTILE ANALYSIS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nComparison to Q1 (Lowest Quartile - Reference):\n\n")
+
+for(i in 1:nrow(testo_quart_coef)) {
+  quartile_name <- gsub("testosterone_quart", "", testo_quart_coef$term[i])
+  or <- testo_quart_coef$estimate[i]
+  ci_low <- testo_quart_coef$conf.low[i]
+  ci_high <- testo_quart_coef$conf.high[i]
+  pval <- testo_quart_coef$p.value[i]
+
+  cat(quartile_name, ":\n", sep = "")
+  cat("  OR =", round(or, 4), ", 95% CI: [", round(ci_low, 4), ",",
+      round(ci_high, 4), "]\n", sep = "")
+  cat("  p-value:", format.pval(pval, digits = 4, eps = 0.0001), "\n")
+
+  if(pval < 0.05) {
+    cat("  → SIGNIFICANT", ifelse(or > 1, "INCREASED", "DECREASED"), "risk\n")
+  } else {
+    cat("  → Not significant\n")
+  }
+  cat("\n")
+}
+
+# Test for trend
+cat("\nTest for Linear Trend Across Quartiles:\n")
+# Create numeric quartile variable for trend test
+blood_clean <- blood_clean %>%
+  mutate(testosterone_quart_num = as.numeric(testosterone_quart))
+
+# Fit model with numeric quartile
+formula_trend <- paste("case_status ~ testosterone_quart_num",
+                       ifelse("age" %in% names(blood_clean), "+ age", ""),
+                       ifelse("pmh" %in% names(blood_clean), "+ pmh", ""),
+                       "+ strata(matchid)")
+
+model_trend <- clogit(as.formula(formula_trend), data = blood_clean)
+coef_trend <- tidy(model_trend, exponentiate = TRUE, conf.int = TRUE) %>%
+  filter(term == "testosterone_quart_num")
+
+cat("OR per quartile increase:", round(coef_trend$estimate, 4), "\n")
+cat("95% CI: [", round(coef_trend$conf.low, 4), ",",
+    round(coef_trend$conf.high, 4), "]\n", sep = "")
+cat("p-value for trend:", format.pval(coef_trend$p.value, digits = 4, eps = 0.0001), "\n")
+
+if(coef_trend$p.value < 0.05) {
+  cat("\n→ SIGNIFICANT linear trend detected across quartiles.\n")
+} else {
+  cat("\n→ No significant linear trend detected.\n")
+}
+
+cat("\n\nANSWER TO PROBLEM 13.118:\n")
+cat("Using quartiles with Q1 as reference:\n")
+for(i in 1:nrow(testo_quart_coef)) {
+  quartile_name <- gsub("testosterone_quart", "", testo_quart_coef$term[i])
+  cat(quartile_name, ": OR =", round(testo_quart_coef$estimate[i], 4),
+      ", p =", format.pval(testo_quart_coef$p.value[i], digits = 4, eps = 0.0001), "\n")
+}
+cat("Trend test: p =", format.pval(coef_trend$p.value, digits = 4, eps = 0.0001), "\n")
+```
+
+## Visualization of Quartile Effects
+
+```{r viz-quartiles, fig.height=6}
+# Forest plot of quartile ORs
+or_data <- data.frame(
+  Quartile = c("Q1 (Reference)", gsub("testosterone_quart", "", testo_quart_coef$term)),
+  OR = c(1, testo_quart_coef$estimate),
+  Lower = c(1, testo_quart_coef$conf.low),
+  Upper = c(1, testo_quart_coef$conf.high),
+  Significant = c(FALSE, testo_quart_coef$p.value < 0.05)
+)
+
+or_data$Quartile <- factor(or_data$Quartile,
+                           levels = rev(c("Q1 (Reference)", "Q2", "Q3", "Q4 (Highest)")))
+
+ggplot(or_data, aes(x = Quartile, y = OR, color = Significant)) +
+  geom_point(size = 4) +
+  geom_errorbar(aes(ymin = Lower, ymax = Upper), width = 0.2, size = 1) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "red", size = 1) +
+  coord_flip() +
+  scale_color_manual(values = c("TRUE" = "coral", "FALSE" = "steelblue"),
+                     labels = c("Not Significant", "Significant")) +
+  labs(title = "Odds Ratios for Breast Cancer by Testosterone Quartile",
+       subtitle = "Compared to Q1 (Lowest Quartile)",
+       x = "Testosterone Quartile",
+       y = "Odds Ratio (95% CI)",
+       color = "Result") +
+  theme_minimal() +
+  theme(text = element_text(size = 12),
+        legend.position = "bottom")
+```
+
+# Problem 13.119: Comparison and Discussion
+
+## Compare Model Results
+
+```{r problem-13-119}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 13.119: COMPARISON OF CONTINUOUS VS CATEGORICAL ANALYSIS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Compare model fit statistics
+cat("\nMODEL FIT COMPARISON:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+
+fit_comparison <- data.frame(
+  Model = c("Continuous (Log-transformed)", "Categorical (Quartiles)", "Trend Test"),
+  Parameters = c(
+    length(coef(model_cont)),
+    length(coef(model_quart)),
+    length(coef(model_trend))
+  ),
+  Log_Likelihood = c(
+    model_cont$loglik[2],
+    model_quart$loglik[2],
+    model_trend$loglik[2]
+  ),
+  AIC = c(
+    AIC(model_cont),
+    AIC(model_quart),
+    AIC(model_trend)
+  ),
+  LR_Chi_Square = c(
+    2 * (model_cont$loglik[2] - model_cont$loglik[1]),
+    2 * (model_quart$loglik[2] - model_quart$loglik[1]),
+    2 * (model_trend$loglik[2] - model_trend$loglik[1])
+  )
+)
+
+print(kable(fit_comparison %>%
+              mutate(across(where(is.numeric), ~round(., 2))),
+            digits = 2))
+
+# Likelihood ratio test comparing continuous vs quartile models
+# Can only compare if they're nested or using AIC
+
+cat("\n\nMODEL SELECTION:\n")
+if(AIC(model_cont) < AIC(model_quart)) {
+  cat("Continuous model has LOWER AIC (better fit)\n")
+} else {
+  cat("Categorical model has LOWER AIC (better fit)\n")
+}
+cat("AIC difference:", round(abs(AIC(model_cont) - AIC(model_quart)), 2), "\n")
+```
+
+## Summary Comparison Table
+
+```{r comparison-table}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("SUMMARY COMPARISON TABLE\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Create comprehensive comparison
+comparison_df <- data.frame(
+  Analysis = c(
+    "Continuous (per unit log)",
+    if(use_log) "Continuous (per doubling)" else NULL,
+    "Q2 vs Q1",
+    "Q3 vs Q1",
+    "Q4 vs Q1",
+    "Linear Trend (per quartile)"
+  ),
+  OR = c(
+    testo_coef$estimate,
+    if(use_log) or_double else NULL,
+    testo_quart_coef$estimate,
+    coef_trend$estimate
+  ),
+  CI_Lower = c(
+    testo_coef$conf.low,
+    if(use_log) ci_double_low else NULL,
+    testo_quart_coef$conf.low,
+    coef_trend$conf.low
+  ),
+  CI_Upper = c(
+    testo_coef$conf.high,
+    if(use_log) ci_double_high else NULL,
+    testo_quart_coef$conf.high,
+    coef_trend$conf.high
+  ),
+  P_Value = c(
+    testo_coef$p.value,
+    if(use_log) testo_coef$p.value else NULL,
+    testo_quart_coef$p.value,
+    coef_trend$p.value
+  )
+) %>%
+  mutate(
+    P_Value_Format = format.pval(P_Value, digits = 4, eps = 0.0001),
+    Significant = P_Value < 0.05
+  )
+
+cat("\n")
+print(kable(comparison_df %>%
+              select(Analysis, OR, CI_Lower, CI_Upper, P_Value_Format, Significant) %>%
+              mutate(across(c(OR, CI_Lower, CI_Upper), ~round(., 4))),
+            col.names = c("Analysis", "OR", "95% CI Lower", "95% CI Upper", "p-value", "Significant"),
+            digits = 4))
+```
+
+## Discussion of Results
+
+```{r discussion}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("DISCUSSION - ANSWER TO PROBLEM 13.119\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\n1. OVERALL FINDINGS:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+
+# Check if results are consistent
+cont_sig <- testo_coef$p.value < 0.05
+trend_sig <- coef_trend$p.value < 0.05
+q4_sig <- testo_quart_coef$p.value[nrow(testo_quart_coef)] < 0.05
+
+if(cont_sig && trend_sig) {
+  cat("\nBoth continuous and categorical analyses show CONSISTENT evidence\n")
+  cat("of an association between testosterone and breast cancer risk.\n")
+} else if(!cont_sig && !trend_sig) {
+  cat("\nBoth continuous and categorical analyses show NO significant\n")
+  cat("association between testosterone and breast cancer risk.\n")
+} else {
+  cat("\nResults DIFFER between continuous and categorical approaches.\n")
+  cat("This suggests the relationship may be non-linear.\n")
+}
+
+cat("\n\n2. ADVANTAGES OF CONTINUOUS ANALYSIS:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+cat("  ✓ More statistical power (uses all information)\n")
+cat("  ✓ Single parameter estimate\n")
+cat("  ✓ Assumes linear relationship (on log scale)\n")
+cat("  ✓ Easier to interpret (OR per unit increase)\n")
+cat("  ✓ Lower AIC:", round(AIC(model_cont), 2), "\n")
+
+cat("\n\n3. ADVANTAGES OF CATEGORICAL ANALYSIS:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+cat("  ✓ No assumption of linearity\n")
+cat("  ✓ Can detect non-linear dose-response\n")
+cat("  ✓ Clinically interpretable cutpoints\n")
+cat("  ✓ Robust to outliers\n")
+cat("  ✓ Shows pattern across exposure levels\n")
+
+cat("\n\n4. DOSE-RESPONSE RELATIONSHIP:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+
+# Check for monotonic increase
+ors <- c(1, testo_quart_coef$estimate)
+monotonic <- all(diff(ors) > 0) || all(diff(ors) < 0)
+
+if(monotonic && all(diff(ors) > 0)) {
+  cat("\nMonotonic INCREASING trend observed:\n")
+  cat("Higher testosterone quartiles show progressively higher risk.\n")
+} else if(monotonic && all(diff(ors) < 0)) {
+  cat("\nMonotonic DECREASING trend observed:\n")
+  cat("Higher testosterone quartiles show progressively lower risk.\n")
+} else {
+  cat("\nNon-monotonic pattern observed:\n")
+  cat("Relationship may be non-linear or threshold-based.\n")
+}
+
+cat("\nQuartile ORs: Q1 (ref) =", paste(round(ors, 3), collapse = ", "), "\n")
+
+cat("\n\n5. STATISTICAL SIGNIFICANCE:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+
+sig_quartiles <- sum(testo_quart_coef$p.value < 0.05)
+cat("\nNumber of significant quartiles (vs Q1):", sig_quartiles, "out of 3\n")
+
+if(sig_quartiles >= 2) {
+  cat("Strong evidence for association\n")
+} else if(sig_quartiles == 1) {
+  cat("Moderate evidence for association\n")
+} else {
+  cat("Limited evidence for association in pairwise comparisons\n")
+}
+
+cat("\nTrend test p-value:", format.pval(coef_trend$p.value, digits = 4, eps = 0.0001), "\n")
+if(trend_sig) {
+  cat("→ Significant linear trend detected\n")
+}
+
+cat("\n\n6. CLINICAL INTERPRETATION:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+
+if(use_log && cont_sig) {
+  cat("\nContinuous model: Each DOUBLING of testosterone is associated with\n")
+  cat("a", round((or_double - 1) * 100, 1), "% change in odds of breast cancer.\n")
+}
+
+if(q4_sig) {
+  q4_or <- testo_quart_coef$estimate[nrow(testo_quart_coef)]
+  cat("\nCategorical model: Highest quartile (Q4) has",
+      round((q4_or - 1) * 100, 1), "% changed odds\n")
+  cat("compared to lowest quartile (Q1).\n")
+}
+
+cat("\n\n7. RECOMMENDATIONS:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+
+if(monotonic && cont_sig && trend_sig) {
+  cat("\nRECOMMENDATION: Report BOTH analyses\n")
+  cat("• Continuous model for primary analysis (more power)\n")
+  cat("• Categorical model to show dose-response pattern\n")
+  cat("• Both approaches yield consistent conclusions\n")
+} else if(!monotonic) {
+  cat("\nRECOMMENDATION: Prefer CATEGORICAL analysis\n")
+  cat("• Non-linear relationship detected\n")
+  cat("• Categorical model better captures complexity\n")
+  cat("• May consider spline or polynomial terms for continuous model\n")
+} else {
+  cat("\nRECOMMENDATION: Report both for completeness\n")
+  cat("• Different approaches may appeal to different audiences\n")
+  cat("• Categorical provides clinical cutpoints\n")
+}
+
+cat("\n\n8. FINAL CONCLUSION:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+
+if(cont_sig || trend_sig || sig_quartiles >= 2) {
+  cat("\nTestosterone levels are SIGNIFICANTLY associated with breast cancer risk\n")
+  cat("after controlling for age and PMH use, accounting for matching.\n\n")
+
+  if(testo_coef$estimate > 1 || coef_trend$estimate > 1) {
+    cat("Higher testosterone levels are associated with INCREASED risk.\n")
+  } else {
+    cat("Higher testosterone levels are associated with DECREASED risk.\n")
+  }
+} else {
+  cat("\nNo significant association found between testosterone and breast cancer\n")
+  cat("in this matched case-control study.\n")
+}
+```
+
+# Summary
+
+```{r final-summary}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("COMPREHENSIVE SUMMARY\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\n\nSTUDY DESIGN:\n")
+cat("• Matched case-control study of breast cancer\n")
+cat("• Matching variables: Age, fasting status, PMH use\n")
+cat("• 1 case : 1-2 controls per matched set\n")
+cat("• Analysis: Conditional logistic regression\n\n")
+
+cat("SAMPLE SIZE:\n")
+cat("• Total observations:", nrow(blood_clean), "\n")
+cat("• Cases:", sum(blood_clean$case_status == 1), "\n")
+cat("• Controls:", sum(blood_clean$case_status == 0), "\n")
+cat("• Matched sets:", length(unique(blood_clean$matchid)), "\n\n")
+
+cat("KEY FINDINGS:\n\n")
+
+cat("Problem 13.117 - Continuous Analysis:\n")
+cat("  OR (testosterone) =", round(testo_coef$estimate, 4), "\n")
+if(use_log) {
+  cat("  OR (per doubling) =", round(or_double, 4), "\n")
+}
+cat("  p-value:", format.pval(testo_coef$p.value, digits = 4, eps = 0.0001), "\n")
+cat("  ", ifelse(cont_sig, "SIGNIFICANT", "NOT SIGNIFICANT"), "\n\n")
+
+cat("Problem 13.118 - Categorical Analysis:\n")
+for(i in 1:nrow(testo_quart_coef)) {
+  quartile_name <- gsub("testosterone_quart", "", testo_quart_coef$term[i])
+  cat("  ", quartile_name, ": OR =", round(testo_quart_coef$estimate[i], 4),
+      ", p =", format.pval(testo_quart_coef$p.value[i], digits = 4, eps = 0.0001), "\n")
+}
+cat("  Trend: p =", format.pval(coef_trend$p.value, digits = 4, eps = 0.0001), "\n\n")
+
+cat("Problem 13.119 - Comparison:\n")
+cat("  Both approaches", ifelse(cont_sig == trend_sig, "AGREE", "DIFFER"), "\n")
+cat("  Preferred model:", ifelse(AIC(model_cont) < AIC(model_quart), "Continuous", "Categorical"),
+    "(based on AIC)\n")
+cat("  Dose-response:", ifelse(monotonic, "Linear", "Non-linear"), "\n")
+
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("END OF ANALYSIS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

@@ -1,0 +1,1007 @@
+---
+title: "Hypertension: Estrogen Treatment Crossover Trials"
+subtitle: "Problems 13.60-13.66 - Treatment Effects, Carry-over, and Sample Size"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    number_sections: true
+    code_folding: show
+    theme: flatly
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Problem Statement
+
+This analysis addresses Problems 13.60-13.66 from three separate two-period crossover studies examining estrogen effects on blood pressure:
+
+**Treatment and Carry-over Effects (Problems 13.60-13.62):**
+- **13.60**: Study 1 (0.625 mg estrogen vs placebo) - Assess treatment and carry-over effects
+- **13.61**: Study 2 (1.25 mg estrogen vs placebo) - Assess treatment and carry-over effects
+- **13.62**: Study 3 (1.25 mg vs 0.625 mg estrogen) - Assess treatment and carry-over effects
+
+**Sample Size Calculations (Problems 13.63-13.66):**
+- **13.63**: Study 1 design - Sample size for 3 mm Hg SBP effect (80% power, α=0.05)
+- **13.64**: Study 1 design - Sample size for 2 mm Hg DBP effect (80% power, α=0.05)
+- **13.65**: Study 2 design - Sample size for 3 mm Hg SBP effect (80% power, α=0.05)
+- **13.66**: Study 2 design - Sample size for 2 mm Hg DBP effect (80% power, α=0.05)
+
+# Background
+
+## Study Design
+
+Three separate **two-period crossover trials**:
+
+**Study 1**: 0.625 mg estrogen vs placebo
+**Study 2**: 1.25 mg estrogen vs placebo
+**Study 3**: 1.25 mg estrogen vs 0.625 mg estrogen
+
+**Design Details:**
+- Two treatment periods
+- 4 weeks of active treatment per period
+- 2-week washout between periods
+- Multiple BP measurements per period (3 days × 3 readings = 9 per period)
+
+**Outcomes:**
+- **SBP**: Systolic blood pressure (mm Hg)
+- **DBP**: Diastolic blood pressure (mm Hg)
+
+## Clinical Relevance
+
+Understanding estrogen effects on blood pressure is critical for:
+- Hormone replacement therapy (HRT) safety
+- Cardiovascular risk assessment
+- Optimal estrogen dosing
+- Treatment decision-making in postmenopausal women
+
+# Load Required Libraries
+
+```{r load-libraries}
+library(tidyverse)      # Data manipulation and visualization
+library(knitr)          # Tables
+library(ggplot2)        # Advanced plotting
+library(gridExtra)      # Multiple plots
+library(broom)          # Tidy model outputs
+library(pwr)            # Power analysis
+```
+
+# Load and Prepare Data
+
+## Load ESTROGEN.DAT
+
+```{r load-data}
+# Load estrogen crossover trial data
+estrogen_data <- read.table("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/ESTROGEN.DAT.txt",
+                            header = TRUE,
+                            sep = ",",
+                            quote = "'\"",
+                            strip.white = TRUE,
+                            na.strings = "999")
+
+cat("Dataset dimensions:", nrow(estrogen_data), "observations\n")
+cat("Number of unique subjects:", length(unique(estrogen_data$Id)), "\n")
+cat("Number of studies:", length(unique(estrogen_data$std_typ)), "\n\n")
+
+cat("First 10 observations:\n")
+kable(head(estrogen_data[,1:10], 10),
+      caption = "ESTROGEN.DAT - First 10 Observations (Selected Variables)")
+```
+
+## Data Structure
+
+```{r data-structure}
+# Display structure
+str(estrogen_data)
+
+# Study type distribution
+cat("\nStudy Type Distribution:\n")
+study_summary <- estrogen_data %>%
+  group_by(std_typ, period) %>%
+  summarise(n = n(), .groups = 'drop')
+kable(study_summary, caption = "Observations by Study and Period")
+```
+
+## Calculate Mean BP per Period
+
+```{r calculate-means}
+# Calculate mean SBP and DBP for each row (each period)
+# Average across all 9 readings (3 days × 3 readings) for that period
+
+estrogen_clean <- estrogen_data %>%
+  mutate(
+    # Mean BP for this row's period
+    SBP_Mean = rowMeans(select(., sysd1r1, sysd1r2, sysd1r3,
+                                sysd2r1, sysd2r2, sysd2r3,
+                                sysd3r1, sysd3r2, sysd3r3), na.rm = TRUE),
+    DBP_Mean = rowMeans(select(., diasd1r1, diasd1r2, diasd1r3,
+                                diasd2r1, diasd2r2, diasd2r3,
+                                diasd3r1, diasd3r2, diasd3r3), na.rm = TRUE)
+  )
+
+# Check for missing values after calculation
+cat("Total rows:", nrow(estrogen_clean), "\n")
+cat("Missing SBP_Mean:", sum(is.na(estrogen_clean$SBP_Mean)), "\n")
+cat("Missing DBP_Mean:", sum(is.na(estrogen_clean$DBP_Mean)), "\n")
+
+# Show first few calculated means
+cat("\nFirst 10 calculated period means:\n")
+kable(head(estrogen_clean %>% select(Id, std_typ, period, trtgrp, SBP_Mean, DBP_Mean), 10),
+      digits = 1,
+      caption = "Subject Data with Period Mean BP")
+```
+
+## Reshape Data for Crossover Analysis
+
+```{r reshape-data}
+# Reshape to wide format with one row per subject
+# Each subject has 2 rows in the long data (period 1 and period 2)
+estrogen_wide <- estrogen_clean %>%
+  select(Id, std_typ, period, trtgrp, SBP_Mean, DBP_Mean) %>%
+  pivot_wider(
+    id_cols = c(Id, std_typ),
+    names_from = period,
+    values_from = c(SBP_Mean, DBP_Mean, trtgrp),
+    names_glue = "{.value}_Per{period}"
+  ) %>%
+  rename(
+    SBP_Per1 = SBP_Mean_Per1,
+    SBP_Per2 = SBP_Mean_Per2,
+    DBP_Per1 = DBP_Mean_Per1,
+    DBP_Per2 = DBP_Mean_Per2,
+    trtgrp_1 = trtgrp_Per1,
+    trtgrp_2 = trtgrp_Per2
+  )
+
+# Use trtgrp from period 1 or 2 (should be the same for a subject in same study)
+# This represents the treatment sequence
+estrogen_wide <- estrogen_wide %>%
+  mutate(
+    trtgrp = coalesce(trtgrp_1, trtgrp_2)
+  ) %>%
+  select(-trtgrp_1, -trtgrp_2)
+
+cat("Wide format data dimensions:", nrow(estrogen_wide), "subjects\n\n")
+
+# Check for complete cases
+cat("Complete cases (all BP values present):",
+    sum(!is.na(estrogen_wide$SBP_Per1) & !is.na(estrogen_wide$SBP_Per2) &
+        !is.na(estrogen_wide$DBP_Per1) & !is.na(estrogen_wide$DBP_Per2)), "\n")
+
+# Add study labels
+estrogen_wide <- estrogen_wide %>%
+  mutate(
+    Study_Label = factor(std_typ,
+                        levels = 1:3,
+                        labels = c("Study 1: 0.625mg vs Placebo",
+                                  "Study 2: 1.25mg vs Placebo",
+                                  "Study 3: 1.25mg vs 0.625mg")),
+    Sequence = factor(trtgrp)
+  )
+
+kable(head(estrogen_wide, 10),
+      digits = 1,
+      caption = "Wide Format: One Row per Subject")
+```
+
+## Summary Statistics by Study
+
+```{r summary-by-study}
+summary_stats <- estrogen_wide %>%
+  group_by(Study_Label, Sequence) %>%
+  summarise(
+    N = n(),
+    SBP_P1_Mean = mean(SBP_Per1, na.rm = TRUE),
+    SBP_P1_SD = sd(SBP_Per1, na.rm = TRUE),
+    SBP_P2_Mean = mean(SBP_Per2, na.rm = TRUE),
+    SBP_P2_SD = sd(SBP_Per2, na.rm = TRUE),
+    DBP_P1_Mean = mean(DBP_Per1, na.rm = TRUE),
+    DBP_P1_SD = sd(DBP_Per1, na.rm = TRUE),
+    DBP_P2_Mean = mean(DBP_Per2, na.rm = TRUE),
+    DBP_P2_SD = sd(DBP_Per2, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+kable(summary_stats, digits = 1,
+      caption = "Summary Statistics by Study and Sequence")
+```
+
+# Crossover Analysis Functions
+
+```{r analysis-functions}
+# Function to perform complete crossover analysis for one study
+analyze_crossover_study <- function(data, study_num, study_desc) {
+
+  cat("\n\n")
+  cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+  cat("CROSSOVER ANALYSIS:", study_desc, "\n")
+  cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+
+  # Filter to specific study
+  study_data <- data %>%
+    filter(std_typ == study_num) %>%
+    filter(!is.na(SBP_Per1) & !is.na(SBP_Per2) &
+           !is.na(DBP_Per1) & !is.na(DBP_Per2))
+
+  cat("\nSample size:", nrow(study_data), "subjects with complete data\n")
+
+  # Check if we have any data
+  if(nrow(study_data) == 0) {
+    cat("\nERROR: No subjects with complete data in this study.\n")
+    cat("Cannot perform crossover analysis.\n")
+    return(NULL)
+  }
+
+  # Get the unique treatment groups for this study and create binary sequence variable
+  unique_groups <- sort(unique(study_data$trtgrp))
+  cat("Treatment sequences in this study:", paste(unique_groups, collapse = ", "), "\n")
+
+  # Check if we have exactly 2 groups
+  if(length(unique_groups) != 2) {
+    cat("\nERROR: Expected 2 treatment sequences, found", length(unique_groups), "\n")
+    cat("Cannot perform crossover analysis.\n")
+    return(NULL)
+  }
+
+  # Create a binary sequence variable (seq_binary) for t-tests
+  study_data <- study_data %>%
+    mutate(
+      seq_binary = factor(trtgrp, levels = unique_groups, labels = c("Seq1", "Seq2")),
+      # Sum and difference for SBP
+      SBP_Sum = SBP_Per1 + SBP_Per2,
+      SBP_Diff = SBP_Per1 - SBP_Per2,
+      # Sum and difference for DBP
+      DBP_Sum = DBP_Per1 + DBP_Per2,
+      DBP_Diff = DBP_Per1 - DBP_Per2
+    )
+
+  # Summary by sequence
+  cat("\nDescriptive Statistics by Sequence:\n")
+  seq_summary <- study_data %>%
+    group_by(seq_binary) %>%
+    summarise(
+      N = n(),
+      Original_trtgrp = first(trtgrp),
+      SBP_P1_Mean = mean(SBP_Per1),
+      SBP_P2_Mean = mean(SBP_Per2),
+      SBP_Sum_Mean = mean(SBP_Sum),
+      SBP_Diff_Mean = mean(SBP_Diff),
+      DBP_P1_Mean = mean(DBP_Per1),
+      DBP_P2_Mean = mean(DBP_Per2),
+      DBP_Sum_Mean = mean(DBP_Sum),
+      DBP_Diff_Mean = mean(DBP_Diff),
+      .groups = 'drop'
+    )
+  print(kable(seq_summary, digits = 2))
+
+  # ===================================================================
+  # SYSTOLIC BLOOD PRESSURE (SBP) ANALYSIS
+  # ===================================================================
+  cat("\n")
+  cat("*" %>% paste(rep("*", 80), collapse = "") %>% paste("*\n", sep = ""))
+  cat("SYSTOLIC BLOOD PRESSURE (SBP) ANALYSIS\n")
+  cat("*" %>% paste(rep("*", 80), collapse = "") %>% paste("*\n", sep = ""))
+
+  # CARRY-OVER TEST for SBP
+  cat("\n")
+  cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+  cat("STEP 1: CARRY-OVER EFFECT TEST (SBP)\n")
+  cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+
+  carryover_sbp <- t.test(SBP_Sum ~ seq_binary, data = study_data, var.equal = FALSE)
+
+  cat("\nTwo-sample t-test for carry-over (sum of periods):\n")
+  cat("Mean sum - Sequence 1:", carryover_sbp$estimate[1], "\n")
+  cat("Mean sum - Sequence 2:", carryover_sbp$estimate[2], "\n")
+  cat("Difference:", carryover_sbp$estimate[1] - carryover_sbp$estimate[2], "\n")
+  cat("95% CI:", carryover_sbp$conf.int[1], "to", carryover_sbp$conf.int[2], "\n")
+  cat("t-statistic:", carryover_sbp$statistic, "\n")
+  cat("df:", carryover_sbp$parameter, "\n")
+  cat("P-value:", format.pval(carryover_sbp$p.value, eps = 0.001), "\n")
+
+  sbp_carryover_sig <- carryover_sbp$p.value < 0.05
+  if(sbp_carryover_sig) {
+    cat("\nCONCLUSION: SIGNIFICANT carry-over effect for SBP (p < 0.05)\n")
+    cat("→ Will use only Period 1 data for treatment comparison\n")
+  } else {
+    cat("\nCONCLUSION: NO significant carry-over effect for SBP (p ≥ 0.05)\n")
+    cat("→ Will use both periods for treatment comparison\n")
+  }
+
+  # TREATMENT EFFECT TEST for SBP
+  cat("\n")
+  cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+  cat("STEP 2: TREATMENT EFFECT TEST (SBP)\n")
+  cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+
+  if(!sbp_carryover_sig) {
+    # Use both periods
+    cat("\nUsing both periods (difference scores):\n")
+    treatment_sbp <- t.test(SBP_Diff ~ seq_binary, data = study_data, var.equal = FALSE)
+
+    mean_diff1 <- mean(study_data$SBP_Diff[study_data$seq_binary == "Seq1"])
+    mean_diff2 <- mean(study_data$SBP_Diff[study_data$seq_binary == "Seq2"])
+    treatment_effect_sbp <- (mean_diff1 - mean_diff2) / 2
+
+    cat("Mean difference - Sequence 1:", mean_diff1, "\n")
+    cat("Mean difference - Sequence 2:", mean_diff2, "\n")
+    cat("Estimated treatment effect:", treatment_effect_sbp, "mm Hg\n")
+  } else {
+    # Use only Period 1
+    cat("\nUsing only Period 1 (parallel group comparison):\n")
+    treatment_sbp <- t.test(SBP_Per1 ~ seq_binary, data = study_data, var.equal = FALSE)
+
+    cat("Mean SBP Period 1 - Sequence 1:", treatment_sbp$estimate[1], "\n")
+    cat("Mean SBP Period 1 - Sequence 2:", treatment_sbp$estimate[2], "\n")
+    cat("Difference:", treatment_sbp$estimate[1] - treatment_sbp$estimate[2], "\n")
+    treatment_effect_sbp <- treatment_sbp$estimate[1] - treatment_sbp$estimate[2]
+  }
+
+  cat("95% CI:", treatment_sbp$conf.int[1], "to", treatment_sbp$conf.int[2], "\n")
+  cat("t-statistic:", treatment_sbp$statistic, "\n")
+  cat("df:", treatment_sbp$parameter, "\n")
+  cat("P-value:", format.pval(treatment_sbp$p.value, eps = 0.001), "\n")
+
+  sbp_treatment_sig <- treatment_sbp$p.value < 0.05
+  if(sbp_treatment_sig) {
+    cat("\nCONCLUSION: SIGNIFICANT treatment effect for SBP (p < 0.05)\n")
+  } else {
+    cat("\nCONCLUSION: NO significant treatment effect for SBP (p ≥ 0.05)\n")
+  }
+
+  # ===================================================================
+  # DIASTOLIC BLOOD PRESSURE (DBP) ANALYSIS
+  # ===================================================================
+  cat("\n\n")
+  cat("*" %>% paste(rep("*", 80), collapse = "") %>% paste("*\n", sep = ""))
+  cat("DIASTOLIC BLOOD PRESSURE (DBP) ANALYSIS\n")
+  cat("*" %>% paste(rep("*", 80), collapse = "") %>% paste("*\n", sep = ""))
+
+  # CARRY-OVER TEST for DBP
+  cat("\n")
+  cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+  cat("STEP 1: CARRY-OVER EFFECT TEST (DBP)\n")
+  cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+
+  carryover_dbp <- t.test(DBP_Sum ~ seq_binary, data = study_data, var.equal = FALSE)
+
+  cat("\nTwo-sample t-test for carry-over (sum of periods):\n")
+  cat("Mean sum - Sequence 1:", carryover_dbp$estimate[1], "\n")
+  cat("Mean sum - Sequence 2:", carryover_dbp$estimate[2], "\n")
+  cat("Difference:", carryover_dbp$estimate[1] - carryover_dbp$estimate[2], "\n")
+  cat("95% CI:", carryover_dbp$conf.int[1], "to", carryover_dbp$conf.int[2], "\n")
+  cat("t-statistic:", carryover_dbp$statistic, "\n")
+  cat("df:", carryover_dbp$parameter, "\n")
+  cat("P-value:", format.pval(carryover_dbp$p.value, eps = 0.001), "\n")
+
+  dbp_carryover_sig <- carryover_dbp$p.value < 0.05
+  if(dbp_carryover_sig) {
+    cat("\nCONCLUSION: SIGNIFICANT carry-over effect for DBP (p < 0.05)\n")
+    cat("→ Will use only Period 1 data for treatment comparison\n")
+  } else {
+    cat("\nCONCLUSION: NO significant carry-over effect for DBP (p ≥ 0.05)\n")
+    cat("→ Will use both periods for treatment comparison\n")
+  }
+
+  # TREATMENT EFFECT TEST for DBP
+  cat("\n")
+  cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+  cat("STEP 2: TREATMENT EFFECT TEST (DBP)\n")
+  cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+
+  if(!dbp_carryover_sig) {
+    # Use both periods
+    cat("\nUsing both periods (difference scores):\n")
+    treatment_dbp <- t.test(DBP_Diff ~ seq_binary, data = study_data, var.equal = FALSE)
+
+    mean_diff1 <- mean(study_data$DBP_Diff[study_data$seq_binary == "Seq1"])
+    mean_diff2 <- mean(study_data$DBP_Diff[study_data$seq_binary == "Seq2"])
+    treatment_effect_dbp <- (mean_diff1 - mean_diff2) / 2
+
+    cat("Mean difference - Sequence 1:", mean_diff1, "\n")
+    cat("Mean difference - Sequence 2:", mean_diff2, "\n")
+    cat("Estimated treatment effect:", treatment_effect_dbp, "mm Hg\n")
+  } else {
+    # Use only Period 1
+    cat("\nUsing only Period 1 (parallel group comparison):\n")
+    treatment_dbp <- t.test(DBP_Per1 ~ seq_binary, data = study_data, var.equal = FALSE)
+
+    cat("Mean DBP Period 1 - Sequence 1:", treatment_dbp$estimate[1], "\n")
+    cat("Mean DBP Period 1 - Sequence 2:", treatment_dbp$estimate[2], "\n")
+    cat("Difference:", treatment_dbp$estimate[1] - treatment_dbp$estimate[2], "\n")
+    treatment_effect_dbp <- treatment_dbp$estimate[1] - treatment_dbp$estimate[2]
+  }
+
+  cat("95% CI:", treatment_dbp$conf.int[1], "to", treatment_dbp$conf.int[2], "\n")
+  cat("t-statistic:", treatment_dbp$statistic, "\n")
+  cat("df:", treatment_dbp$parameter, "\n")
+  cat("P-value:", format.pval(treatment_dbp$p.value, eps = 0.001), "\n")
+
+  dbp_treatment_sig <- treatment_dbp$p.value < 0.05
+  if(dbp_treatment_sig) {
+    cat("\nCONCLUSION: SIGNIFICANT treatment effect for DBP (p < 0.05)\n")
+  } else {
+    cat("\nCONCLUSION: NO significant treatment effect for DBP (p ≥ 0.05)\n")
+  }
+
+  # Calculate SD of difference scores for sample size calculations
+  sd_sbp_diff <- sd(study_data$SBP_Diff, na.rm = TRUE)
+  sd_dbp_diff <- sd(study_data$DBP_Diff, na.rm = TRUE)
+
+  # Return results
+  return(list(
+    study_num = study_num,
+    study_desc = study_desc,
+    n = nrow(study_data),
+    data = study_data,
+    # SBP results
+    sbp_carryover_p = carryover_sbp$p.value,
+    sbp_carryover_sig = sbp_carryover_sig,
+    sbp_treatment_p = treatment_sbp$p.value,
+    sbp_treatment_sig = sbp_treatment_sig,
+    sbp_treatment_effect = treatment_effect_sbp,
+    sd_sbp_diff = sd_sbp_diff,
+    # DBP results
+    dbp_carryover_p = carryover_dbp$p.value,
+    dbp_carryover_sig = dbp_carryover_sig,
+    dbp_treatment_p = treatment_dbp$p.value,
+    dbp_treatment_sig = dbp_treatment_sig,
+    dbp_treatment_effect = treatment_effect_dbp,
+    sd_dbp_diff = sd_dbp_diff
+  ))
+}
+```
+
+# Problem 13.60: Study 1 (0.625 mg vs Placebo)
+
+```{r problem-13-60}
+result_study1 <- analyze_crossover_study(estrogen_wide, 1,
+                                         "Study 1: 0.625 mg Estrogen vs Placebo")
+```
+
+## Visualization - Study 1
+
+```{r viz-study-1}
+viz_data1 <- result_study1$data %>%
+  select(Id, seq_binary, SBP_Per1, SBP_Per2, DBP_Per1, DBP_Per2) %>%
+  pivot_longer(cols = c(SBP_Per1, SBP_Per2, DBP_Per1, DBP_Per2),
+               names_to = "Measure",
+               values_to = "BP") %>%
+  mutate(
+    Period = ifelse(grepl("Per1", Measure), "Period 1", "Period 2"),
+    Type = ifelse(grepl("SBP", Measure), "SBP", "DBP")
+  )
+
+# Individual trajectories
+p1 <- ggplot(viz_data1, aes(x = Period, y = BP, group = Id, color = seq_binary)) +
+  geom_line(alpha = 0.3) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~ Type, scales = "free_y") +
+  stat_summary(aes(group = seq_binary), fun = mean, geom = "line", size = 2) +
+  labs(title = "Study 1: Individual BP Trajectories",
+       subtitle = "Thick lines show sequence means",
+       y = "Blood Pressure (mm Hg)",
+       color = "Sequence") +
+  theme_minimal()
+
+# Box plots
+p2 <- ggplot(viz_data1, aes(x = Period, y = BP, fill = seq_binary)) +
+  geom_boxplot(alpha = 0.7) +
+  facet_wrap(~ Type, scales = "free_y") +
+  labs(title = "Study 1: BP Distribution by Period and Sequence",
+       y = "Blood Pressure (mm Hg)",
+       fill = "Sequence") +
+  theme_minimal()
+
+grid.arrange(p1, p2, ncol = 1)
+```
+
+# Problem 13.61: Study 2 (1.25 mg vs Placebo)
+
+```{r problem-13-61}
+result_study2 <- analyze_crossover_study(estrogen_wide, 2,
+                                         "Study 2: 1.25 mg Estrogen vs Placebo")
+```
+
+## Visualization - Study 2
+
+```{r viz-study-2}
+viz_data2 <- result_study2$data %>%
+  select(Id, seq_binary, SBP_Per1, SBP_Per2, DBP_Per1, DBP_Per2) %>%
+  pivot_longer(cols = c(SBP_Per1, SBP_Per2, DBP_Per1, DBP_Per2),
+               names_to = "Measure",
+               values_to = "BP") %>%
+  mutate(
+    Period = ifelse(grepl("Per1", Measure), "Period 1", "Period 2"),
+    Type = ifelse(grepl("SBP", Measure), "SBP", "DBP")
+  )
+
+# Individual trajectories
+p1 <- ggplot(viz_data2, aes(x = Period, y = BP, group = Id, color = seq_binary)) +
+  geom_line(alpha = 0.3) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~ Type, scales = "free_y") +
+  stat_summary(aes(group = seq_binary), fun = mean, geom = "line", size = 2) +
+  labs(title = "Study 2: Individual BP Trajectories",
+       subtitle = "Thick lines show sequence means",
+       y = "Blood Pressure (mm Hg)",
+       color = "Sequence") +
+  theme_minimal()
+
+# Box plots
+p2 <- ggplot(viz_data2, aes(x = Period, y = BP, fill = seq_binary)) +
+  geom_boxplot(alpha = 0.7) +
+  facet_wrap(~ Type, scales = "free_y") +
+  labs(title = "Study 2: BP Distribution by Period and Sequence",
+       y = "Blood Pressure (mm Hg)",
+       fill = "Sequence") +
+  theme_minimal()
+
+grid.arrange(p1, p2, ncol = 1)
+```
+
+# Problem 13.62: Study 3 (1.25 mg vs 0.625 mg)
+
+```{r problem-13-62}
+result_study3 <- analyze_crossover_study(estrogen_wide, 3,
+                                         "Study 3: 1.25 mg vs 0.625 mg Estrogen")
+```
+
+## Visualization - Study 3
+
+```{r viz-study-3}
+viz_data3 <- result_study3$data %>%
+  select(Id, seq_binary, SBP_Per1, SBP_Per2, DBP_Per1, DBP_Per2) %>%
+  pivot_longer(cols = c(SBP_Per1, SBP_Per2, DBP_Per1, DBP_Per2),
+               names_to = "Measure",
+               values_to = "BP") %>%
+  mutate(
+    Period = ifelse(grepl("Per1", Measure), "Period 1", "Period 2"),
+    Type = ifelse(grepl("SBP", Measure), "SBP", "DBP")
+  )
+
+# Individual trajectories
+p1 <- ggplot(viz_data3, aes(x = Period, y = BP, group = Id, color = seq_binary)) +
+  geom_line(alpha = 0.3) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~ Type, scales = "free_y") +
+  stat_summary(aes(group = seq_binary), fun = mean, geom = "line", size = 2) +
+  labs(title = "Study 3: Individual BP Trajectories",
+       subtitle = "Thick lines show sequence means",
+       y = "Blood Pressure (mm Hg)",
+       color = "Sequence") +
+  theme_minimal()
+
+# Box plots
+p2 <- ggplot(viz_data3, aes(x = Period, y = BP, fill = seq_binary)) +
+  geom_boxplot(alpha = 0.7) +
+  facet_wrap(~ Type, scales = "free_y") +
+  labs(title = "Study 3: BP Distribution by Period and Sequence",
+       y = "Blood Pressure (mm Hg)",
+       fill = "Sequence") +
+  theme_minimal()
+
+grid.arrange(p1, p2, ncol = 1)
+```
+
+# Summary of Treatment and Carry-over Effects
+
+```{r summary-60-62}
+cat("\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+cat("SUMMARY: PROBLEMS 13.60-13.62\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+
+summary_results <- data.frame(
+  Study = c(rep("Study 1 (0.625mg vs PL)", 4),
+            rep("Study 2 (1.25mg vs PL)", 4),
+            rep("Study 3 (1.25mg vs 0.625mg)", 4)),
+  Outcome = rep(c("SBP", "SBP", "DBP", "DBP"), 3),
+  Effect = rep(c("Carry-over", "Treatment", "Carry-over", "Treatment"), 3),
+  P_Value = c(
+    result_study1$sbp_carryover_p, result_study1$sbp_treatment_p,
+    result_study1$dbp_carryover_p, result_study1$dbp_treatment_p,
+    result_study2$sbp_carryover_p, result_study2$sbp_treatment_p,
+    result_study2$dbp_carryover_p, result_study2$dbp_treatment_p,
+    result_study3$sbp_carryover_p, result_study3$sbp_treatment_p,
+    result_study3$dbp_carryover_p, result_study3$dbp_treatment_p
+  ),
+  Significant = c(
+    result_study1$sbp_carryover_sig, result_study1$sbp_treatment_sig,
+    result_study1$dbp_carryover_sig, result_study1$dbp_treatment_sig,
+    result_study2$sbp_carryover_sig, result_study2$sbp_treatment_sig,
+    result_study2$dbp_carryover_sig, result_study2$dbp_treatment_sig,
+    result_study3$sbp_carryover_sig, result_study3$sbp_treatment_sig,
+    result_study3$dbp_carryover_sig, result_study3$dbp_treatment_sig
+  )
+) %>%
+  mutate(
+    P_Value_Format = format.pval(P_Value, eps = 0.001, digits = 3),
+    Result = ifelse(Significant, "Significant", "Not Significant")
+  )
+
+kable(summary_results %>% select(-P_Value, -Significant),
+      caption = "Summary of All Treatment and Carry-over Effects")
+```
+
+# Sample Size Calculations (Problems 13.63-13.66)
+
+## Background for Sample Size Calculations
+
+For a **two-period crossover design** with **no carry-over effect**, the sample size formula is:
+
+$$n = \frac{2(Z_{1-\alpha/2} + Z_{1-\beta})^2 \sigma_d^2}{\Delta^2}$$
+
+Where:
+- $n$ = total sample size needed
+- $Z_{1-\alpha/2}$ = critical value for two-sided test at level $\alpha$
+- $Z_{1-\beta}$ = critical value for power $1-\beta$
+- $\sigma_d$ = standard deviation of difference scores (Period 1 - Period 2)
+- $\Delta$ = treatment effect to detect
+
+For our problems:
+- $\alpha = 0.05$ (two-sided) → $Z_{0.975} = 1.96$
+- Power = 80% → $\beta = 0.20$ → $Z_{0.80} = 0.84$
+
+```{r sample-size-function}
+# Function to calculate sample size for crossover design
+calculate_crossover_n <- function(delta, sigma_d, alpha = 0.05, power = 0.80) {
+
+  z_alpha <- qnorm(1 - alpha/2)
+  z_beta <- qnorm(power)
+
+  n <- 2 * ((z_alpha + z_beta)^2) * (sigma_d^2) / (delta^2)
+
+  # Round up to next even number (need equal allocation)
+  n_rounded <- ceiling(n)
+  if(n_rounded %% 2 == 1) n_rounded <- n_rounded + 1
+
+  return(list(
+    n_exact = n,
+    n_rounded = n_rounded,
+    delta = delta,
+    sigma_d = sigma_d,
+    alpha = alpha,
+    power = power,
+    z_alpha = z_alpha,
+    z_beta = z_beta
+  ))
+}
+```
+
+# Problem 13.63: Study 1 Design - SBP (3 mm Hg effect)
+
+```{r problem-13-63}
+cat("\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 13.63: Sample Size for Study 1 Design (SBP)\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nParameters:\n")
+cat("Design: Similar to Study 1 (0.625 mg estrogen vs placebo)\n")
+cat("Outcome: Systolic Blood Pressure (SBP)\n")
+cat("Effect to detect: 3 mm Hg\n")
+cat("Power: 80%\n")
+cat("Significance level: α = 0.05 (two-sided)\n")
+cat("SD of difference scores (from Study 1):", round(result_study1$sd_sbp_diff, 2), "mm Hg\n\n")
+
+result_63 <- calculate_crossover_n(
+  delta = 3,
+  sigma_d = result_study1$sd_sbp_diff,
+  alpha = 0.05,
+  power = 0.80
+)
+
+cat("Sample Size Calculation:\n")
+cat("Z(1-α/2) = Z(0.975) =", round(result_63$z_alpha, 3), "\n")
+cat("Z(1-β) = Z(0.80) =", round(result_63$z_beta, 3), "\n")
+cat("\nFormula: n = 2 × (Z(α/2) + Z(β))² × σ²ₐ / Δ²\n")
+cat("n = 2 × (", round(result_63$z_alpha, 2), " + ", round(result_63$z_beta, 2),
+    ")² × ", round(result_study1$sd_sbp_diff, 2), "² / ", result_63$delta, "²\n", sep = "")
+cat("n = 2 × ", round((result_63$z_alpha + result_63$z_beta)^2, 2),
+    " × ", round(result_study1$sd_sbp_diff^2, 2),
+    " / ", result_63$delta^2, "\n", sep = "")
+cat("n =", round(result_63$n_exact, 2), "\n\n")
+
+cat("ANSWER: Need", result_63$n_rounded, "participants\n")
+cat("(", result_63$n_rounded/2, "per sequence)\n", sep = "")
+```
+
+# Problem 13.64: Study 1 Design - DBP (2 mm Hg effect)
+
+```{r problem-13-64}
+cat("\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 13.64: Sample Size for Study 1 Design (DBP)\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nParameters:\n")
+cat("Design: Similar to Study 1 (0.625 mg estrogen vs placebo)\n")
+cat("Outcome: Diastolic Blood Pressure (DBP)\n")
+cat("Effect to detect: 2 mm Hg\n")
+cat("Power: 80%\n")
+cat("Significance level: α = 0.05 (two-sided)\n")
+cat("SD of difference scores (from Study 1):", round(result_study1$sd_dbp_diff, 2), "mm Hg\n\n")
+
+result_64 <- calculate_crossover_n(
+  delta = 2,
+  sigma_d = result_study1$sd_dbp_diff,
+  alpha = 0.05,
+  power = 0.80
+)
+
+cat("Sample Size Calculation:\n")
+cat("Z(1-α/2) = Z(0.975) =", round(result_64$z_alpha, 3), "\n")
+cat("Z(1-β) = Z(0.80) =", round(result_64$z_beta, 3), "\n")
+cat("\nFormula: n = 2 × (Z(α/2) + Z(β))² × σ²ₐ / Δ²\n")
+cat("n = 2 × (", round(result_64$z_alpha, 2), " + ", round(result_64$z_beta, 2),
+    ")² × ", round(result_study1$sd_dbp_diff, 2), "² / ", result_64$delta, "²\n", sep = "")
+cat("n = 2 × ", round((result_64$z_alpha + result_64$z_beta)^2, 2),
+    " × ", round(result_study1$sd_dbp_diff^2, 2),
+    " / ", result_64$delta^2, "\n", sep = "")
+cat("n =", round(result_64$n_exact, 2), "\n\n")
+
+cat("ANSWER: Need", result_64$n_rounded, "participants\n")
+cat("(", result_64$n_rounded/2, "per sequence)\n", sep = "")
+```
+
+# Problem 13.65: Study 2 Design - SBP (3 mm Hg effect)
+
+```{r problem-13-65}
+cat("\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 13.65: Sample Size for Study 2 Design (SBP)\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nParameters:\n")
+cat("Design: Similar to Study 2 (1.25 mg estrogen vs placebo)\n")
+cat("Outcome: Systolic Blood Pressure (SBP)\n")
+cat("Effect to detect: 3 mm Hg\n")
+cat("Power: 80%\n")
+cat("Significance level: α = 0.05 (two-sided)\n")
+cat("SD of difference scores (from Study 2):", round(result_study2$sd_sbp_diff, 2), "mm Hg\n\n")
+
+result_65 <- calculate_crossover_n(
+  delta = 3,
+  sigma_d = result_study2$sd_sbp_diff,
+  alpha = 0.05,
+  power = 0.80
+)
+
+cat("Sample Size Calculation:\n")
+cat("Z(1-α/2) = Z(0.975) =", round(result_65$z_alpha, 3), "\n")
+cat("Z(1-β) = Z(0.80) =", round(result_65$z_beta, 3), "\n")
+cat("\nFormula: n = 2 × (Z(α/2) + Z(β))² × σ²ₐ / Δ²\n")
+cat("n = 2 × (", round(result_65$z_alpha, 2), " + ", round(result_65$z_beta, 2),
+    ")² × ", round(result_study2$sd_sbp_diff, 2), "² / ", result_65$delta, "²\n", sep = "")
+cat("n = 2 × ", round((result_65$z_alpha + result_65$z_beta)^2, 2),
+    " × ", round(result_study2$sd_sbp_diff^2, 2),
+    " / ", result_65$delta^2, "\n", sep = "")
+cat("n =", round(result_65$n_exact, 2), "\n\n")
+
+cat("ANSWER: Need", result_65$n_rounded, "participants\n")
+cat("(", result_65$n_rounded/2, "per sequence)\n", sep = "")
+```
+
+# Problem 13.66: Study 2 Design - DBP (2 mm Hg effect)
+
+```{r problem-13-66}
+cat("\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 13.66: Sample Size for Study 2 Design (DBP)\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nParameters:\n")
+cat("Design: Similar to Study 2 (1.25 mg estrogen vs placebo)\n")
+cat("Outcome: Diastolic Blood Pressure (DBP)\n")
+cat("Effect to detect: 2 mm Hg\n")
+cat("Power: 80%\n")
+cat("Significance level: α = 0.05 (two-sided)\n")
+cat("SD of difference scores (from Study 2):", round(result_study2$sd_dbp_diff, 2), "mm Hg\n\n")
+
+result_66 <- calculate_crossover_n(
+  delta = 2,
+  sigma_d = result_study2$sd_dbp_diff,
+  alpha = 0.05,
+  power = 0.80
+)
+
+cat("Sample Size Calculation:\n")
+cat("Z(1-α/2) = Z(0.975) =", round(result_66$z_alpha, 3), "\n")
+cat("Z(1-β) = Z(0.80) =", round(result_66$z_beta, 3), "\n")
+cat("\nFormula: n = 2 × (Z(α/2) + Z(β))² × σ²ₐ / Δ²\n")
+cat("n = 2 × (", round(result_66$z_alpha, 2), " + ", round(result_66$z_beta, 2),
+    ")² × ", round(result_study2$sd_dbp_diff, 2), "² / ", result_66$delta, "²\n", sep = "")
+cat("n = 2 × ", round((result_66$z_alpha + result_66$z_beta)^2, 2),
+    " × ", round(result_study2$sd_dbp_diff^2, 2),
+    " / ", result_66$delta^2, "\n", sep = "")
+cat("n =", round(result_66$n_exact, 2), "\n\n")
+
+cat("ANSWER: Need", result_66$n_rounded, "participants\n")
+cat("(", result_66$n_rounded/2, "per sequence)\n", sep = "")
+```
+
+# Comprehensive Summary
+
+## Summary Table: All Problems
+
+```{r comprehensive-summary}
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+cat("COMPREHENSIVE SUMMARY: PROBLEMS 13.60-13.66\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\n\nPART 1: TREATMENT AND CARRY-OVER EFFECTS (13.60-13.62)\n")
+cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+
+kable(summary_results %>% select(-P_Value, -Significant),
+      caption = "Problems 13.60-13.62: Statistical Significance Results")
+
+cat("\n\nPART 2: SAMPLE SIZE CALCULATIONS (13.63-13.66)\n")
+cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+
+sample_size_summary <- data.frame(
+  Problem = c("13.63", "13.64", "13.65", "13.66"),
+  Study_Design = c("Study 1", "Study 1", "Study 2", "Study 2"),
+  Outcome = c("SBP", "DBP", "SBP", "DBP"),
+  Effect_to_Detect = c("3 mm Hg", "2 mm Hg", "3 mm Hg", "2 mm Hg"),
+  SD_Diff = round(c(result_study1$sd_sbp_diff, result_study1$sd_dbp_diff,
+                    result_study2$sd_sbp_diff, result_study2$sd_dbp_diff), 2),
+  Sample_Size_Needed = c(result_63$n_rounded, result_64$n_rounded,
+                         result_65$n_rounded, result_66$n_rounded),
+  Per_Sequence = c(result_63$n_rounded/2, result_64$n_rounded/2,
+                   result_65$n_rounded/2, result_66$n_rounded/2)
+)
+
+kable(sample_size_summary,
+      caption = "Problems 13.63-13.66: Sample Size Requirements")
+```
+
+## Visualization: Sample Size Comparison
+
+```{r viz-sample-size, fig.height=6}
+# Sample size comparison plot
+ggplot(sample_size_summary, aes(x = Problem, y = Sample_Size_Needed,
+                                fill = paste(Study_Design, Outcome))) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_text(aes(label = Sample_Size_Needed), vjust = -0.5, size = 4, fontface = "bold") +
+  geom_text(aes(label = paste0("(", Per_Sequence, " per seq.)")),
+            vjust = 1.5, size = 3) +
+  labs(title = "Sample Size Requirements for Proposed Studies",
+       subtitle = "80% power to detect specified treatment effect (α = 0.05, two-sided)",
+       x = "Problem Number",
+       y = "Total Sample Size Needed",
+       fill = "Study Design & Outcome") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+## Clinical Interpretation
+
+```{r clinical-interpretation}
+cat("\n")
+cat("CLINICAL INTERPRETATION AND CONCLUSIONS:\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\n1. TREATMENT EFFECTS:\n")
+cat("-" %>% paste(rep("-", 50), collapse = "") %>% paste("-\n", sep = ""))
+
+for(i in 1:3) {
+  study_result <- list(result_study1, result_study2, result_study3)[[i]]
+  study_name <- c("Study 1 (0.625mg vs Placebo)",
+                  "Study 2 (1.25mg vs Placebo)",
+                  "Study 3 (1.25mg vs 0.625mg)")[i]
+
+  cat("\n", study_name, ":\n", sep = "")
+
+  cat("  SBP: ")
+  if(study_result$sbp_treatment_sig) {
+    cat("SIGNIFICANT treatment effect (p = ",
+        format.pval(study_result$sbp_treatment_p, eps = 0.001),
+        ")\n", sep = "")
+    cat("       Estimated effect: ", round(study_result$sbp_treatment_effect, 2),
+        " mm Hg\n", sep = "")
+  } else {
+    cat("No significant treatment effect (p = ",
+        format.pval(study_result$sbp_treatment_p, eps = 0.001),
+        ")\n", sep = "")
+  }
+
+  cat("  DBP: ")
+  if(study_result$dbp_treatment_sig) {
+    cat("SIGNIFICANT treatment effect (p = ",
+        format.pval(study_result$dbp_treatment_p, eps = 0.001),
+        ")\n", sep = "")
+    cat("       Estimated effect: ", round(study_result$dbp_treatment_effect, 2),
+        " mm Hg\n", sep = "")
+  } else {
+    cat("No significant treatment effect (p = ",
+        format.pval(study_result$dbp_treatment_p, eps = 0.001),
+        ")\n", sep = "")
+  }
+}
+
+cat("\n\n2. CARRY-OVER EFFECTS:\n")
+cat("-" %>% paste(rep("-", 50), collapse = "") %>% paste("-\n", sep = ""))
+
+any_carryover <- any(c(result_study1$sbp_carryover_sig, result_study1$dbp_carryover_sig,
+                       result_study2$sbp_carryover_sig, result_study2$dbp_carryover_sig,
+                       result_study3$sbp_carryover_sig, result_study3$dbp_carryover_sig))
+
+if(any_carryover) {
+  cat("\n⚠ WARNING: Some carry-over effects detected\n")
+  cat("\nStudies with carry-over:\n")
+
+  for(i in 1:3) {
+    study_result <- list(result_study1, result_study2, result_study3)[[i]]
+    study_name <- c("Study 1", "Study 2", "Study 3")[i]
+
+    if(study_result$sbp_carryover_sig || study_result$dbp_carryover_sig) {
+      cat("  ", study_name, ": ", sep = "")
+      effects <- c()
+      if(study_result$sbp_carryover_sig) effects <- c(effects, "SBP")
+      if(study_result$dbp_carryover_sig) effects <- c(effects, "DBP")
+      cat(paste(effects, collapse = ", "), "\n")
+    }
+  }
+
+  cat("\n→ The 2-week washout period may be insufficient for some outcomes\n")
+  cat("→ Treatment comparisons affected by carry-over used Period 1 only\n")
+} else {
+  cat("\n✓ No significant carry-over effects detected in any study\n")
+  cat("→ The 2-week washout period appears adequate\n")
+  cat("→ Full crossover design benefits achieved (both periods used)\n")
+}
+
+cat("\n\n3. SAMPLE SIZE PLANNING:\n")
+cat("-" %>% paste(rep("-", 50), collapse = "") %>% paste("-\n", sep = ""))
+
+cat("\nFor future studies with 80% power (α = 0.05, two-sided):\n\n")
+
+cat("Study 1 design (0.625 mg vs placebo):\n")
+cat("  • To detect 3 mm Hg SBP difference: n =", result_63$n_rounded, "\n")
+cat("  • To detect 2 mm Hg DBP difference: n =", result_64$n_rounded, "\n\n")
+
+cat("Study 2 design (1.25 mg vs placebo):\n")
+cat("  • To detect 3 mm Hg SBP difference: n =", result_65$n_rounded, "\n")
+  cat("  • To detect 2 mm Hg DBP difference: n =", result_66$n_rounded, "\n\n")
+
+cat("Note: These calculations assume no carry-over effect\n")
+cat("If carry-over is present, substantially larger samples may be needed\n")
+
+cat("\n\n4. OVERALL IMPLICATIONS:\n")
+cat("-" %>% paste(rep("-", 50), collapse = "") %>% paste("-\n", sep = ""))
+
+cat("\n• Estrogen effects on blood pressure vary by dose and outcome\n")
+cat("• Crossover design provides efficient within-subject comparisons\n")
+cat("• Adequate washout periods are critical for valid results\n")
+cat("• Sample size planning must account for expected variability\n")
+cat("• Results inform hormone replacement therapy safety and efficacy\n")
+```
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
+
+# References
+
+**Statistical Methods:**
+- Jones B, Kenward MG (2003). Design and Analysis of Cross-Over Trials, 2nd ed. Chapman & Hall/CRC
+- Senn S (2002). Cross-over Trials in Clinical Research, 2nd ed. Wiley
+- Chow SC, Liu JP (2013). Design and Analysis of Clinical Trials: Concepts and Methodologies, 3rd ed. Wiley
+- Rosner B (2015). Fundamentals of Biostatistics, 8th ed. Chapter 13
+
+**Key Concepts:**
+- Two-period crossover design
+- Carry-over effect testing
+- Treatment effect estimation
+- Sample size for crossover trials
+- Power analysis for paired designs

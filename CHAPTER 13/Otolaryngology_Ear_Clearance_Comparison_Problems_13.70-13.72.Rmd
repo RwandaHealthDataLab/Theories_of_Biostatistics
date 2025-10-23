@@ -1,0 +1,895 @@
+---
+title: "Otolaryngology: Ear Infection Clearance Analysis"
+subtitle: "Problems 13.70-13.72 - Treatment and Age Group Comparisons"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    code_folding: show
+    theme: flatly
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Problem Statement
+
+This analysis addresses Problems 13.70-13.72 examining ear infection clearance rates using the ear as the unit of analysis:
+
+**13.70**: Compare percentage of cleared ears between cefaclor-treated vs amoxicillin-treated groups (two-tailed p-value)
+
+**13.71**: Compare percentage of cleared ears among children 2-5 years vs <2 years (two-tailed p-value)
+
+**13.72**: Compare percentage of cleared ears among children 6+ years vs <2 years (two-tailed p-value)
+
+# Background
+
+## Study Design
+
+**Unit of Analysis**: Individual ear (not child)
+**Outcome**: Success = ear clears by 14 days; Failure = ear does not clear
+**Treatments**:
+- Cefaclor
+- Amoxicillin
+
+**Age Groups**:
+- <2 years
+- 2-5 years
+- 6+ years
+
+## Statistical Considerations
+
+Since the **ear** is the unit of analysis:
+- Some children have bilateral infections (2 ears, potentially correlated)
+- Some children have unilateral infections (1 ear)
+- These problems use **simple proportions** ignoring within-child correlation
+- Note: Problems 13.52-13.53 addressed this correlation using different methods
+
+## Clinical Relevance
+
+Understanding factors affecting ear infection clearance is important for:
+- Antibiotic selection
+- Age-specific treatment protocols
+- Parental counseling about expected outcomes
+- Treatment duration decisions
+
+# Load Required Libraries
+
+```{r load-libraries}
+library(tidyverse)      # Data manipulation and visualization
+library(knitr)          # Tables
+library(ggplot2)        # Advanced plotting
+library(gridExtra)      # Multiple plots
+library(broom)          # Tidy outputs
+```
+
+# Load and Prepare Data
+
+## Load EAR.DAT
+
+```{r load-data}
+# Load ear infection data
+ear_data <- read.table("../EAR.DAT.txt",
+                       header = TRUE,
+                       sep = ",",
+                       quote = "'\"",
+                       strip.white = TRUE)
+
+cat("Dataset dimensions:", nrow(ear_data), "observations (ears)\n")
+cat("Number of unique children:", length(unique(ear_data$Id)), "\n\n")
+
+cat("First 20 observations:\n")
+kable(head(ear_data, 20),
+      caption = "EAR.DAT - First 20 Observations")
+```
+
+## Data Structure
+
+```{r data-structure}
+# Display structure
+str(ear_data)
+
+# Summary statistics
+cat("\nSummary Statistics:\n")
+summary(ear_data)
+
+# Variable distributions
+cat("\nCleared status distribution:\n")
+table(ear_data$Clear)
+
+cat("\nAntibiotic distribution:\n")
+table(ear_data$Antibo)
+
+cat("\nAge distribution:\n")
+summary(ear_data$Age)
+
+cat("\nEar (side) distribution:\n")
+table(ear_data$Ear)
+```
+
+## Create Analysis Variables
+
+```{r create-variables}
+# Create analytical variables
+ear_clean <- ear_data %>%
+  mutate(
+    # Binary cleared status (already 0/1)
+    cleared = Clear,
+
+    # Antibiotic labels
+    antibiotic = factor(Antibo,
+                       levels = 1:2,
+                       labels = c("Cefaclor", "Amoxicillin")),
+
+    # Age groups for analysis
+    age_group = case_when(
+      Age < 2 ~ "<2 years",
+      Age >= 2 & Age < 6 ~ "2-5 years",
+      Age >= 6 ~ "6+ years"
+    ),
+    age_group = factor(age_group, levels = c("<2 years", "2-5 years", "6+ years")),
+
+    # Ear side
+    ear_side = factor(Ear,
+                     levels = 1:2,
+                     labels = c("Left", "Right")),
+
+    # Case type (bilateral vs unilateral)
+    case_type = ifelse(Id %in% Id[duplicated(Id)], "Bilateral", "Unilateral")
+  )
+
+# Summary
+cat("Analysis dataset:\n")
+cat("Total ears:", nrow(ear_clean), "\n")
+cat("Ears cleared:", sum(ear_clean$cleared),
+    "(", round(100*mean(ear_clean$cleared), 1), "%)\n")
+cat("Ears not cleared:", sum(1-ear_clean$cleared),
+    "(", round(100*mean(1-ear_clean$cleared), 1), "%)\n\n")
+
+cat("Cases by type:\n")
+table(ear_clean$case_type)
+```
+
+## Summary Statistics
+
+```{r summary-stats}
+# Overall clearance by antibiotic
+summary_antib <- ear_clean %>%
+  group_by(antibiotic) %>%
+  summarise(
+    N_ears = n(),
+    N_children = n_distinct(Id),
+    N_cleared = sum(cleared),
+    N_not_cleared = sum(1-cleared),
+    Percent_cleared = round(100 * mean(cleared), 1),
+    .groups = 'drop'
+  )
+
+kable(summary_antib,
+      caption = "Clearance Rates by Antibiotic")
+
+# Clearance by age group
+summary_age <- ear_clean %>%
+  group_by(age_group) %>%
+  summarise(
+    N_ears = n(),
+    N_children = n_distinct(Id),
+    N_cleared = sum(cleared),
+    N_not_cleared = sum(1-cleared),
+    Percent_cleared = round(100 * mean(cleared), 1),
+    .groups = 'drop'
+  )
+
+kable(summary_age,
+      caption = "Clearance Rates by Age Group")
+
+# Cross-tabulation: antibiotic × age group
+summary_cross <- ear_clean %>%
+  group_by(antibiotic, age_group) %>%
+  summarise(
+    N_ears = n(),
+    N_cleared = sum(cleared),
+    Percent_cleared = round(100 * mean(cleared), 1),
+    .groups = 'drop'
+  )
+
+kable(summary_cross,
+      caption = "Clearance Rates by Antibiotic and Age Group")
+```
+
+# Exploratory Data Analysis
+
+## Clearance Rates by Treatment
+
+```{r viz-treatment}
+p1 <- ggplot(summary_antib, aes(x = antibiotic, y = Percent_cleared, fill = antibiotic)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_text(aes(label = paste0(Percent_cleared, "%\n(", N_cleared, "/", N_ears, ")")),
+            vjust = -0.5, size = 4) +
+  labs(title = "Ear Clearance Rate by Antibiotic Treatment",
+       x = "Antibiotic",
+       y = "Percent Cleared (%)") +
+  ylim(0, 100) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p2 <- ggplot(ear_clean, aes(x = antibiotic, fill = factor(cleared))) +
+  geom_bar(position = "fill", alpha = 0.7) +
+  geom_text(stat = "count", aes(label = after_stat(count)),
+            position = position_fill(vjust = 0.5), size = 3.5) +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = c("0" = "coral", "1" = "lightblue"),
+                    labels = c("Not Cleared", "Cleared"),
+                    name = "Outcome") +
+  labs(title = "Ear Clearance Outcomes by Antibiotic",
+       x = "Antibiotic",
+       y = "Proportion") +
+  theme_minimal()
+
+grid.arrange(p1, p2, ncol = 2)
+```
+
+## Clearance Rates by Age Group
+
+```{r viz-age}
+p1 <- ggplot(summary_age, aes(x = age_group, y = Percent_cleared, fill = age_group)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_text(aes(label = paste0(Percent_cleared, "%\n(", N_cleared, "/", N_ears, ")")),
+            vjust = -0.5, size = 4) +
+  labs(title = "Ear Clearance Rate by Age Group",
+       x = "Age Group",
+       y = "Percent Cleared (%)") +
+  ylim(0, 100) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p2 <- ggplot(ear_clean, aes(x = age_group, fill = factor(cleared))) +
+  geom_bar(position = "fill", alpha = 0.7) +
+  geom_text(stat = "count", aes(label = after_stat(count)),
+            position = position_fill(vjust = 0.5), size = 3.5) +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = c("0" = "coral", "1" = "lightblue"),
+                    labels = c("Not Cleared", "Cleared"),
+                    name = "Outcome") +
+  labs(title = "Ear Clearance Outcomes by Age Group",
+       x = "Age Group",
+       y = "Proportion") +
+  theme_minimal()
+
+grid.arrange(p1, p2, ncol = 2)
+```
+
+## Combined Visualization
+
+```{r viz-combined}
+summary_cross_plot <- ear_clean %>%
+  group_by(antibiotic, age_group) %>%
+  summarise(
+    N = n(),
+    Percent_cleared = 100 * mean(cleared),
+    .groups = 'drop'
+  )
+
+ggplot(summary_cross_plot, aes(x = age_group, y = Percent_cleared,
+                                fill = antibiotic, group = antibiotic)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.7) +
+  geom_text(aes(label = paste0(round(Percent_cleared, 1), "%")),
+            position = position_dodge(width = 0.9),
+            vjust = -0.5, size = 3) +
+  labs(title = "Ear Clearance Rate by Age Group and Antibiotic",
+       x = "Age Group",
+       y = "Percent Cleared (%)",
+       fill = "Antibiotic") +
+  ylim(0, 100) +
+  theme_minimal()
+```
+
+# Problem 13.70: Antibiotic Comparison
+
+## Research Question
+
+Compare the percentage of cleared ears between cefaclor-treated and amoxicillin-treated groups.
+
+## Statistical Test
+
+**Test**: Two-sample test of proportions (Chi-square or Fisher's exact test)
+**Null Hypothesis**: π₁ = π₂ (clearance rates are equal between treatments)
+**Alternative Hypothesis**: π₁ ≠ π₂ (clearance rates differ between treatments)
+**Significance Level**: α = 0.05 (two-tailed)
+
+```{r problem-13-70}
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 13.70: ANTIBIOTIC COMPARISON\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+
+# Create contingency table
+table_70 <- table(ear_clean$antibiotic, ear_clean$cleared)
+rownames(table_70) <- c("Cefaclor", "Amoxicillin")
+colnames(table_70) <- c("Not Cleared", "Cleared")
+
+cat("\nContingency Table:\n")
+print(addmargins(table_70))
+
+# Calculate proportions
+n_cef <- sum(ear_clean$antibiotic == "Cefaclor")
+cleared_cef <- sum(ear_clean$antibiotic == "Cefaclor" & ear_clean$cleared == 1)
+prop_cef <- cleared_cef / n_cef
+
+n_amox <- sum(ear_clean$antibiotic == "Amoxicillin")
+cleared_amox <- sum(ear_clean$antibiotic == "Amoxicillin" & ear_clean$cleared == 1)
+prop_amox <- cleared_amox / n_amox
+
+cat("\n\nDescriptive Statistics:\n")
+cat("Cefaclor:\n")
+cat("  N ears:", n_cef, "\n")
+cat("  N cleared:", cleared_cef, "\n")
+cat("  Percent cleared:", round(100*prop_cef, 2), "%\n\n")
+
+cat("Amoxicillin:\n")
+cat("  N ears:", n_amox, "\n")
+cat("  N cleared:", cleared_amox, "\n")
+cat("  Percent cleared:", round(100*prop_amox, 2), "%\n\n")
+
+cat("Difference (Cefaclor - Amoxicillin):",
+    round(100*(prop_cef - prop_amox), 2), "percentage points\n\n")
+
+# Chi-square test
+chi_test_70 <- chisq.test(table_70, correct = FALSE)
+cat("\nChi-square Test (without continuity correction):\n")
+cat("Chi-square statistic:", round(chi_test_70$statistic, 4), "\n")
+cat("Degrees of freedom:", chi_test_70$parameter, "\n")
+cat("Two-tailed p-value:", format.pval(chi_test_70$p.value, digits = 4, eps = 0.0001), "\n\n")
+
+# Chi-square with Yates continuity correction
+chi_test_70_yates <- chisq.test(table_70, correct = TRUE)
+cat("Chi-square Test (with Yates continuity correction):\n")
+cat("Chi-square statistic:", round(chi_test_70_yates$statistic, 4), "\n")
+cat("Two-tailed p-value:", format.pval(chi_test_70_yates$p.value, digits = 4, eps = 0.0001), "\n\n")
+
+# Proportion test (2-sample z-test)
+prop_test_70 <- prop.test(c(cleared_cef, cleared_amox),
+                          c(n_cef, n_amox),
+                          correct = FALSE)
+cat("Two-sample Test of Proportions (without continuity correction):\n")
+cat("Z statistic:", round(sqrt(prop_test_70$statistic), 4), "\n")
+cat("95% CI for difference:", round(prop_test_70$conf.int[1], 4), "to",
+    round(prop_test_70$conf.int[2], 4), "\n")
+cat("Two-tailed p-value:", format.pval(prop_test_70$p.value, digits = 4, eps = 0.0001), "\n\n")
+
+# Fisher's exact test (alternative, exact method)
+fisher_test_70 <- fisher.test(table_70)
+cat("Fisher's Exact Test:\n")
+cat("Odds ratio:", round(fisher_test_70$estimate, 4), "\n")
+cat("95% CI for OR:", round(fisher_test_70$conf.int[1], 4), "to",
+    round(fisher_test_70$conf.int[2], 4), "\n")
+cat("Two-tailed p-value:", format.pval(fisher_test_70$p.value, digits = 4, eps = 0.0001), "\n\n")
+
+# Interpretation
+cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+cat("INTERPRETATION - PROBLEM 13.70\n")
+cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+
+if(chi_test_70$p.value < 0.05) {
+  cat("\nCONCLUSION: There IS a statistically significant difference in clearance rates\n")
+  cat("between cefaclor and amoxicillin (p = ",
+      format.pval(chi_test_70$p.value, digits = 4, eps = 0.0001), ")\n\n", sep = "")
+
+  if(prop_cef > prop_amox) {
+    cat("Cefaclor has a HIGHER clearance rate (", round(100*prop_cef, 1), "% vs ",
+        round(100*prop_amox, 1), "%)\n", sep = "")
+  } else {
+    cat("Amoxicillin has a HIGHER clearance rate (", round(100*prop_amox, 1), "% vs ",
+        round(100*prop_cef, 1), "%)\n", sep = "")
+  }
+} else {
+  cat("\nCONCLUSION: There is NO statistically significant difference in clearance rates\n")
+  cat("between cefaclor and amoxicillin (p = ",
+      format.pval(chi_test_70$p.value, digits = 4, eps = 0.0001), ")\n\n", sep = "")
+  cat("Both antibiotics show similar effectiveness for ear infection clearance.\n")
+}
+
+cat("\nANSWER: Two-tailed p-value = ",
+    format.pval(chi_test_70$p.value, digits = 4, eps = 0.0001), "\n", sep = "")
+```
+
+# Problem 13.71: Age Comparison (2-5 years vs <2 years)
+
+## Research Question
+
+Compare the percentage of cleared ears among children 2-5 years of age vs children <2 years of age.
+
+## Statistical Test
+
+**Test**: Two-sample test of proportions
+**Null Hypothesis**: π₁ = π₂ (clearance rates equal between age groups)
+**Alternative Hypothesis**: π₁ ≠ π₂ (clearance rates differ between age groups)
+
+```{r problem-13-71}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 13.71: AGE GROUP COMPARISON (2-5 years vs <2 years)\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+
+# Filter to relevant age groups
+data_71 <- ear_clean %>%
+  filter(age_group %in% c("<2 years", "2-5 years"))
+
+# Drop unused factor levels
+data_71$age_group <- droplevels(data_71$age_group)
+
+# Create contingency table
+table_71 <- table(data_71$age_group, data_71$cleared)
+
+# Set row and column names only if dimensions match
+if(nrow(table_71) == 2) {
+  rownames(table_71) <- c("<2 years", "2-5 years")
+}
+if(ncol(table_71) == 2) {
+  colnames(table_71) <- c("Not Cleared", "Cleared")
+}
+
+cat("\nContingency Table:\n")
+print(addmargins(table_71))
+
+# Calculate proportions
+n_under2 <- sum(data_71$age_group == "<2 years")
+cleared_under2 <- sum(data_71$age_group == "<2 years" & data_71$cleared == 1)
+prop_under2 <- cleared_under2 / n_under2
+
+n_2to5 <- sum(data_71$age_group == "2-5 years")
+cleared_2to5 <- sum(data_71$age_group == "2-5 years" & data_71$cleared == 1)
+prop_2to5 <- cleared_2to5 / n_2to5
+
+cat("\n\nDescriptive Statistics:\n")
+cat("<2 years:\n")
+cat("  N ears:", n_under2, "\n")
+cat("  N cleared:", cleared_under2, "\n")
+cat("  Percent cleared:", round(100*prop_under2, 2), "%\n\n")
+
+cat("2-5 years:\n")
+cat("  N ears:", n_2to5, "\n")
+cat("  N cleared:", cleared_2to5, "\n")
+cat("  Percent cleared:", round(100*prop_2to5, 2), "%\n\n")
+
+cat("Difference (2-5 years - <2 years):",
+    round(100*(prop_2to5 - prop_under2), 2), "percentage points\n\n")
+
+# Chi-square test
+chi_test_71 <- chisq.test(table_71, correct = FALSE)
+cat("\nChi-square Test (without continuity correction):\n")
+cat("Chi-square statistic:", round(chi_test_71$statistic, 4), "\n")
+cat("Degrees of freedom:", chi_test_71$parameter, "\n")
+cat("Two-tailed p-value:", format.pval(chi_test_71$p.value, digits = 4, eps = 0.0001), "\n\n")
+
+# Chi-square with Yates correction
+chi_test_71_yates <- chisq.test(table_71, correct = TRUE)
+cat("Chi-square Test (with Yates continuity correction):\n")
+cat("Chi-square statistic:", round(chi_test_71_yates$statistic, 4), "\n")
+cat("Two-tailed p-value:", format.pval(chi_test_71_yates$p.value, digits = 4, eps = 0.0001), "\n\n")
+
+# Proportion test
+prop_test_71 <- prop.test(c(cleared_2to5, cleared_under2),
+                          c(n_2to5, n_under2),
+                          correct = FALSE)
+cat("Two-sample Test of Proportions (without continuity correction):\n")
+cat("Z statistic:", round(sqrt(prop_test_71$statistic), 4), "\n")
+cat("95% CI for difference:", round(prop_test_71$conf.int[1], 4), "to",
+    round(prop_test_71$conf.int[2], 4), "\n")
+cat("Two-tailed p-value:", format.pval(prop_test_71$p.value, digits = 4, eps = 0.0001), "\n\n")
+
+# Fisher's exact test
+fisher_test_71 <- fisher.test(table_71)
+cat("Fisher's Exact Test:\n")
+cat("Odds ratio:", round(fisher_test_71$estimate, 4), "\n")
+cat("95% CI for OR:", round(fisher_test_71$conf.int[1], 4), "to",
+    round(fisher_test_71$conf.int[2], 4), "\n")
+cat("Two-tailed p-value:", format.pval(fisher_test_71$p.value, digits = 4, eps = 0.0001), "\n\n")
+
+# Interpretation
+cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+cat("INTERPRETATION - PROBLEM 13.71\n")
+cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+
+if(chi_test_71$p.value < 0.05) {
+  cat("\nCONCLUSION: There IS a statistically significant difference in clearance rates\n")
+  cat("between 2-5 year olds and <2 year olds (p = ",
+      format.pval(chi_test_71$p.value, digits = 4, eps = 0.0001), ")\n\n", sep = "")
+
+  if(prop_2to5 > prop_under2) {
+    cat("Children 2-5 years have a HIGHER clearance rate (", round(100*prop_2to5, 1), "% vs ",
+        round(100*prop_under2, 1), "%)\n", sep = "")
+  } else {
+    cat("Children <2 years have a HIGHER clearance rate (", round(100*prop_under2, 1), "% vs ",
+        round(100*prop_2to5, 1), "%)\n", sep = "")
+  }
+} else {
+  cat("\nCONCLUSION: There is NO statistically significant difference in clearance rates\n")
+  cat("between 2-5 year olds and <2 year olds (p = ",
+      format.pval(chi_test_71$p.value, digits = 4, eps = 0.0001), ")\n\n", sep = "")
+  cat("Both age groups show similar clearance rates.\n")
+}
+
+cat("\nANSWER: Two-tailed p-value = ",
+    format.pval(chi_test_71$p.value, digits = 4, eps = 0.0001), "\n", sep = "")
+```
+
+# Problem 13.72: Age Comparison (6+ years vs <2 years)
+
+## Research Question
+
+Compare the percentage of cleared ears among children 6+ years of age vs children <2 years of age.
+
+## Statistical Test
+
+**Test**: Two-sample test of proportions
+**Null Hypothesis**: π₁ = π₂ (clearance rates equal between age groups)
+**Alternative Hypothesis**: π₁ ≠ π₂ (clearance rates differ between age groups)
+
+```{r problem-13-72}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 13.72: AGE GROUP COMPARISON (6+ years vs <2 years)\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+
+# Filter to relevant age groups
+data_72 <- ear_clean %>%
+  filter(age_group %in% c("<2 years", "6+ years"))
+
+# Drop unused factor levels
+data_72$age_group <- droplevels(data_72$age_group)
+
+# Create contingency table
+table_72 <- table(data_72$age_group, data_72$cleared)
+
+# Set row and column names only if dimensions match
+if(nrow(table_72) == 2) {
+  rownames(table_72) <- c("<2 years", "6+ years")
+}
+if(ncol(table_72) == 2) {
+  colnames(table_72) <- c("Not Cleared", "Cleared")
+}
+
+cat("\nContingency Table:\n")
+print(addmargins(table_72))
+
+# Calculate proportions for both groups
+n_6plus <- sum(data_72$age_group == "6+ years")
+n_under2 <- sum(data_72$age_group == "<2 years")
+cleared_6plus <- sum(data_72$age_group == "6+ years" & data_72$cleared == 1)
+cleared_under2 <- sum(data_72$age_group == "<2 years" & data_72$cleared == 1)
+prop_under2 <- cleared_under2 / n_under2
+
+# Check if we have data in both groups
+if(n_6plus == 0 || n_under2 == 0 || nrow(table_72) < 2) {
+  cat("\n\nWARNING: Insufficient data for comparison!\n")
+  if(n_6plus == 0) {
+    cat("- No observations in 6+ years age group\n")
+  }
+  if(n_under2 == 0) {
+    cat("- No observations in <2 years age group\n")
+  }
+  if(nrow(table_72) < 2) {
+    cat("- Contingency table has only", nrow(table_72), "row(s)\n")
+  }
+  cat("\nCannot perform comparison.\n")
+  cat("\nThis may indicate:\n")
+  cat("- All children in the dataset are in one age category\n")
+  cat("- Data filtering or coding issue\n\n")
+  cat("Skipping Problem 13.72 due to insufficient data.\n\n")
+
+} else {
+
+prop_6plus <- cleared_6plus / n_6plus
+
+cat("\n\nDescriptive Statistics:\n")
+cat("<2 years:\n")
+cat("  N ears:", n_under2, "\n")
+cat("  N cleared:", cleared_under2, "\n")
+cat("  Percent cleared:", round(100*prop_under2, 2), "%\n\n")
+
+cat("6+ years:\n")
+cat("  N ears:", n_6plus, "\n")
+cat("  N cleared:", cleared_6plus, "\n")
+cat("  Percent cleared:", round(100*prop_6plus, 2), "%\n\n")
+
+cat("Difference (6+ years - <2 years):",
+    round(100*(prop_6plus - prop_under2), 2), "percentage points\n\n")
+
+# Chi-square test
+chi_test_72 <- chisq.test(table_72, correct = FALSE)
+cat("\nChi-square Test (without continuity correction):\n")
+cat("Chi-square statistic:", round(chi_test_72$statistic, 4), "\n")
+cat("Degrees of freedom:", chi_test_72$parameter, "\n")
+cat("Two-tailed p-value:", format.pval(chi_test_72$p.value, digits = 4, eps = 0.0001), "\n\n")
+
+# Chi-square with Yates correction
+chi_test_72_yates <- chisq.test(table_72, correct = TRUE)
+cat("Chi-square Test (with Yates continuity correction):\n")
+cat("Chi-square statistic:", round(chi_test_72_yates$statistic, 4), "\n")
+cat("Two-tailed p-value:", format.pval(chi_test_72_yates$p.value, digits = 4, eps = 0.0001), "\n\n")
+
+# Proportion test
+prop_test_72 <- prop.test(c(cleared_6plus, cleared_under2),
+                          c(n_6plus, n_under2),
+                          correct = FALSE)
+cat("Two-sample Test of Proportions (without continuity correction):\n")
+cat("Z statistic:", round(sqrt(prop_test_72$statistic), 4), "\n")
+cat("95% CI for difference:", round(prop_test_72$conf.int[1], 4), "to",
+    round(prop_test_72$conf.int[2], 4), "\n")
+cat("Two-tailed p-value:", format.pval(prop_test_72$p.value, digits = 4, eps = 0.0001), "\n\n")
+
+# Fisher's exact test
+fisher_test_72 <- fisher.test(table_72)
+cat("Fisher's Exact Test:\n")
+cat("Odds ratio:", round(fisher_test_72$estimate, 4), "\n")
+cat("95% CI for OR:", round(fisher_test_72$conf.int[1], 4), "to",
+    round(fisher_test_72$conf.int[2], 4), "\n")
+cat("Two-tailed p-value:", format.pval(fisher_test_72$p.value, digits = 4, eps = 0.0001), "\n\n")
+
+# Interpretation
+cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+cat("INTERPRETATION - PROBLEM 13.72\n")
+cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+
+if(chi_test_72$p.value < 0.05) {
+  cat("\nCONCLUSION: There IS a statistically significant difference in clearance rates\n")
+  cat("between 6+ year olds and <2 year olds (p = ",
+      format.pval(chi_test_72$p.value, digits = 4, eps = 0.0001), ")\n\n", sep = "")
+
+  if(prop_6plus > prop_under2) {
+    cat("Children 6+ years have a HIGHER clearance rate (", round(100*prop_6plus, 1), "% vs ",
+        round(100*prop_under2, 1), "%)\n", sep = "")
+  } else {
+    cat("Children <2 years have a HIGHER clearance rate (", round(100*prop_under2, 1), "% vs ",
+        round(100*prop_6plus, 1), "%)\n", sep = "")
+  }
+} else {
+  cat("\nCONCLUSION: There is NO statistically significant difference in clearance rates\n")
+  cat("between 6+ year olds and <2 year olds (p = ",
+      format.pval(chi_test_72$p.value, digits = 4, eps = 0.0001), ")\n\n", sep = "")
+  cat("Both age groups show similar clearance rates.\n")
+}
+
+cat("\nANSWER: Two-tailed p-value = ",
+    format.pval(chi_test_72$p.value, digits = 4, eps = 0.0001), "\n", sep = "")
+
+}  # End of if(n_6plus > 0) check
+```
+
+# Comprehensive Summary
+
+## Summary Table
+
+```{r summary-table}
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+cat("COMPREHENSIVE SUMMARY: PROBLEMS 13.70-13.72\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+
+# Check if Problem 13.72 was completed (need to handle if n_6plus was 0)
+if(exists("chi_test_72") && !is.null(chi_test_72)) {
+  # All three problems completed
+  summary_results <- data.frame(
+    Problem = c("13.70", "13.71", "13.72"),
+    Comparison = c("Cefaclor vs Amoxicillin",
+                   "Age 2-5y vs <2y",
+                   "Age 6+y vs <2y"),
+    Group1_N = c(n_cef, n_2to5, n_6plus),
+    Group1_Cleared = c(cleared_cef, cleared_2to5, cleared_6plus),
+    Group1_Percent = c(round(100*prop_cef, 1),
+                       round(100*prop_2to5, 1),
+                       round(100*prop_6plus, 1)),
+    Group2_N = c(n_amox, n_under2, n_under2),
+    Group2_Cleared = c(cleared_amox, cleared_under2, cleared_under2),
+    Group2_Percent = c(round(100*prop_amox, 1),
+                       round(100*prop_under2, 1),
+                       round(100*prop_under2, 1)),
+    Difference = c(round(100*(prop_cef - prop_amox), 1),
+                   round(100*(prop_2to5 - prop_under2), 1),
+                   round(100*(prop_6plus - prop_under2), 1)),
+    Chi_Square = c(round(chi_test_70$statistic, 4),
+                   round(chi_test_71$statistic, 4),
+                   round(chi_test_72$statistic, 4)),
+    P_Value = c(chi_test_70$p.value,
+                chi_test_71$p.value,
+                chi_test_72$p.value),
+    Significant = c(chi_test_70$p.value < 0.05,
+                    chi_test_71$p.value < 0.05,
+                    chi_test_72$p.value < 0.05)
+  )
+} else {
+  # Only problems 13.70 and 13.71 completed
+  cat("\nNote: Problem 13.72 could not be completed due to insufficient data in 6+ years age group.\n\n")
+
+  summary_results <- data.frame(
+    Problem = c("13.70", "13.71"),
+    Comparison = c("Cefaclor vs Amoxicillin",
+                   "Age 2-5y vs <2y"),
+    Group1_N = c(n_cef, n_2to5),
+    Group1_Cleared = c(cleared_cef, cleared_2to5),
+    Group1_Percent = c(round(100*prop_cef, 1),
+                       round(100*prop_2to5, 1)),
+    Group2_N = c(n_amox, n_under2),
+    Group2_Cleared = c(cleared_amox, cleared_under2),
+    Group2_Percent = c(round(100*prop_amox, 1),
+                       round(100*prop_under2, 1)),
+    Difference = c(round(100*(prop_cef - prop_amox), 1),
+                   round(100*(prop_2to5 - prop_under2), 1)),
+    Chi_Square = c(round(chi_test_70$statistic, 4),
+                   round(chi_test_71$statistic, 4)),
+    P_Value = c(chi_test_70$p.value,
+                chi_test_71$p.value),
+    Significant = c(chi_test_70$p.value < 0.05,
+                    chi_test_71$p.value < 0.05)
+  )
+}
+
+# Add formatted columns
+summary_results <- summary_results %>%
+  mutate(
+    P_Value_Format = format.pval(P_Value, digits = 4, eps = 0.0001),
+    Result = ifelse(Significant, "Significant", "Not Significant")
+  )
+
+kable(summary_results %>%
+        select(Problem, Comparison, Group1_Percent, Group2_Percent,
+               Difference, Chi_Square, P_Value_Format, Result),
+      col.names = c("Problem", "Comparison", "Group 1 %", "Group 2 %",
+                    "Diff (%pts)", "χ²", "P-value", "Result"),
+      caption = "Summary of All Comparisons")
+```
+
+## Visualization - Summary
+
+```{r viz-summary, fig.height=6}
+# Create summary visualization
+comparison_labels <- list(
+  "13.70" = "Cefaclor vs\nAmoxicillin",
+  "13.71" = "Age 2-5y vs\nAge <2y",
+  "13.72" = "Age 6+y vs\nAge <2y"
+)
+
+summary_viz <- summary_results %>%
+  mutate(
+    Comparison_Short = sapply(Problem, function(p) comparison_labels[[p]]),
+    Neg_Log_P = -log10(P_Value)
+  )
+
+ggplot(summary_viz, aes(x = Comparison_Short, y = Neg_Log_P, fill = Significant)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed",
+             color = "red", size = 1) +
+  geom_text(aes(label = paste0("p = ", P_Value_Format)),
+            vjust = -0.5, size = 4) +
+  scale_fill_manual(values = c("TRUE" = "coral", "FALSE" = "lightblue"),
+                    labels = c("Not Significant", "Significant")) +
+  labs(title = "Statistical Significance of All Comparisons",
+       subtitle = "Red dashed line indicates α = 0.05 threshold",
+       x = "Comparison",
+       y = "-log10(p-value)\n(Higher = More Significant)",
+       fill = "Result") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+## Clinical Interpretation
+
+```{r clinical-interpretation}
+cat("\n")
+cat("CLINICAL INTERPRETATION AND CONCLUSIONS:\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\n1. ANTIBIOTIC EFFECTIVENESS (Problem 13.70):\n")
+cat("-" %>% paste(rep("-", 50), collapse = "") %>% paste("-\n", sep = ""))
+
+if(summary_results$Significant[1]) {
+  cat("\n✓ SIGNIFICANT difference between antibiotics\n")
+  if(prop_cef > prop_amox) {
+    cat("  → Cefaclor shows SUPERIOR clearance (", round(100*prop_cef, 1),
+        "% vs ", round(100*prop_amox, 1), "%)\n", sep = "")
+  } else {
+    cat("  → Amoxicillin shows SUPERIOR clearance (", round(100*prop_amox, 1),
+        "% vs ", round(100*prop_cef, 1), "%)\n", sep = "")
+  }
+} else {
+  cat("\n✗ NO significant difference between antibiotics\n")
+  cat("  → Both cefaclor and amoxicillin show similar effectiveness\n")
+  cat("  → Choice may depend on other factors (cost, side effects, allergies)\n")
+}
+
+cat("\n\n2. AGE GROUP EFFECTS (Problems 13.71-13.72):\n")
+cat("-" %>% paste(rep("-", 50), collapse = "") %>% paste("-\n", sep = ""))
+
+cat("\n2-5 years vs <2 years:\n")
+if(summary_results$Significant[2]) {
+  cat("  ✓ SIGNIFICANT difference (p = ", summary_results$P_Value_Format[2], ")\n", sep = "")
+  if(prop_2to5 > prop_under2) {
+    cat("  → Older children (2-5y) clear better\n")
+  } else {
+    cat("  → Younger children (<2y) clear better\n")
+  }
+} else {
+  cat("  ✗ NO significant difference (p = ", summary_results$P_Value_Format[2], ")\n", sep = "")
+}
+
+cat("\n6+ years vs <2 years:\n")
+if(nrow(summary_results) >= 3 && exists("prop_6plus") && !is.na(prop_6plus)) {
+  if(summary_results$Significant[3]) {
+    cat("  ✓ SIGNIFICANT difference (p = ", summary_results$P_Value_Format[3], ")\n", sep = "")
+    if(prop_6plus > prop_under2) {
+      cat("  → Older children (6+y) clear better\n")
+    } else {
+      cat("  → Younger children (<2y) clear better\n")
+    }
+  } else {
+    cat("  ✗ NO significant difference (p = ", summary_results$P_Value_Format[3], ")\n", sep = "")
+  }
+} else {
+  cat("  ⚠ Could not be analyzed (insufficient data in 6+ years group)\n")
+}
+
+cat("\n\n3. OVERALL PATTERNS:\n")
+cat("-" %>% paste(rep("-", 50), collapse = "") %>% paste("-\n", sep = ""))
+
+# Age trend
+cat("\nClearance rates by age:\n")
+cat("  <2 years:  ", round(100*prop_under2, 1), "%\n", sep = "")
+cat("  2-5 years: ", round(100*prop_2to5, 1), "%\n", sep = "")
+if(exists("prop_6plus") && !is.na(prop_6plus)) {
+  cat("  6+ years:  ", round(100*prop_6plus, 1), "%\n\n", sep = "")
+
+  if(prop_6plus > prop_2to5 && prop_2to5 > prop_under2) {
+    cat("  → Clear positive age trend: older children clear infections better\n")
+  } else if(prop_under2 > prop_2to5 && prop_2to5 > prop_6plus) {
+    cat("  → Clear negative age trend: younger children clear infections better\n")
+  } else {
+    cat("  → No consistent age trend observed\n")
+  }
+} else {
+  cat("  6+ years:  No data available\n\n")
+  cat("  → Cannot assess age trend (missing 6+ years data)\n")
+}
+
+cat("\n\n4. METHODOLOGICAL NOTE:\n")
+cat("-" %>% paste(rep("-", 50), collapse = "") %>% paste("-\n", sep = ""))
+cat("\n• These analyses use the EAR as the unit of analysis\n")
+cat("• Some children have bilateral infections (2 ears, potentially correlated)\n")
+cat("• These simple proportion tests do NOT account for within-child correlation\n")
+cat("• See Problems 13.52-13.53 for analyses accounting for correlation:\n")
+cat("  - Problem 13.52: Subject-level logistic regression\n")
+cat("  - Problem 13.53: GEE analysis with ear as unit\n")
+cat("• Results here may have inflated Type I error due to ignored correlation\n")
+
+cat("\n\n5. CLINICAL IMPLICATIONS:\n")
+cat("-" %>% paste(rep("-", 50), collapse = "") %>% paste("-\n", sep = ""))
+cat("\n• Understanding treatment and age effects guides antibiotic selection\n")
+cat("• Age-specific clearance rates inform parental counseling\n")
+cat("• Results help set realistic treatment expectations\n")
+cat("• Consider both statistical significance and clinical importance\n")
+```
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
+
+# References
+
+**Statistical Methods:**
+- Agresti A (2013). Categorical Data Analysis, 3rd ed. Wiley
+- Fleiss JL, Levin B, Paik MC (2003). Statistical Methods for Rates and Proportions, 3rd ed. Wiley
+- Rosner B (2015). Fundamentals of Biostatistics, 8th ed. Chapter 13
+
+**Key Concepts:**
+- Two-sample test of proportions
+- Chi-square test for independence
+- Fisher's exact test
+- Correlated binary data considerations
+- Unit of analysis considerations

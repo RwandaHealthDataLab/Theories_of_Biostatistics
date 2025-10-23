@@ -1,0 +1,825 @@
+---
+title: "Sports Medicine: Tennis Elbow Treatment Crossover Trial Analysis"
+subtitle: "Problems 13.54-13.59 - Treatment and Carry-over Effects"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    number_sections: true
+    code_folding: show
+    theme: flatly
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Problem Statement
+
+This analysis addresses Problems 13.54-13.59 from a crossover clinical trial for tennis elbow treatment:
+
+**Treatment Effects:**
+- **13.54**: Assess significant treatment effects on pain during maximum activity
+- **13.55**: Assess significant treatment effects on pain 12 hours after maximum activity
+- **13.56**: Assess significant treatment effects on pain on an average day
+
+**Carry-over Effects:**
+- **13.57**: Assess significant carry-over effects for maximum activity pain
+- **13.58**: Assess significant carry-over effects for 12-hour post-activity pain
+- **13.59**: Assess significant carry-over effects for average day pain
+
+# Background
+
+## Study Design
+
+This is a **2-period, 2-treatment crossover trial** for tennis elbow:
+
+- **Period 1**: Baseline (not analyzed - washout/baseline period)
+- **Period 2**: First treatment period
+- **Period 3**: Washout period
+- **Period 4**: Second treatment period
+
+Patients are randomized to one of two sequences:
+- **Sequence 1 (drg_ord=1)**: Treatment A in Period 2, Treatment B in Period 4
+- **Sequence 2 (drg_ord=2)**: Treatment B in Period 2, Treatment A in Period 4
+
+## Pain Outcomes Measured
+
+Four pain measures at each period:
+1. **painmx**: Pain during maximum activity (Problems 13.54, 13.57)
+2. **pain12**: Pain 12 hours after maximum activity (Problems 13.55, 13.58)
+3. **painav**: Pain on an average day (Problems 13.56, 13.59)
+4. **painov**: Overall pain (not analyzed in these problems)
+
+Pain scale: Typically 0-10 (higher = more pain), with 9 often indicating missing data
+
+## Crossover Analysis Concepts
+
+### Treatment Effect
+The **direct treatment effect** compares the two treatments, averaged across periods and sequences.
+
+### Carry-over Effect
+The **carry-over effect** (or residual effect) occurs when the effect of treatment in Period 2 persists into Period 4. This violates the crossover design assumption.
+
+### Analysis Strategy
+1. **First**: Test for carry-over effects
+2. **If no carry-over**: Use both periods to estimate treatment effect (more powerful)
+3. **If carry-over present**: Use only Period 2 data (parallel group comparison)
+
+# Load Required Libraries
+
+```{r load-libraries}
+library(tidyverse)      # Data manipulation and visualization
+library(knitr)          # Tables
+library(ggplot2)        # Advanced plotting
+library(gridExtra)      # Multiple plots
+library(scales)         # Scale functions
+library(broom)          # Tidy model outputs
+library(car)            # ANOVA functions
+```
+
+# Load and Prepare Data
+
+## Load TENNIS2.DAT
+
+```{r load-data}
+# Load tennis elbow crossover trial data
+tennis_data <- read.table("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/TENNIS2.DAT.txt",
+                          header = TRUE,
+                          sep = ",",
+                          quote = "'\"",
+                          strip.white = TRUE)
+
+cat("Dataset dimensions:", nrow(tennis_data), "patients\n")
+cat("\nFirst 10 patients:\n")
+kable(head(tennis_data, 10),
+      caption = "TENNIS2.DAT - Crossover Trial Data (First 10 Patients)")
+```
+
+## Data Structure and Validation
+
+```{r data-structure}
+# Display structure
+str(tennis_data)
+
+# Summary statistics
+cat("\nSummary Statistics:\n")
+summary(tennis_data)
+
+# Check treatment sequences
+cat("\nTreatment Sequence Distribution:\n")
+table(tennis_data$drg_ord)
+
+# Check for missing values (coded as 9)
+cat("\nChecking for missing data codes (9):\n")
+pain_vars <- grep("^pain", names(tennis_data), value = TRUE)
+for(var in pain_vars) {
+  n_missing <- sum(tennis_data[[var]] == 9, na.rm = TRUE)
+  if(n_missing > 0) {
+    cat(var, ": ", n_missing, " missing values\n", sep = "")
+  }
+}
+```
+
+## Data Cleaning and Preparation
+
+```{r data-cleaning}
+# Replace 9 (missing code) with NA
+tennis_clean <- tennis_data %>%
+  mutate(across(starts_with("pain"), ~ ifelse(. == 9, NA, .)))
+
+# Create descriptive sequence labels
+tennis_clean <- tennis_clean %>%
+  mutate(
+    sequence = factor(drg_ord,
+                     levels = c(1, 2),
+                     labels = c("Seq 1: A→B", "Seq 2: B→A")),
+    sex_label = factor(sex,
+                      levels = c(1, 2, 9),
+                      labels = c("Male", "Female", "Unknown"))
+  )
+
+# Count valid cases for each outcome
+cat("Valid cases per outcome:\n")
+cat("Period 2 - Max activity:", sum(!is.na(tennis_clean$painmx_2)), "\n")
+cat("Period 2 - 12-hr post:", sum(!is.na(tennis_clean$pain12_2)), "\n")
+cat("Period 2 - Average day:", sum(!is.na(tennis_clean$painav_2)), "\n")
+cat("Period 4 - Max activity:", sum(!is.na(tennis_clean$painmx_4)), "\n")
+cat("Period 4 - 12-hr post:", sum(!is.na(tennis_clean$pain12_4)), "\n")
+cat("Period 4 - Average day:", sum(!is.na(tennis_clean$painav_4)), "\n")
+```
+
+# Exploratory Data Analysis
+
+## Demographics
+
+```{r demographics}
+# Age distribution by sequence
+p1 <- ggplot(tennis_clean, aes(x = sequence, y = age, fill = sequence)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  labs(title = "Age Distribution by Treatment Sequence",
+       x = "Treatment Sequence",
+       y = "Age (years)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Sex distribution by sequence
+sex_table <- tennis_clean %>%
+  filter(sex_label != "Unknown") %>%
+  count(sequence, sex_label) %>%
+  group_by(sequence) %>%
+  mutate(prop = n / sum(n))
+
+p2 <- ggplot(sex_table, aes(x = sequence, y = n, fill = sex_label)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.7) +
+  geom_text(aes(label = n), position = position_dodge(width = 0.9),
+            vjust = -0.5, size = 3) +
+  labs(title = "Sex Distribution by Treatment Sequence",
+       x = "Treatment Sequence",
+       y = "Count",
+       fill = "Sex") +
+  theme_minimal()
+
+grid.arrange(p1, p2, ncol = 2)
+```
+
+## Pain Score Distributions
+
+```{r pain-distributions}
+# Reshape data for visualization
+pain_long <- tennis_clean %>%
+  select(Id, sequence, painmx_2, pain12_2, painav_2,
+         painmx_4, pain12_4, painav_4) %>%
+  pivot_longer(cols = starts_with("pain"),
+               names_to = "measure",
+               values_to = "pain_score") %>%
+  filter(!is.na(pain_score)) %>%
+  mutate(
+    period = ifelse(grepl("_2$", measure), "Period 2", "Period 4"),
+    pain_type = case_when(
+      grepl("painmx", measure) ~ "Maximum Activity",
+      grepl("pain12", measure) ~ "12hr Post-Activity",
+      grepl("painav", measure) ~ "Average Day"
+    )
+  )
+
+# Pain scores by period and type
+ggplot(pain_long, aes(x = period, y = pain_score, fill = pain_type)) +
+  geom_boxplot(alpha = 0.7) +
+  facet_wrap(~ pain_type) +
+  labs(title = "Pain Score Distributions by Period and Pain Type",
+       subtitle = "Crossover Trial - All Sequences Combined",
+       x = "Period",
+       y = "Pain Score (0-10)",
+       fill = "Pain Type") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+## Treatment Response by Sequence
+
+```{r sequence-comparison}
+# Pain by sequence and period
+ggplot(pain_long, aes(x = period, y = pain_score, fill = sequence)) +
+  geom_boxplot(alpha = 0.7) +
+  facet_wrap(~ pain_type) +
+  labs(title = "Pain Scores by Treatment Sequence, Period, and Pain Type",
+       subtitle = "Look for period×sequence interaction (carry-over effect)",
+       x = "Period",
+       y = "Pain Score",
+       fill = "Sequence") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+# Crossover Analysis Functions
+
+```{r analysis-functions}
+# Function to perform complete crossover analysis
+analyze_crossover <- function(data, period2_var, period4_var, outcome_name) {
+
+  # Remove missing data
+  analysis_data <- data %>%
+    filter(!is.na(.data[[period2_var]]) & !is.na(.data[[period4_var]]))
+
+  cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+  cat("CROSSOVER ANALYSIS:", outcome_name, "\n")
+  cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+  cat("\nSample size:", nrow(analysis_data), "patients with complete data\n\n")
+
+  # Calculate crossover analysis variables
+  crossover_data <- analysis_data %>%
+    mutate(
+      # Sum of both periods (for carry-over test)
+      sum_score = .data[[period2_var]] + .data[[period4_var]],
+      # Difference (Period 2 - Period 4) - for treatment effect
+      diff_score = .data[[period2_var]] - .data[[period4_var]]
+    )
+
+  # Summary by sequence
+  cat("Descriptive Statistics by Sequence:\n")
+  summary_stats <- crossover_data %>%
+    group_by(sequence) %>%
+    summarise(
+      n = n(),
+      Period_2_Mean = mean(.data[[period2_var]], na.rm = TRUE),
+      Period_2_SD = sd(.data[[period2_var]], na.rm = TRUE),
+      Period_4_Mean = mean(.data[[period4_var]], na.rm = TRUE),
+      Period_4_SD = sd(.data[[period4_var]], na.rm = TRUE),
+      Sum_Mean = mean(sum_score, na.rm = TRUE),
+      Sum_SD = sd(sum_score, na.rm = TRUE),
+      Diff_Mean = mean(diff_score, na.rm = TRUE),
+      Diff_SD = sd(diff_score, na.rm = TRUE),
+      .groups = 'drop'
+    )
+
+  print(kable(summary_stats, digits = 3,
+              caption = paste("Summary Statistics -", outcome_name)))
+
+  # ===================================================================
+  # STEP 1: TEST FOR CARRY-OVER EFFECT
+  # ===================================================================
+  cat("\n")
+  cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+  cat("STEP 1: TEST FOR CARRY-OVER EFFECT\n")
+  cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+  cat("\nMethod: Compare sum of both periods between sequences\n")
+  cat("H0: No carry-over effect (sum_Seq1 = sum_Seq2)\n")
+  cat("Ha: Carry-over effect exists (sum_Seq1 ≠ sum_Seq2)\n\n")
+
+  # Two-sample t-test for carry-over effect
+  carryover_test <- t.test(sum_score ~ drg_ord, data = crossover_data,
+                           var.equal = FALSE)
+
+  cat("Two-sample t-test results:\n")
+  cat("Sequence 1 (A→B) sum mean:",
+      mean(crossover_data$sum_score[crossover_data$drg_ord == 1], na.rm = TRUE), "\n")
+  cat("Sequence 2 (B→A) sum mean:",
+      mean(crossover_data$sum_score[crossover_data$drg_ord == 2], na.rm = TRUE), "\n")
+  cat("Difference in sums:", carryover_test$estimate[1] - carryover_test$estimate[2], "\n")
+  cat("95% CI for difference:", carryover_test$conf.int[1], "to",
+      carryover_test$conf.int[2], "\n")
+  cat("t-statistic:", carryover_test$statistic, "\n")
+  cat("df:", carryover_test$parameter, "\n")
+  cat("Two-sided p-value:", format.pval(carryover_test$p.value, eps = 0.001), "\n\n")
+
+  # Interpretation
+  if(carryover_test$p.value < 0.05) {
+    cat("CONCLUSION: Significant carry-over effect detected (p < 0.05)\n")
+    cat("→ Will use ONLY Period 2 data for treatment comparison\n\n")
+    use_both_periods <- FALSE
+  } else {
+    cat("CONCLUSION: No significant carry-over effect (p ≥ 0.05)\n")
+    cat("→ Will use BOTH periods for treatment comparison (more powerful)\n\n")
+    use_both_periods <- TRUE
+  }
+
+  # ===================================================================
+  # STEP 2: TEST FOR TREATMENT EFFECT
+  # ===================================================================
+  cat("\n")
+  cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+  cat("STEP 2: TEST FOR TREATMENT EFFECT\n")
+  cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+
+  if(use_both_periods) {
+    # Use both periods (more powerful)
+    cat("\nMethod: Compare difference (Period 2 - Period 4) between sequences\n")
+    cat("Using both periods since no carry-over detected\n")
+    cat("H0: No treatment effect (diff_Seq1 = diff_Seq2)\n")
+    cat("Ha: Treatment effect exists (diff_Seq1 ≠ diff_Seq2)\n\n")
+
+    treatment_test <- t.test(diff_score ~ drg_ord, data = crossover_data,
+                            var.equal = FALSE)
+
+    # Calculate treatment effect
+    # For Seq 1 (A→B): diff = A - B, so mean diff estimates A-B
+    # For Seq 2 (B→A): diff = B - A, so mean diff estimates B-A
+    # Treatment effect = (diff_Seq1 - diff_Seq2) / 2
+    mean_diff_seq1 <- mean(crossover_data$diff_score[crossover_data$drg_ord == 1], na.rm = TRUE)
+    mean_diff_seq2 <- mean(crossover_data$diff_score[crossover_data$drg_ord == 2], na.rm = TRUE)
+    treatment_effect <- (mean_diff_seq1 - mean_diff_seq2) / 2
+
+    cat("Sequence 1 (A→B) difference mean:", mean_diff_seq1, "\n")
+    cat("Sequence 2 (B→A) difference mean:", mean_diff_seq2, "\n")
+    cat("Estimated treatment effect (A - B):", treatment_effect, "\n")
+    cat("95% CI for difference:", treatment_test$conf.int[1], "to",
+        treatment_test$conf.int[2], "\n")
+    cat("t-statistic:", treatment_test$statistic, "\n")
+    cat("df:", treatment_test$parameter, "\n")
+    cat("Two-sided p-value:", format.pval(treatment_test$p.value, eps = 0.001), "\n\n")
+
+    final_p_value <- treatment_test$p.value
+    final_test <- treatment_test
+
+  } else {
+    # Use only Period 2 (parallel group comparison)
+    cat("\nMethod: Compare Period 2 only between sequences (parallel group)\n")
+    cat("Using only Period 2 due to carry-over effect\n")
+    cat("H0: No treatment effect in Period 2\n")
+    cat("Ha: Treatment effect exists in Period 2\n\n")
+
+    treatment_test <- t.test(crossover_data[[period2_var]] ~ drg_ord,
+                            data = crossover_data,
+                            var.equal = FALSE)
+
+    cat("Sequence 1 (Treatment A) Period 2 mean:",
+        mean(crossover_data[[period2_var]][crossover_data$drg_ord == 1], na.rm = TRUE), "\n")
+    cat("Sequence 2 (Treatment B) Period 2 mean:",
+        mean(crossover_data[[period2_var]][crossover_data$drg_ord == 2], na.rm = TRUE), "\n")
+    cat("Difference (A - B):", treatment_test$estimate[1] - treatment_test$estimate[2], "\n")
+    cat("95% CI for difference:", treatment_test$conf.int[1], "to",
+        treatment_test$conf.int[2], "\n")
+    cat("t-statistic:", treatment_test$statistic, "\n")
+    cat("df:", treatment_test$parameter, "\n")
+    cat("Two-sided p-value:", format.pval(treatment_test$p.value, eps = 0.001), "\n\n")
+
+    final_p_value <- treatment_test$p.value
+    final_test <- treatment_test
+  }
+
+  # Final interpretation
+  cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+  cat("FINAL INTERPRETATION\n")
+  cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+
+  if(final_p_value < 0.05) {
+    cat("\nSIGNIFICANT TREATMENT EFFECT detected (p < 0.05)\n")
+    cat("The two treatments differ significantly for", outcome_name, "\n")
+  } else {
+    cat("\nNO significant treatment effect (p ≥ 0.05)\n")
+    cat("No significant difference between treatments for", outcome_name, "\n")
+  }
+
+  if(carryover_test$p.value < 0.05) {
+    cat("\nWARNING: Carry-over effect present - results based on Period 2 only\n")
+    cat("This reduces statistical power compared to full crossover analysis\n")
+  }
+
+  cat("\n")
+
+  # Return results for summary
+  return(list(
+    outcome = outcome_name,
+    n = nrow(crossover_data),
+    carryover_p = carryover_test$p.value,
+    carryover_sig = carryover_test$p.value < 0.05,
+    treatment_p = final_p_value,
+    treatment_sig = final_p_value < 0.05,
+    used_both_periods = use_both_periods,
+    carryover_test = carryover_test,
+    treatment_test = final_test,
+    data = crossover_data
+  ))
+}
+```
+
+# Problem 13.54: Treatment Effects - Maximum Activity Pain
+
+```{r problem-13-54}
+result_54 <- analyze_crossover(tennis_clean,
+                                "painmx_2", "painmx_4",
+                                "Pain During Maximum Activity")
+```
+
+## Visualization - Maximum Activity Pain
+
+```{r viz-13-54}
+# Create visualization
+viz_data <- result_54$data %>%
+  select(Id, sequence, Period_2 = painmx_2, Period_4 = painmx_4) %>%
+  pivot_longer(cols = c(Period_2, Period_4),
+               names_to = "Period",
+               values_to = "Pain_Score")
+
+# Individual trajectories
+p1 <- ggplot(viz_data, aes(x = Period, y = Pain_Score, group = Id)) +
+  geom_line(alpha = 0.3) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~ sequence) +
+  stat_summary(aes(group = 1), fun = mean, geom = "line",
+               color = "red", size = 1.5) +
+  stat_summary(aes(group = 1), fun = mean, geom = "point",
+               color = "red", size = 3) +
+  labs(title = "Individual Patient Trajectories - Maximum Activity Pain",
+       subtitle = "Red line shows mean trajectory for each sequence",
+       y = "Pain Score") +
+  theme_minimal()
+
+# Box plots by period and sequence
+p2 <- ggplot(viz_data, aes(x = Period, y = Pain_Score, fill = sequence)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(title = "Pain Distribution by Period and Sequence",
+       y = "Pain Score",
+       fill = "Sequence") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+grid.arrange(p1, p2, ncol = 1)
+```
+
+# Problem 13.55: Treatment Effects - 12-Hour Post-Activity Pain
+
+```{r problem-13-55}
+result_55 <- analyze_crossover(tennis_clean,
+                                "pain12_2", "pain12_4",
+                                "Pain 12 Hours After Maximum Activity")
+```
+
+## Visualization - 12-Hour Post-Activity Pain
+
+```{r viz-13-55}
+# Create visualization
+viz_data <- result_55$data %>%
+  select(Id, sequence, Period_2 = pain12_2, Period_4 = pain12_4) %>%
+  pivot_longer(cols = c(Period_2, Period_4),
+               names_to = "Period",
+               values_to = "Pain_Score")
+
+# Individual trajectories
+p1 <- ggplot(viz_data, aes(x = Period, y = Pain_Score, group = Id)) +
+  geom_line(alpha = 0.3) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~ sequence) +
+  stat_summary(aes(group = 1), fun = mean, geom = "line",
+               color = "blue", size = 1.5) +
+  stat_summary(aes(group = 1), fun = mean, geom = "point",
+               color = "blue", size = 3) +
+  labs(title = "Individual Patient Trajectories - 12-Hour Post-Activity Pain",
+       subtitle = "Blue line shows mean trajectory for each sequence",
+       y = "Pain Score") +
+  theme_minimal()
+
+# Box plots
+p2 <- ggplot(viz_data, aes(x = Period, y = Pain_Score, fill = sequence)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(title = "Pain Distribution by Period and Sequence",
+       y = "Pain Score",
+       fill = "Sequence") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+grid.arrange(p1, p2, ncol = 1)
+```
+
+# Problem 13.56: Treatment Effects - Average Day Pain
+
+```{r problem-13-56}
+result_56 <- analyze_crossover(tennis_clean,
+                                "painav_2", "painav_4",
+                                "Pain on Average Day")
+```
+
+## Visualization - Average Day Pain
+
+```{r viz-13-56}
+# Create visualization
+viz_data <- result_56$data %>%
+  select(Id, sequence, Period_2 = painav_2, Period_4 = painav_4) %>%
+  pivot_longer(cols = c(Period_2, Period_4),
+               names_to = "Period",
+               values_to = "Pain_Score")
+
+# Individual trajectories
+p1 <- ggplot(viz_data, aes(x = Period, y = Pain_Score, group = Id)) +
+  geom_line(alpha = 0.3) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~ sequence) +
+  stat_summary(aes(group = 1), fun = mean, geom = "line",
+               color = "darkgreen", size = 1.5) +
+  stat_summary(aes(group = 1), fun = mean, geom = "point",
+               color = "darkgreen", size = 3) +
+  labs(title = "Individual Patient Trajectories - Average Day Pain",
+       subtitle = "Green line shows mean trajectory for each sequence",
+       y = "Pain Score") +
+  theme_minimal()
+
+# Box plots
+p2 <- ggplot(viz_data, aes(x = Period, y = Pain_Score, fill = sequence)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(title = "Pain Distribution by Period and Sequence",
+       y = "Pain Score",
+       fill = "Sequence") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+grid.arrange(p1, p2, ncol = 1)
+```
+
+# Problems 13.57-13.59: Summary of Carry-over Effects
+
+The carry-over effects were already tested as part of the treatment effect analyses above. Let me provide a focused summary:
+
+## Problem 13.57: Carry-over Effects - Maximum Activity Pain
+
+```{r problem-13-57}
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 13.57: CARRY-OVER EFFECTS - MAXIMUM ACTIVITY PAIN\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nCarry-over test results:\n")
+cat("Test statistic:", result_54$carryover_test$statistic, "\n")
+cat("P-value:", format.pval(result_54$carryover_p, eps = 0.001), "\n")
+cat("Significance level: α = 0.05\n\n")
+
+if(result_54$carryover_sig) {
+  cat("CONCLUSION: SIGNIFICANT carry-over effect (p < 0.05)\n")
+  cat("The treatment effect from Period 2 persists into Period 4\n")
+} else {
+  cat("CONCLUSION: NO significant carry-over effect (p ≥ 0.05)\n")
+  cat("No evidence that Period 2 treatment affects Period 4 outcomes\n")
+}
+```
+
+## Problem 13.58: Carry-over Effects - 12-Hour Post-Activity Pain
+
+```{r problem-13-58}
+cat("\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 13.58: CARRY-OVER EFFECTS - 12-HOUR POST-ACTIVITY PAIN\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nCarry-over test results:\n")
+cat("Test statistic:", result_55$carryover_test$statistic, "\n")
+cat("P-value:", format.pval(result_55$carryover_p, eps = 0.001), "\n")
+cat("Significance level: α = 0.05\n\n")
+
+if(result_55$carryover_sig) {
+  cat("CONCLUSION: SIGNIFICANT carry-over effect (p < 0.05)\n")
+  cat("The treatment effect from Period 2 persists into Period 4\n")
+} else {
+  cat("CONCLUSION: NO significant carry-over effect (p ≥ 0.05)\n")
+  cat("No evidence that Period 2 treatment affects Period 4 outcomes\n")
+}
+```
+
+## Problem 13.59: Carry-over Effects - Average Day Pain
+
+```{r problem-13-59}
+cat("\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 13.59: CARRY-OVER EFFECTS - AVERAGE DAY PAIN\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nCarry-over test results:\n")
+cat("Test statistic:", result_56$carryover_test$statistic, "\n")
+cat("P-value:", format.pval(result_56$carryover_p, eps = 0.001), "\n")
+cat("Significance level: α = 0.05\n\n")
+
+if(result_56$carryover_sig) {
+  cat("CONCLUSION: SIGNIFICANT carry-over effect (p < 0.05)\n")
+  cat("The treatment effect from Period 2 persists into Period 4\n")
+} else {
+  cat("CONCLUSION: NO significant carry-over effect (p ≥ 0.05)\n")
+  cat("No evidence that Period 2 treatment affects Period 4 outcomes\n")
+}
+```
+
+# Comprehensive Summary
+
+## Summary Table of All Results
+
+```{r summary-table}
+# Create comprehensive summary table
+summary_results <- tibble(
+  Problem = c("13.54", "13.55", "13.56", "13.57", "13.58", "13.59"),
+  Outcome = c("Max Activity Pain", "12-hr Post Pain", "Average Day Pain",
+              "Max Activity Pain", "12-hr Post Pain", "Average Day Pain"),
+  Analysis = c("Treatment Effect", "Treatment Effect", "Treatment Effect",
+               "Carry-over Effect", "Carry-over Effect", "Carry-over Effect"),
+  N = c(result_54$n, result_55$n, result_56$n,
+        result_54$n, result_55$n, result_56$n),
+  P_Value = c(result_54$treatment_p, result_55$treatment_p, result_56$treatment_p,
+              result_54$carryover_p, result_55$carryover_p, result_56$carryover_p),
+  Significant = c(result_54$treatment_sig, result_55$treatment_sig, result_56$treatment_sig,
+                  result_54$carryover_sig, result_55$carryover_sig, result_56$carryover_sig)
+) %>%
+  mutate(
+    P_Value_Formatted = format.pval(P_Value, eps = 0.001, digits = 3),
+    Result = ifelse(Significant, "Significant (p < 0.05)", "Not Significant (p ≥ 0.05)")
+  )
+
+kable(summary_results %>% select(-P_Value, -Significant) %>%
+        select(Problem, Outcome, Analysis, N, P_Value_Formatted, Result),
+      col.names = c("Problem", "Outcome", "Analysis Type", "N", "P-value", "Result"),
+      caption = "Summary of All Crossover Analysis Results (Problems 13.54-13.59)")
+```
+
+## Clinical Interpretation
+
+```{r clinical-interpretation}
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+cat("CLINICAL INTERPRETATION AND CONCLUSIONS\n")
+cat("=" %>% paste(rep("=", 80), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nTREATMENT EFFECTS (Problems 13.54-13.56):\n")
+cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+
+outcomes <- c("maximum activity pain", "12-hour post-activity pain", "average day pain")
+results <- list(result_54, result_55, result_56)
+
+for(i in 1:3) {
+  cat("\n", i, ". ", toupper(outcomes[i]), ":\n", sep = "")
+  if(results[[i]]$treatment_sig) {
+    cat("   ✓ SIGNIFICANT difference between treatments (p = ",
+        format.pval(results[[i]]$treatment_p, eps = 0.001, digits = 3), ")\n", sep = "")
+    cat("   → One treatment is significantly better for reducing ", outcomes[i], "\n", sep = "")
+  } else {
+    cat("   ✗ NO significant difference between treatments (p = ",
+        format.pval(results[[i]]$treatment_p, eps = 0.001, digits = 3), ")\n", sep = "")
+    cat("   → Both treatments are equally effective for ", outcomes[i], "\n", sep = "")
+  }
+}
+
+cat("\n\nCARRY-OVER EFFECTS (Problems 13.57-13.59):\n")
+cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+
+for(i in 1:3) {
+  cat("\n", i, ". ", toupper(outcomes[i]), ":\n", sep = "")
+  if(results[[i]]$carryover_sig) {
+    cat("   ⚠ SIGNIFICANT carry-over effect detected (p = ",
+        format.pval(results[[i]]$carryover_p, eps = 0.001, digits = 3), ")\n", sep = "")
+    cat("   → Treatment from Period 2 has residual effects in Period 4\n")
+    cat("   → Crossover design assumption violated\n")
+    cat("   → Treatment comparison based on Period 2 only (reduced power)\n")
+  } else {
+    cat("   ✓ NO significant carry-over effect (p = ",
+        format.pval(results[[i]]$carryover_p, eps = 0.001, digits = 3), ")\n", sep = "")
+    cat("   → Crossover design assumption valid\n")
+    cat("   → Treatment comparison uses both periods (full power)\n")
+  }
+}
+
+cat("\n\nOVERALL STUDY CONCLUSIONS:\n")
+cat("-" %>% paste(rep("-", 80), collapse = "") %>% paste("-\n", sep = ""))
+
+n_treatment_sig <- sum(c(result_54$treatment_sig, result_55$treatment_sig,
+                         result_56$treatment_sig))
+n_carryover_sig <- sum(c(result_54$carryover_sig, result_55$carryover_sig,
+                         result_56$carryover_sig))
+
+if(n_treatment_sig > 0) {
+  cat("\n• Treatment differences were found for", n_treatment_sig,
+      "out of 3 pain outcomes\n")
+  cat("• The treatments are NOT equivalent across all pain measures\n")
+} else {
+  cat("\n• No significant treatment differences found for any pain outcome\n")
+  cat("• The two treatments appear equally effective for tennis elbow\n")
+}
+
+if(n_carryover_sig > 0) {
+  cat("\n⚠ WARNING: Carry-over effects detected for", n_carryover_sig,
+      "out of 3 outcomes\n")
+  cat("• This suggests the washout period may be insufficient\n")
+  cat("• Results for affected outcomes have reduced statistical power\n")
+  cat("• Future studies should consider longer washout periods\n")
+} else {
+  cat("\n• No carry-over effects detected - crossover design was valid\n")
+  cat("• The washout period appears adequate\n")
+  cat("• Full statistical power achieved for treatment comparisons\n")
+}
+```
+
+## Visualization - Summary Plot
+
+```{r summary-plot, fig.height=10}
+# Create comprehensive summary visualization
+summary_viz <- summary_results %>%
+  mutate(
+    Outcome_Short = case_when(
+      Outcome == "Max Activity Pain" ~ "Maximum\nActivity",
+      Outcome == "12-hr Post Pain" ~ "12-hr\nPost-Activity",
+      Outcome == "Average Day Pain" ~ "Average\nDay"
+    ),
+    Analysis_Type = ifelse(Analysis == "Treatment Effect",
+                          "Treatment\nEffect", "Carry-over\nEffect"),
+    Neg_Log_P = -log10(P_Value),
+    Sig_Label = ifelse(Significant, "Significant", "Not Significant")
+  )
+
+# P-value plot
+p1 <- ggplot(summary_viz, aes(x = Outcome_Short, y = Neg_Log_P,
+                               fill = Sig_Label)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed",
+             color = "red", size = 1) +
+  facet_wrap(~ Analysis_Type) +
+  labs(title = "Statistical Significance Across All Analyses",
+       subtitle = "Dashed line indicates α = 0.05 threshold",
+       x = "Pain Outcome",
+       y = "-log10(p-value)\n(Higher = More Significant)",
+       fill = "Result") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(size = 9))
+
+# Summary counts
+count_data <- summary_viz %>%
+  count(Analysis_Type, Sig_Label) %>%
+  group_by(Analysis_Type) %>%
+  mutate(prop = n / sum(n),
+         label = paste0(n, "/3"))
+
+p2 <- ggplot(count_data, aes(x = Analysis_Type, y = n, fill = Sig_Label)) +
+  geom_bar(stat = "identity", position = "stack", alpha = 0.7) +
+  geom_text(aes(label = label), position = position_stack(vjust = 0.5),
+            size = 5, fontface = "bold") +
+  labs(title = "Summary: Number of Significant Results",
+       x = "Analysis Type",
+       y = "Count (out of 3 outcomes)",
+       fill = "Result") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+grid.arrange(p1, p2, ncol = 1, heights = c(2, 1))
+```
+
+# Statistical Methods Note
+
+## Crossover Design Analysis
+
+This analysis follows the standard approach for 2×2 crossover trials:
+
+### For Carry-over Effects (Problems 13.57-13.59):
+- **Test statistic**: Compare sum of (Period 2 + Period 4) between sequences
+- **Null hypothesis**: μ_sum_Seq1 = μ_sum_Seq2
+- **Method**: Two-sample t-test
+- **Interpretation**: Significant result indicates period×treatment interaction
+
+### For Treatment Effects (Problems 13.54-13.56):
+- **If no carry-over**: Compare difference (Period 2 - Period 4) between sequences
+  - More powerful (uses all data)
+  - Accounts for within-subject correlation
+- **If carry-over present**: Compare Period 2 only between sequences
+  - Reduces to parallel group design
+  - Lower power but unbiased estimate
+
+### Assumptions:
+1. No period effects (or equal period effects across sequences)
+2. No carry-over effects (tested first)
+3. Normal distribution (or large enough sample for CLT)
+4. Independent observations between subjects
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
+
+# References
+
+**Statistical Methods:**
+- Jones B, Kenward MG (2003). Design and Analysis of Cross-Over Trials, 2nd ed. Chapman & Hall/CRC
+- Senn S (2002). Cross-over Trials in Clinical Research, 2nd ed. Wiley
+- Rosner B (2015). Fundamentals of Biostatistics, 8th ed. Chapter 13: Design and Analysis of Crossover Trials
+
+**Key Concepts:**
+- Crossover design increases efficiency by using each patient as their own control
+- Carry-over effects violate crossover assumptions and reduce power
+- Proper washout periods are critical for crossover trial validity

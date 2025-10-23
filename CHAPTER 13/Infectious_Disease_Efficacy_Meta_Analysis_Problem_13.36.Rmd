@@ -1,0 +1,839 @@
+---
+title: "Infectious Disease: Efficacy Meta-Analysis of Aminoglycoside Antibiotics"
+subtitle: "Problem 13.36 - Pairwise Meta-Analysis with Odds Ratios and 95% CIs"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    code_folding: show
+    theme: united
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Problem Statement
+
+**Problem 13.36**: Answer the question in Problem 13.34 to assess whether there are differences in efficacy between each pair of antibiotics.
+
+Using the same meta-analysis methods as Problem 13.34, we will:
+
+1. Perform pairwise meta-analyses for all antibiotic combinations
+2. Obtain **point estimates** of odds ratios (OR) for treatment success
+3. Calculate **95% confidence intervals** for each OR
+4. Provide **two-sided p-values** for statistical testing
+
+# Background
+
+This analysis examines **efficacy** (treatment success rates) data from randomized controlled trials comparing five aminoglycoside antibiotics:
+
+1. **Amikacin** (Code: 1)
+2. **Gentamicin** (Code: 2)
+3. **Netilmicin** (Code: 3)
+4. **Sisomicin** (Code: 4)
+5. **Tobramycin** (Code: 5)
+
+## Clinical Relevance
+
+Efficacy is the primary consideration in antibiotic selection. While toxicity profiles (nephrotoxicity and ototoxicity) are important safety considerations, antibiotics must first demonstrate adequate therapeutic benefit.
+
+Key considerations:
+
+- **Treatment success** is defined as bacterial or clinical response to treatment
+- Higher efficacy rates indicate better antimicrobial performance
+- Efficacy must be balanced against toxicity in clinical decision-making
+- Head-to-head comparisons provide the strongest evidence for relative efficacy
+
+## Study Context
+
+This meta-analysis synthesizes data from randomized controlled trials published between 1975-1985, providing evidence-based guidance for aminoglycoside selection in treating serious gram-negative bacterial infections.
+
+# Load Required Libraries
+
+```{r load-libraries}
+library(tidyverse)      # Data manipulation and visualization
+library(knitr)          # Tables
+library(meta)           # Meta-analysis functions
+library(metafor)        # Advanced meta-analysis
+library(ggplot2)        # Advanced plotting
+library(gridExtra)      # Multiple plots
+library(scales)         # Scale functions
+library(broom)          # Tidy outputs
+```
+
+# Load and Prepare Data
+
+## Load EFF.DAT
+
+```{r load-data}
+# Load Efficacy data
+eff_data <- read.table("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/EFF.DAT.txt",
+                       header = TRUE,
+                       sep = ",",
+                       quote = "'\"",
+                       strip.white = TRUE)
+
+cat("Dataset dimensions:", nrow(eff_data), "records\n")
+cat("\nFirst 15 rows:\n")
+kable(head(eff_data, 15),
+      caption = "EFF.DAT - First 15 Records")
+```
+
+## Data Structure and Validation
+
+```{r data-structure}
+# Display structure
+str(eff_data)
+
+# Check endpoint values (should all be 1 for efficacy)
+cat("\nEndpoint distribution:\n")
+table(eff_data$Endpnt)
+
+# Check antibiotics present
+cat("\n\nAntibiotics in dataset:\n")
+table(eff_data$Antibio)
+```
+
+## Add Descriptive Labels
+
+```{r add-labels}
+# Add descriptive antibiotic names
+eff_clean <- eff_data %>%
+  mutate(
+    Antibiotic = factor(Antibio,
+                       levels = 1:5,
+                       labels = c("Amikacin", "Gentamicin", "Netilmicin",
+                                 "Sisomicin", "Tobramycin")),
+    # Calculate cure proportion
+    Cure_prop = Cured / Samp_sz,
+    # Calculate number not cured
+    Not_cured = Samp_sz - Cured
+  )
+
+cat("Data preparation complete.\n")
+cat("Total records:", nrow(eff_clean), "\n")
+cat("\nRecords by antibiotic:\n")
+table(eff_clean$Antibiotic)
+```
+
+## Overall Summary Statistics
+
+```{r overall-summary}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("OVERALL EFFICACY SUMMARY\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+overall_summary <- eff_clean %>%
+  summarise(
+    Total_studies = n_distinct(Name),
+    Total_records = n(),
+    Total_patients = sum(Samp_sz),
+    Total_cured = sum(Cured),
+    Overall_cure_rate = sum(Cured) / sum(Samp_sz)
+  )
+
+cat("Total number of studies:", overall_summary$Total_studies, "\n")
+cat("Total number of records:", overall_summary$Total_records, "\n")
+cat("Total number of patients:", overall_summary$Total_patients, "\n")
+cat("Total cured:", overall_summary$Total_cured, "\n")
+cat("Overall cure rate:",
+    round(overall_summary$Overall_cure_rate * 100, 2), "%\n")
+```
+
+## Summary by Antibiotic
+
+```{r summary-by-antibiotic}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("SUMMARY BY ANTIBIOTIC\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+antibiotic_summary <- eff_clean %>%
+  group_by(Antibiotic) %>%
+  summarise(
+    N_studies = n_distinct(Name),
+    N_records = n(),
+    Total_patients = sum(Samp_sz),
+    Total_cured = sum(Cured),
+    Total_not_cured = sum(Not_cured),
+    Mean_cure_rate = mean(Cure_prop),
+    SD_cure_rate = sd(Cure_prop),
+    Min_cure_rate = min(Cure_prop),
+    Max_cure_rate = max(Cure_prop),
+    Pooled_cure_rate = sum(Cured) / sum(Samp_sz),
+    .groups = 'drop'
+  )
+
+kable(antibiotic_summary, digits = 4,
+      caption = "Summary Statistics by Antibiotic")
+```
+
+# Visualization of Efficacy Rates
+
+```{r visualization, fig.height=10}
+# Box plot
+p1 <- ggplot(eff_clean, aes(x = Antibiotic, y = Cure_prop,
+                             fill = Antibiotic)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 2) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "red", color = "darkred") +
+  labs(title = "Distribution of Cure Rates by Antibiotic",
+       subtitle = "Red diamonds indicate mean rates (higher is better)",
+       x = "Antibiotic",
+       y = "Cure Rate (Proportion)") +
+  scale_y_continuous(labels = percent_format()) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Bar plot with pooled rates
+p2 <- ggplot(antibiotic_summary, aes(x = Antibiotic, y = Pooled_cure_rate,
+                                      fill = Antibiotic)) +
+  geom_col(alpha = 0.7) +
+  geom_text(aes(label = paste0(round(Pooled_cure_rate * 100, 1), "%")),
+            vjust = -0.5, size = 4) +
+  labs(title = "Pooled Cure Rates by Antibiotic",
+       subtitle = "Higher values indicate better efficacy",
+       x = "Antibiotic",
+       y = "Pooled Cure Rate") +
+  scale_y_continuous(labels = percent_format(),
+                     limits = c(0, 1)) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Sample size by antibiotic
+p3 <- ggplot(antibiotic_summary, aes(x = Antibiotic, y = Total_patients,
+                                      fill = Antibiotic)) +
+  geom_col(alpha = 0.7) +
+  geom_text(aes(label = Total_patients), vjust = -0.5, size = 4) +
+  labs(title = "Total Sample Size by Antibiotic",
+       x = "Antibiotic",
+       y = "Total Number of Patients") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Number of studies by antibiotic
+p4 <- ggplot(antibiotic_summary, aes(x = Antibiotic, y = N_studies,
+                                      fill = Antibiotic)) +
+  geom_col(alpha = 0.7) +
+  geom_text(aes(label = N_studies), vjust = -0.5, size = 4) +
+  labs(title = "Number of Studies by Antibiotic",
+       x = "Antibiotic",
+       y = "Number of Studies") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Arrange plots
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+# Problem 13.36: Pairwise Meta-Analysis
+
+## Methodology
+
+For each pair of antibiotics, we will:
+
+1. **Identify studies** that directly compared the two antibiotics
+2. **Calculate the odds ratio (OR)** for cure/treatment success
+3. **Perform meta-analysis** using the Mantel-Haenszel method
+4. **Report**:
+   - Point estimate of the pooled OR
+   - 95% confidence interval
+   - Two-sided p-value
+
+**Interpretation of Odds Ratio for Efficacy**:
+
+- OR = 1: No difference in efficacy between antibiotics
+- OR > 1: First antibiotic has **higher** odds of treatment success (BETTER)
+- OR < 1: First antibiotic has **lower** odds of treatment success (WORSE)
+
+**Note**: For efficacy, higher OR values favor the first antibiotic, unlike toxicity endpoints where lower is better.
+
+## Identify All Pairwise Comparisons
+
+```{r identify-pairs}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("IDENTIFYING PAIRWISE COMPARISONS FROM STUDIES\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Get list of studies and their antibiotics
+study_antibiotics <- eff_clean %>%
+  group_by(Name, Id) %>%
+  summarise(
+    Antibiotics = paste(sort(unique(as.character(Antibiotic))), collapse = " vs "),
+    N_antibiotics = n_distinct(Antibiotic),
+    .groups = 'drop'
+  ) %>%
+  arrange(Id)
+
+cat("Studies and their antibiotic comparisons:\n\n")
+kable(study_antibiotics,
+      caption = "Studies and Antibiotic Comparisons")
+
+# Count studies by number of antibiotics compared
+cat("\n\nStudy distribution by number of arms:\n")
+table(study_antibiotics$N_antibiotics)
+```
+
+## Pairwise Meta-Analysis Function
+
+```{r meta-analysis-function}
+# Function to perform pairwise meta-analysis
+perform_pairwise_meta <- function(data, antibiotic1, antibiotic2) {
+
+  # Filter studies that contain both antibiotics
+  studies_with_both <- data %>%
+    group_by(Name, Id) %>%
+    filter(all(c(antibiotic1, antibiotic2) %in% Antibiotic)) %>%
+    ungroup()
+
+  # Get unique study names
+  study_names <- unique(studies_with_both$Name)
+
+  if(length(study_names) == 0) {
+    return(list(
+      comparison = paste(antibiotic1, "vs", antibiotic2),
+      n_studies = 0,
+      result = NULL,
+      message = "No studies directly compared these antibiotics"
+    ))
+  }
+
+  # Prepare data for meta-analysis
+  meta_data <- data.frame()
+
+  for(study in study_names) {
+    # Get data for this study
+    study_data <- studies_with_both %>%
+      filter(Name == study)
+
+    # Get data for each antibiotic
+    ab1_data <- study_data %>% filter(Antibiotic == antibiotic1)
+    ab2_data <- study_data %>% filter(Antibiotic == antibiotic2)
+
+    # Create 2x2 table for this study
+    # Rows: Antibiotic 1, Antibiotic 2
+    # Columns: Cured, Not cured
+
+    meta_data <- bind_rows(meta_data, data.frame(
+      Study = study,
+      Ab1_cured = ab1_data$Cured,
+      Ab1_not_cured = ab1_data$Not_cured,
+      Ab2_cured = ab2_data$Cured,
+      Ab2_not_cured = ab2_data$Not_cured,
+      Ab1_total = ab1_data$Samp_sz,
+      Ab2_total = ab2_data$Samp_sz
+    ))
+  }
+
+  # Use metafor for meta-analysis
+  # Mantel-Haenszel method
+  ma_result <- tryCatch({
+    rma.mh(ai = meta_data$Ab1_cured,
+           bi = meta_data$Ab1_not_cured,
+           ci = meta_data$Ab2_cured,
+           di = meta_data$Ab2_not_cured,
+           measure = "OR",
+           method = "FE")  # Fixed effects
+  }, error = function(e) {
+    message("Error in meta-analysis: ", e$message)
+    return(NULL)
+  })
+
+  if(is.null(ma_result)) {
+    return(list(
+      comparison = paste(antibiotic1, "vs", antibiotic2),
+      n_studies = 0,
+      result = NULL,
+      message = "Error performing meta-analysis"
+    ))
+  }
+
+  return(list(
+    comparison = paste(antibiotic1, "vs", antibiotic2),
+    n_studies = nrow(meta_data),
+    study_data = meta_data,
+    result = ma_result,
+    message = "Meta-analysis completed successfully"
+  ))
+}
+```
+
+## Conduct All Pairwise Meta-Analyses
+
+```{r pairwise-meta-analyses}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("PROBLEM 13.36: PAIRWISE META-ANALYSES FOR EFFICACY\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Get all unique antibiotics
+antibiotics <- sort(unique(eff_clean$Antibiotic))
+n_antibiotics <- length(antibiotics)
+
+cat("Antibiotics in analysis:", paste(antibiotics, collapse = ", "), "\n")
+cat("Number of possible pairwise comparisons:", choose(n_antibiotics, 2), "\n\n")
+
+# Store all results
+all_pairwise_results <- list()
+pairwise_summary <- data.frame()
+
+# Counter for comparison
+comparison_num <- 1
+
+# Perform all pairwise comparisons
+for(i in 1:(n_antibiotics-1)) {
+  for(j in (i+1):n_antibiotics) {
+
+    ab1 <- antibiotics[i]
+    ab2 <- antibiotics[j]
+
+    cat("\n")
+    cat("-" %>% rep(70) %>% paste(collapse = ""), "\n")
+    cat("Comparison", comparison_num, ":", ab1, "vs", ab2, "\n")
+    cat("-" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+    # Perform meta-analysis
+    result <- perform_pairwise_meta(eff_clean, ab1, ab2)
+
+    all_pairwise_results[[comparison_num]] <- result
+
+    if(result$n_studies > 0) {
+      cat("Number of studies:", result$n_studies, "\n\n")
+
+      # Display study data
+      cat("Study-specific data:\n")
+      study_display <- result$study_data %>%
+        mutate(
+          Ab1_rate = Ab1_cured / Ab1_total,
+          Ab2_rate = Ab2_cured / Ab2_total,
+          Individual_OR = ifelse((Ab1_not_cured * Ab2_cured) == 0, NA,
+                                 (Ab1_cured * Ab2_not_cured) /
+                                 (Ab1_not_cured * Ab2_cured))
+        ) %>%
+        select(Study, Ab1_cured, Ab1_total, Ab1_rate,
+               Ab2_cured, Ab2_total, Ab2_rate, Individual_OR)
+
+      kable(study_display, digits = 3,
+            col.names = c("Study",
+                         paste(ab1, "- Cured"), paste(ab1, "- N"), paste(ab1, "- Rate"),
+                         paste(ab2, "- Cured"), paste(ab2, "- N"), paste(ab2, "- Rate"),
+                         "OR"))
+
+      # Extract results
+      pooled_OR <- exp(result$result$beta)
+      CI_lower <- exp(result$result$ci.lb)
+      CI_upper <- exp(result$result$ci.ub)
+      p_value <- result$result$pval
+
+      cat("\n\nMETA-ANALYSIS RESULTS:\n")
+      cat("----------------------\n")
+      cat("Pooled Odds Ratio (OR):", round(pooled_OR, 3), "\n")
+      cat("95% Confidence Interval: (", round(CI_lower, 3), ",",
+          round(CI_upper, 3), ")\n")
+      cat("Two-sided p-value:", format.pval(p_value, digits = 4), "\n")
+
+      # Interpretation
+      cat("\nINTERPRETATION:\n")
+      if(!is.na(p_value) && p_value < 0.05) {
+        if(pooled_OR > 1) {
+          cat("- ", ab1, "has SIGNIFICANTLY HIGHER odds of treatment success\n",
+              "  compared to", ab2, "(p < 0.05)\n", sep = "")
+          cat("- This indicates ", ab1, " is MORE EFFECTIVE\n", sep = "")
+        } else {
+          cat("- ", ab1, "has SIGNIFICANTLY LOWER odds of treatment success\n",
+              "  compared to", ab2, "(p < 0.05)\n", sep = "")
+          cat("- This indicates ", ab2, " is MORE EFFECTIVE\n", sep = "")
+        }
+      } else if(!is.na(p_value)) {
+        cat("- No statistically significant difference in efficacy\n")
+        cat("  between", ab1, "and", ab2, "(p >= 0.05)\n")
+      } else {
+        cat("- Unable to calculate p-value (insufficient data)\n")
+      }
+
+      # Store summary
+      pairwise_summary <- bind_rows(pairwise_summary, data.frame(
+        Comparison_num = comparison_num,
+        Antibiotic_1 = as.character(ab1),
+        Antibiotic_2 = as.character(ab2),
+        N_studies = result$n_studies,
+        Pooled_OR = pooled_OR,
+        CI_lower = CI_lower,
+        CI_upper = CI_upper,
+        p_value = p_value,
+        Significant = !is.na(p_value) && p_value < 0.05
+      ))
+
+    } else {
+      cat(result$message, "\n")
+
+      # Still add to summary with NA values
+      pairwise_summary <- bind_rows(pairwise_summary, data.frame(
+        Comparison_num = comparison_num,
+        Antibiotic_1 = as.character(ab1),
+        Antibiotic_2 = as.character(ab2),
+        N_studies = 0,
+        Pooled_OR = NA,
+        CI_lower = NA,
+        CI_upper = NA,
+        p_value = NA,
+        Significant = FALSE
+      ))
+    }
+
+    comparison_num <- comparison_num + 1
+  }
+}
+```
+
+# Summary of All Pairwise Comparisons
+
+```{r summary-table}
+cat("\n\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("SUMMARY TABLE: ALL PAIRWISE COMPARISONS\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Create comprehensive summary table
+summary_table <- pairwise_summary %>%
+  mutate(
+    Comparison = paste(Antibiotic_1, "vs", Antibiotic_2),
+    OR_with_CI = ifelse(!is.na(Pooled_OR),
+                        paste0(round(Pooled_OR, 3), " (",
+                               round(CI_lower, 3), ", ",
+                               round(CI_upper, 3), ")"),
+                        "N/A"),
+    p_value_formatted = ifelse(!is.na(p_value),
+                               format.pval(p_value, digits = 3),
+                               "N/A"),
+    Significance = ifelse(Significant, "Yes *", "No"),
+    Better_antibiotic = ifelse(!is.na(Pooled_OR),
+                              ifelse(Pooled_OR > 1, as.character(Antibiotic_1),
+                                    as.character(Antibiotic_2)),
+                              "N/A")
+  ) %>%
+  select(Comparison, N_studies, OR_with_CI, p_value_formatted, Significance, Better_antibiotic)
+
+kable(summary_table,
+      col.names = c("Comparison", "N Studies", "OR (95% CI)", "p-value",
+                   "Significant", "Better Antibiotic"),
+      caption = "Summary of All Pairwise Meta-Analyses for Efficacy")
+
+cat("\n* Significant at α = 0.05 level\n")
+cat("Note: 'Better Antibiotic' indicates which has higher cure rate\n")
+```
+
+## Significant Comparisons Only
+
+```{r significant-only}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("SIGNIFICANT PAIRWISE DIFFERENCES (p < 0.05)\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+significant_comparisons <- pairwise_summary %>%
+  filter(Significant, !is.na(Pooled_OR)) %>%
+  arrange(p_value)
+
+if(nrow(significant_comparisons) > 0) {
+
+  cat("Number of significant comparisons:", nrow(significant_comparisons), "\n\n")
+
+  significant_table <- significant_comparisons %>%
+    mutate(
+      Comparison = paste(Antibiotic_1, "vs", Antibiotic_2),
+      Better = ifelse(Pooled_OR > 1, as.character(Antibiotic_1),
+                     as.character(Antibiotic_2)),
+      Direction = ifelse(Pooled_OR > 1,
+                        paste(Antibiotic_1, "better"),
+                        paste(Antibiotic_2, "better"))
+    ) %>%
+    select(Comparison, N_studies, Pooled_OR, CI_lower, CI_upper, p_value, Better, Direction)
+
+  kable(significant_table, digits = 4,
+        col.names = c("Comparison", "N Studies", "Pooled OR",
+                     "95% CI Lower", "95% CI Upper", "p-value",
+                     "Better Antibiotic", "Direction"),
+        caption = "Statistically Significant Pairwise Comparisons")
+
+  cat("\n\nKEY FINDINGS:\n")
+  for(i in 1:nrow(significant_comparisons)) {
+    row <- significant_comparisons[i, ]
+    cat("\n", i, ". ", row$Antibiotic_1, " vs ", row$Antibiotic_2, ":\n", sep = "")
+    cat("   - Pooled OR = ", round(row$Pooled_OR, 3),
+        " (95% CI: ", round(row$CI_lower, 3), " - ", round(row$CI_upper, 3), ")\n", sep = "")
+    cat("   - p-value = ", format.pval(row$p_value, digits = 4), "\n", sep = "")
+
+    if(row$Pooled_OR > 1) {
+      cat("   - ", row$Antibiotic_1, " is MORE EFFECTIVE with ",
+          round((row$Pooled_OR - 1) * 100, 1), "% higher odds of cure\n", sep = "")
+    } else {
+      cat("   - ", row$Antibiotic_2, " is MORE EFFECTIVE with ",
+          round((1/row$Pooled_OR - 1) * 100, 1), "% higher odds of cure\n", sep = "")
+    }
+  }
+
+} else {
+  cat("No statistically significant pairwise differences were found.\n")
+  cat("This suggests that efficacy is comparable across these aminoglycosides.\n")
+}
+```
+
+# Visualizations of Meta-Analysis Results
+
+## Forest Plots
+
+```{r forest-plots, fig.height=12, fig.width=10}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("FOREST PLOTS FOR PAIRWISE COMPARISONS\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Create forest plots for comparisons with data
+comparisons_with_data <- pairwise_summary %>%
+  filter(N_studies > 0, !is.na(Pooled_OR))
+
+if(nrow(comparisons_with_data) > 0) {
+
+  # Forest plot using ggplot
+  forest_data <- comparisons_with_data %>%
+    mutate(
+      Comparison = paste(Antibiotic_1, "vs", Antibiotic_2),
+      Comparison = factor(Comparison, levels = rev(Comparison))
+    )
+
+  ggplot(forest_data, aes(x = Pooled_OR, y = Comparison)) +
+    geom_point(size = 4, aes(color = Significant)) +
+    geom_errorbarh(aes(xmin = CI_lower, xmax = CI_upper, color = Significant),
+                   height = 0.2, linewidth = 1) +
+    geom_vline(xintercept = 1, linetype = "dashed", color = "red", linewidth = 1) +
+    scale_x_log10(breaks = c(0.25, 0.5, 1, 2, 4)) +
+    scale_color_manual(values = c("FALSE" = "gray50", "TRUE" = "#2E7D32"),
+                      labels = c("Not significant", "Significant (p<0.05)")) +
+    labs(title = "Forest Plot: Pairwise Odds Ratios for Efficacy",
+         subtitle = "OR > 1 favors first antibiotic; Red dashed line at OR = 1 (no difference)",
+         x = "Odds Ratio (log scale)",
+         y = "Comparison",
+         color = "Statistical Significance") +
+    theme_minimal() +
+    theme(legend.position = "bottom",
+          axis.text.y = element_text(size = 10))
+
+} else {
+  cat("No comparisons with sufficient data for forest plot.\n")
+}
+```
+
+## OR Comparison Plot
+
+```{r or-comparison-plot, fig.width=12}
+if(nrow(comparisons_with_data) > 0) {
+
+  # Bar plot of ORs
+  ggplot(comparisons_with_data,
+         aes(x = reorder(paste(Antibiotic_1, "vs", Antibiotic_2), Pooled_OR),
+             y = Pooled_OR, fill = Significant)) +
+    geom_col(alpha = 0.7) +
+    geom_hline(yintercept = 1, linetype = "dashed", color = "red", linewidth = 1) +
+    geom_text(aes(label = round(Pooled_OR, 2)),
+              hjust = -0.2, size = 3.5) +
+    scale_fill_manual(values = c("FALSE" = "steelblue", "TRUE" = "#2E7D32"),
+                     labels = c("Not significant", "Significant (p<0.05)")) +
+    labs(title = "Pooled Odds Ratios: Efficacy Comparisons",
+         subtitle = "OR > 1: First antibiotic has higher efficacy (better)",
+         x = "Comparison",
+         y = "Pooled Odds Ratio",
+         fill = "Statistical Significance") +
+    coord_flip() +
+    theme_minimal() +
+    theme(legend.position = "bottom")
+}
+```
+
+## p-value Distribution
+
+```{r p-value-plot, fig.width=10}
+if(nrow(comparisons_with_data) > 0) {
+
+  # P-value plot
+  ggplot(comparisons_with_data,
+         aes(x = reorder(paste(Antibiotic_1, "vs", Antibiotic_2), -p_value),
+             y = p_value, fill = Significant)) +
+    geom_col(alpha = 0.7) +
+    geom_hline(yintercept = 0.05, linetype = "dashed", color = "red", linewidth = 1) +
+    geom_text(aes(label = format.pval(p_value, digits = 3)),
+              vjust = -0.5, size = 3) +
+    scale_fill_manual(values = c("FALSE" = "steelblue", "TRUE" = "#2E7D32"),
+                     labels = c("Not significant", "Significant (p<0.05)")) +
+    labs(title = "Two-Sided p-values for Pairwise Comparisons",
+         subtitle = "Red line at α = 0.05",
+         x = "Comparison",
+         y = "Two-sided p-value",
+         fill = "Statistical Significance") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          legend.position = "bottom")
+}
+```
+
+## Efficacy Ranking
+
+```{r efficacy-ranking}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("EFFICACY RANKING ANALYSIS\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Rank antibiotics by cure rate
+rate_ranking <- antibiotic_summary %>%
+  arrange(desc(Pooled_cure_rate)) %>%
+  mutate(Rank = row_number()) %>%
+  select(Rank, Antibiotic, Pooled_cure_rate, Total_patients, N_studies)
+
+cat("ANTIBIOTICS RANKED BY EFFICACY (Best to Worst):\n\n")
+kable(rate_ranking, digits = 4,
+      col.names = c("Rank", "Antibiotic", "Pooled Cure Rate",
+                   "Total Patients", "N Studies"),
+      caption = "Ranking of Antibiotics by Cure Rate")
+
+# Visualize ranking
+ggplot(rate_ranking, aes(x = reorder(Antibiotic, Pooled_cure_rate),
+                         y = Pooled_cure_rate, fill = Antibiotic)) +
+  geom_col(alpha = 0.7) +
+  geom_text(aes(label = paste0("#", Rank, ": ", round(Pooled_cure_rate * 100, 1), "%")),
+            hjust = -0.1, size = 4) +
+  coord_flip() +
+  scale_y_continuous(labels = percent_format(), limits = c(0, 1)) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Efficacy Ranking: Pooled Cure Rates",
+       subtitle = "Higher cure rates indicate better efficacy",
+       x = "Antibiotic",
+       y = "Pooled Cure Rate") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+# Benefit-Risk Integration
+
+```{r benefit-risk}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("INTEGRATING EFFICACY WITH SAFETY PROFILES\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+cat("CLINICAL DECISION-MAKING FRAMEWORK:\n\n")
+cat("When selecting an aminoglycoside, clinicians should consider:\n\n")
+
+cat("1. EFFICACY (from this analysis):\n")
+for(i in 1:nrow(rate_ranking)) {
+  cat("   ", i, ". ", as.character(rate_ranking$Antibiotic[i]), " - ",
+      round(rate_ranking$Pooled_cure_rate[i] * 100, 1), "% cure rate\n", sep = "")
+}
+
+cat("\n2. NEPHROTOXICITY (from Problem 13.34):\n")
+cat("   - Lower rates preferred\n")
+cat("   - Reversible with discontinuation\n")
+cat("   - Monitor renal function\n\n")
+
+cat("3. OTOTOXICITY (from Problem 13.35):\n")
+cat("   - Lower rates preferred\n")
+cat("   - Often irreversible\n")
+cat("   - Monitor auditory function\n\n")
+
+cat("4. PATIENT-SPECIFIC FACTORS:\n")
+cat("   - Baseline renal function\n")
+cat("   - Hearing status\n")
+cat("   - Infection severity and site\n")
+cat("   - Local resistance patterns\n")
+cat("   - Cost and availability\n\n")
+
+cat("OPTIMAL SELECTION:\n")
+cat("The 'best' aminoglycoside balances high efficacy with acceptable toxicity.\n")
+cat("This analysis provides evidence for efficacy; Problems 13.34 and 13.35\n")
+cat("provide complementary safety data.\n")
+```
+
+# Conclusions and Clinical Implications
+
+```{r conclusions}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("CONCLUSIONS: PROBLEM 13.36\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+cat("STUDY OVERVIEW:\n")
+cat("- Total number of studies analyzed:", overall_summary$Total_studies, "\n")
+cat("- Total patients in efficacy analysis:", overall_summary$Total_patients, "\n")
+cat("- Overall cure rate:",
+    round(overall_summary$Overall_cure_rate * 100, 2), "%\n\n")
+
+cat("PAIRWISE META-ANALYSIS RESULTS:\n")
+cat("- Total possible pairwise comparisons:", nrow(pairwise_summary), "\n")
+cat("- Comparisons with available data:",
+    sum(pairwise_summary$N_studies > 0, na.rm = TRUE), "\n")
+cat("- Statistically significant comparisons (p < 0.05):",
+    sum(pairwise_summary$Significant, na.rm = TRUE), "\n\n")
+
+cat("EFFICACY FINDINGS:\n")
+if(sum(pairwise_summary$Significant, na.rm = TRUE) > 0) {
+  cat("- Significant efficacy differences were detected between some antibiotics\n")
+  cat("- See detailed results above for specific comparisons\n")
+} else {
+  cat("- No statistically significant efficacy differences were found\n")
+  cat("- This suggests comparable treatment success across aminoglycosides\n")
+  cat("- Selection can focus on safety and cost considerations\n")
+}
+
+cat("\n\nOVERALL EFFICACY PERFORMANCE:\n")
+cat("Cure rates ranged from",
+    round(min(antibiotic_summary$Pooled_cure_rate) * 100, 1), "% to",
+    round(max(antibiotic_summary$Pooled_cure_rate) * 100, 1), "%\n")
+cat("Mean cure rate across all antibiotics:",
+    round(mean(antibiotic_summary$Pooled_cure_rate) * 100, 1), "%\n")
+
+cat("\n\nCLINICAL IMPLICATIONS:\n")
+cat("- All five aminoglycosides demonstrate reasonable efficacy\n")
+cat("- Efficacy alone should not be the sole determinant of choice\n")
+cat("- Safety profiles (nephrotoxicity, ototoxicity) are critical\n")
+cat("- Cost, availability, and local resistance patterns matter\n")
+cat("- Individual patient factors guide final selection\n")
+
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+```
+
+# Answer to Problem 13.36
+
+**Summary**: Using meta-analysis methods with the Mantel-Haenszel approach, we assessed pairwise differences in efficacy between all combinations of the five aminoglycoside antibiotics. For each comparison where head-to-head trial data existed, we calculated:
+
+- **Point estimates** of the pooled odds ratio (OR) for treatment success
+- **95% confidence intervals** for the OR
+- **Two-sided p-values** testing the null hypothesis of OR = 1
+
+The analysis identified `r sum(pairwise_summary$Significant, na.rm = TRUE)` statistically significant pairwise difference(s) at the α = 0.05 level. Complete results are presented in the summary tables and forest plots above.
+
+**Key Finding**: The overall cure rate across all aminoglycosides was `r round(overall_summary$Overall_cure_rate * 100, 1)`%, demonstrating that these antibiotics are generally effective for treating serious gram-negative bacterial infections. The pairwise comparisons provide evidence for relative efficacy differences that, combined with safety data from Problems 13.34 and 13.35, enable evidence-based antibiotic selection.
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

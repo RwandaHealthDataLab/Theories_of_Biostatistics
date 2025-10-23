@@ -1,0 +1,1122 @@
+---
+title: "Infectious Disease: Meta-Analysis of Aminoglycoside Antibiotics"
+subtitle: "Comparative Efficacy and Toxicity Analysis - EFF.DAT, NEPHRO.DAT, OTO.DAT"
+author: "Biostatistics Meta-Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    number_sections: true
+    code_folding: show
+    theme: journal
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Executive Summary
+
+This document presents a comprehensive meta-analysis of randomized controlled trials comparing five aminoglycoside antibiotics used in the treatment of serious gram-negative bacterial infections. The analysis synthesizes data from 45 clinical trials published between June 1975 and September 1985, examining three critical endpoints:
+
+1. **Efficacy** - Treatment success rates
+2. **Nephrotoxicity** - Kidney toxicity
+3. **Ototoxicity** - Auditory/hearing toxicity
+
+## Antibiotics Studied
+
+Five aminoglycoside antibiotics are compared:
+
+1. **Amikacin** (Code: 1)
+2. **Gentamicin** (Code: 2)
+3. **Netilmicin** (Code: 3)
+4. **Sisomicin** (Code: 4)
+5. **Tobramycin** (Code: 5)
+
+# Background and Clinical Context
+
+## Clinical Importance
+
+Aminoglycoside antibiotics remain crucial for treating serious gram-negative bacterial infections in hospitalized patients despite potential toxicity risks. Selection of a specific aminoglycoside depends on:
+
+- Clinical situation
+- Antimicrobial spectrum
+- Cost considerations
+- Risk of side effects (nephrotoxicity and ototoxicity)
+
+## Study Rationale
+
+Individual trials have shown inconsistent results, often due to insufficient sample sizes to detect small-to-moderate differences between treatments. This meta-analysis aggregates data from multiple trials to:
+
+- Increase statistical power
+- Detect clinically meaningful differences that might not be apparent in individual studies
+- Provide more precise estimates of treatment effects
+- Identify patterns of efficacy and toxicity across antibiotics
+
+## Data Organization
+
+**Data Structure**: Each dataset contains one record per antibiotic per study per endpoint.
+
+**Variable Definitions**:
+
+- `Name` (Columns 1-8): Study name
+- `Id` (Columns 10-11): Study number (reference list number)
+- `Endpnt` (Column 13): Endpoint type
+  - 1 = Efficacy
+  - 2 = Nephrotoxicity
+  - 3 = Ototoxicity
+- `Antibio` (Column 15): Antibiotic code (1-5 as listed above)
+- `Samp_sz` (Columns 17-19): Sample size
+- `Cured` or `Side_eff` (Columns 21-23): Number cured (efficacy) or number with side effect (toxicity)
+
+# Load Required Libraries
+
+```{r load-libraries}
+library(tidyverse)      # Data manipulation and visualization
+library(knitr)          # Tables
+library(ggplot2)        # Advanced plotting
+library(meta)           # Meta-analysis functions
+library(metafor)        # Advanced meta-analysis
+library(gridExtra)      # Multiple plots
+library(scales)         # Scale functions for plots
+library(broom)          # Tidy model outputs
+library(RColorBrewer)   # Color palettes
+```
+
+# Load and Explore Data
+
+## Load All Three Datasets
+
+```{r load-data}
+# Load Efficacy data (EFF.DAT)
+eff_data <- read.table("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/EFF.DAT.txt",
+                       header = TRUE,
+                       sep = ",",
+                       quote = "'\"",
+                       strip.white = TRUE)
+
+# Load Nephrotoxicity data (NEPHRO.DAT)
+nephro_data <- read.table("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/NEPHRO.DAT.txt",
+                          header = TRUE,
+                          sep = ",",
+                          quote = "'\"",
+                          strip.white = TRUE)
+
+# Load Ototoxicity data (OTO.DAT)
+oto_data <- read.table("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/OTO.DAT.txt",
+                       header = TRUE,
+                       sep = ",",
+                       quote = "'\"",
+                       strip.white = TRUE)
+
+cat("Dataset dimensions:\n")
+cat("- Efficacy (EFF.DAT):", nrow(eff_data), "records\n")
+cat("- Nephrotoxicity (NEPHRO.DAT):", nrow(nephro_data), "records\n")
+cat("- Ototoxicity (OTO.DAT):", nrow(oto_data), "records\n")
+```
+
+## Data Structure
+
+```{r data-structure}
+cat("\n=== EFFICACY DATA STRUCTURE ===\n")
+str(eff_data)
+
+cat("\n=== NEPHROTOXICITY DATA STRUCTURE ===\n")
+str(nephro_data)
+
+cat("\n=== OTOTOXICITY DATA STRUCTURE ===\n")
+str(oto_data)
+```
+
+## Preview Data
+
+```{r preview-data}
+cat("\n=== EFFICACY DATA (First 10 rows) ===\n")
+kable(head(eff_data, 10), caption = "Efficacy Data Preview")
+
+cat("\n=== NEPHROTOXICITY DATA (First 10 rows) ===\n")
+kable(head(nephro_data, 10), caption = "Nephrotoxicity Data Preview")
+
+cat("\n=== OTOTOXICITY DATA (First 10 rows) ===\n")
+kable(head(oto_data, 10), caption = "Ototoxicity Data Preview")
+```
+
+# Data Preparation
+
+## Add Descriptive Labels
+
+```{r add-labels}
+# Function to add descriptive labels
+add_labels <- function(df, outcome_var = "Cured") {
+  df %>%
+    mutate(
+      Antibiotic = factor(Antibio,
+                         levels = 1:5,
+                         labels = c("Amikacin", "Gentamicin", "Netilmicin",
+                                   "Sisomicin", "Tobramycin")),
+      Endpoint_type = factor(Endpnt,
+                            levels = 1:3,
+                            labels = c("Efficacy", "Nephrotoxicity", "Ototoxicity")),
+      # Calculate proportion
+      Proportion = get(outcome_var) / Samp_sz,
+      # Calculate not cured/no side effect
+      n_failure = Samp_sz - get(outcome_var)
+    )
+}
+
+# Apply labels to each dataset
+eff_clean <- add_labels(eff_data, "Cured") %>%
+  rename(n_cured = Cured)
+
+nephro_clean <- add_labels(nephro_data, "Side_eff") %>%
+  rename(n_nephrotoxic = Side_eff)
+
+oto_clean <- add_labels(oto_data, "Side_eff") %>%
+  rename(n_ototoxic = Side_eff)
+
+cat("Data preparation complete.\n")
+cat("Efficacy data: ", nrow(eff_clean), "records\n")
+cat("Nephrotoxicity data: ", nrow(nephro_clean), "records\n")
+cat("Ototoxicity data: ", nrow(oto_clean), "records\n")
+```
+
+## Summary Statistics
+
+```{r summary-stats}
+cat("\n=== EFFICACY SUMMARY BY ANTIBIOTIC ===\n")
+eff_summary <- eff_clean %>%
+  group_by(Antibiotic) %>%
+  summarise(
+    N_studies = n_distinct(Name),
+    Total_patients = sum(Samp_sz),
+    Total_cured = sum(n_cured),
+    Mean_cure_rate = mean(Proportion),
+    SD_cure_rate = sd(Proportion),
+    Min_cure_rate = min(Proportion),
+    Max_cure_rate = max(Proportion),
+    .groups = 'drop'
+  )
+kable(eff_summary, digits = 3,
+      caption = "Efficacy Summary by Antibiotic")
+
+cat("\n=== NEPHROTOXICITY SUMMARY BY ANTIBIOTIC ===\n")
+nephro_summary <- nephro_clean %>%
+  group_by(Antibiotic) %>%
+  summarise(
+    N_studies = n_distinct(Name),
+    Total_patients = sum(Samp_sz),
+    Total_toxic = sum(n_nephrotoxic),
+    Mean_toxicity_rate = mean(Proportion),
+    SD_toxicity_rate = sd(Proportion),
+    Min_toxicity_rate = min(Proportion),
+    Max_toxicity_rate = max(Proportion),
+    .groups = 'drop'
+  )
+kable(nephro_summary, digits = 3,
+      caption = "Nephrotoxicity Summary by Antibiotic")
+
+cat("\n=== OTOTOXICITY SUMMARY BY ANTIBIOTIC ===\n")
+oto_summary <- oto_clean %>%
+  group_by(Antibiotic) %>%
+  summarise(
+    N_studies = n_distinct(Name),
+    Total_patients = sum(Samp_sz),
+    Total_toxic = sum(n_ototoxic),
+    Mean_toxicity_rate = mean(Proportion),
+    SD_toxicity_rate = sd(Proportion),
+    Min_toxicity_rate = min(Proportion),
+    Max_toxicity_rate = max(Proportion),
+    .groups = 'drop'
+  )
+kable(oto_summary, digits = 3,
+      caption = "Ototoxicity Summary by Antibiotic")
+```
+
+# Part I: EFFICACY ANALYSIS
+
+```{r efficacy-header}
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("PART I: EFFICACY ANALYSIS\n")
+cat("Assessing treatment success rates across antibiotics\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+```
+
+## Descriptive Statistics for Efficacy
+
+```{r efficacy-descriptive}
+# Overall efficacy statistics
+overall_eff <- eff_clean %>%
+  summarise(
+    Total_studies = n_distinct(Name),
+    Total_patients = sum(Samp_sz),
+    Total_cured = sum(n_cured),
+    Overall_cure_rate = sum(n_cured) / sum(Samp_sz)
+  )
+
+cat("\nOVERALL EFFICACY:\n")
+cat("- Total unique studies:", overall_eff$Total_studies, "\n")
+cat("- Total patients:", overall_eff$Total_patients, "\n")
+cat("- Total cured:", overall_eff$Total_cured, "\n")
+cat("- Overall cure rate:", round(overall_eff$Overall_cure_rate * 100, 2), "%\n")
+
+# Study distribution
+cat("\n\nSTUDY DISTRIBUTION:\n")
+study_dist_eff <- eff_clean %>%
+  count(Name) %>%
+  arrange(desc(n))
+
+cat("Number of studies:", nrow(study_dist_eff), "\n")
+cat("Studies comparing 2 antibiotics:", sum(study_dist_eff$n == 2), "\n")
+cat("Studies comparing 3 antibiotics:", sum(study_dist_eff$n == 3), "\n")
+cat("Studies comparing 4+ antibiotics:", sum(study_dist_eff$n >= 4), "\n")
+```
+
+## Visualization: Efficacy by Antibiotic
+
+```{r efficacy-viz, fig.height=10}
+# Box plot of cure rates
+p1 <- ggplot(eff_clean, aes(x = Antibiotic, y = Proportion, fill = Antibiotic)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 2) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "red", color = "darkred") +
+  labs(title = "Distribution of Cure Rates by Antibiotic",
+       subtitle = "Red diamonds indicate mean cure rates",
+       x = "Antibiotic",
+       y = "Cure Rate (Proportion)") +
+  scale_y_continuous(labels = percent_format()) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Violin plot
+p2 <- ggplot(eff_clean, aes(x = Antibiotic, y = Proportion, fill = Antibiotic)) +
+  geom_violin(alpha = 0.6, trim = FALSE) +
+  geom_boxplot(width = 0.2, alpha = 0.8, outlier.shape = NA) +
+  stat_summary(fun = mean, geom = "point", shape = 18, size = 4, color = "red") +
+  labs(title = "Violin Plot: Cure Rate Distribution",
+       x = "Antibiotic",
+       y = "Cure Rate (Proportion)") +
+  scale_y_continuous(labels = percent_format()) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Bar plot with error bars
+p3 <- ggplot(eff_summary, aes(x = Antibiotic, y = Mean_cure_rate, fill = Antibiotic)) +
+  geom_col(alpha = 0.7) +
+  geom_errorbar(aes(ymin = Mean_cure_rate - SD_cure_rate,
+                    ymax = Mean_cure_rate + SD_cure_rate),
+                width = 0.3, linewidth = 0.8) +
+  geom_text(aes(label = paste0(round(Mean_cure_rate * 100, 1), "%")),
+            vjust = -0.5, size = 3.5) +
+  labs(title = "Mean Cure Rates with Standard Deviation",
+       x = "Antibiotic",
+       y = "Mean Cure Rate") +
+  scale_y_continuous(labels = percent_format(), limits = c(0, 1)) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Sample size visualization
+p4 <- ggplot(eff_summary, aes(x = Antibiotic, y = Total_patients, fill = Antibiotic)) +
+  geom_col(alpha = 0.7) +
+  geom_text(aes(label = Total_patients), vjust = -0.5, size = 4) +
+  labs(title = "Total Sample Size by Antibiotic",
+       x = "Antibiotic",
+       y = "Total Number of Patients") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Arrange plots
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+## Statistical Comparison: Efficacy
+
+### Chi-Square Test for Overall Differences
+
+```{r efficacy-chisq}
+cat("\n=== CHI-SQUARE TEST FOR EFFICACY ===\n\n")
+
+# Create contingency table
+eff_table <- eff_clean %>%
+  group_by(Antibiotic) %>%
+  summarise(
+    Cured = sum(n_cured),
+    Not_Cured = sum(n_failure),
+    .groups = 'drop'
+  )
+
+# Convert to matrix for chi-square test
+eff_matrix <- as.matrix(eff_table[, c("Cured", "Not_Cured")])
+rownames(eff_matrix) <- eff_table$Antibiotic
+
+cat("Contingency Table:\n")
+print(eff_matrix)
+
+# Chi-square test
+chisq_eff <- chisq.test(eff_matrix)
+cat("\n")
+print(chisq_eff)
+
+cat("\nInterpretation:\n")
+if(chisq_eff$p.value < 0.05) {
+  cat("There ARE statistically significant differences in cure rates\n")
+  cat("among the antibiotics (p < 0.05).\n")
+} else {
+  cat("There are NO statistically significant differences in cure rates\n")
+  cat("among the antibiotics (p >= 0.05).\n")
+}
+```
+
+### Pairwise Comparisons: Efficacy
+
+```{r efficacy-pairwise}
+cat("\n=== PAIRWISE COMPARISONS: EFFICACY ===\n\n")
+
+# Get all unique antibiotics
+antibiotics <- unique(eff_clean$Antibiotic)
+n_antibiotics <- length(antibiotics)
+
+# Prepare results dataframe
+pairwise_eff_results <- data.frame()
+
+for(i in 1:(n_antibiotics-1)) {
+  for(j in (i+1):n_antibiotics) {
+    ab1 <- antibiotics[i]
+    ab2 <- antibiotics[j]
+
+    # Filter data for these two antibiotics
+    subset_data <- eff_clean %>%
+      filter(Antibiotic %in% c(ab1, ab2))
+
+    # Create 2x2 table
+    ab1_data <- subset_data %>% filter(Antibiotic == ab1)
+    ab2_data <- subset_data %>% filter(Antibiotic == ab2)
+
+    contingency <- matrix(c(
+      sum(ab1_data$n_cured), sum(ab1_data$n_failure),
+      sum(ab2_data$n_cured), sum(ab2_data$n_failure)
+    ), nrow = 2, byrow = TRUE)
+
+    # Fisher's exact test (better for small samples)
+    fisher_test <- fisher.test(contingency)
+
+    # Calculate proportions
+    prop1 <- sum(ab1_data$n_cured) / sum(ab1_data$Samp_sz)
+    prop2 <- sum(ab2_data$n_cured) / sum(ab2_data$Samp_sz)
+
+    # Store results
+    pairwise_eff_results <- rbind(pairwise_eff_results, data.frame(
+      Comparison = paste(ab1, "vs", ab2),
+      Prop_1 = prop1,
+      Prop_2 = prop2,
+      Difference = prop1 - prop2,
+      OR = fisher_test$estimate,
+      OR_CI_lower = fisher_test$conf.int[1],
+      OR_CI_upper = fisher_test$conf.int[2],
+      p_value = fisher_test$p.value
+    ))
+  }
+}
+
+kable(pairwise_eff_results, digits = 3, row.names = FALSE,
+      caption = "Pairwise Comparisons of Cure Rates (Fisher's Exact Test)")
+
+cat("\nSignificant differences (p < 0.05):\n")
+sig_eff <- pairwise_eff_results %>% filter(p_value < 0.05)
+if(nrow(sig_eff) > 0) {
+  print(sig_eff[, c("Comparison", "Difference", "p_value")])
+} else {
+  cat("No significant pairwise differences found.\n")
+}
+```
+
+## Meta-Analysis: Efficacy
+
+```{r efficacy-meta}
+cat("\n=== META-ANALYSIS: POOLED CURE RATES ===\n\n")
+
+# Calculate logit transformation for proportions
+eff_meta <- eff_clean %>%
+  mutate(
+    # Add continuity correction for 0 and 1 proportions
+    p_adj = case_when(
+      n_cured == 0 ~ 0.5 / Samp_sz,
+      n_cured == Samp_sz ~ (Samp_sz - 0.5) / Samp_sz,
+      TRUE ~ Proportion
+    ),
+    logit_p = log(p_adj / (1 - p_adj)),
+    se_logit = sqrt(1 / (Samp_sz * p_adj * (1 - p_adj)))
+  )
+
+# Meta-analysis for each antibiotic
+meta_eff_results <- data.frame()
+
+for(ab in antibiotics) {
+  ab_data <- eff_meta %>% filter(Antibiotic == ab)
+
+  if(nrow(ab_data) > 0) {
+    # Random effects meta-analysis
+    meta_res <- metagen(TE = logit_p,
+                        seTE = se_logit,
+                        studlab = Name,
+                        data = ab_data,
+                        sm = "OTHER",
+                        method.tau = "DL",
+                        title = paste("Efficacy of", ab))
+
+    # Back-transform from logit
+    pooled_logit <- meta_res$TE.random
+    pooled_se <- meta_res$seTE.random
+    pooled_prop <- exp(pooled_logit) / (1 + exp(pooled_logit))
+
+    meta_eff_results <- rbind(meta_eff_results, data.frame(
+      Antibiotic = ab,
+      N_studies = nrow(ab_data),
+      Pooled_cure_rate = pooled_prop,
+      Heterogeneity_I2 = meta_res$I2,
+      Heterogeneity_p = meta_res$pval.Q
+    ))
+  }
+}
+
+kable(meta_eff_results, digits = 3, row.names = FALSE,
+      caption = "Meta-Analysis: Pooled Cure Rates by Antibiotic")
+```
+
+# Part II: NEPHROTOXICITY ANALYSIS
+
+```{r nephro-header}
+cat("\n\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("PART II: NEPHROTOXICITY ANALYSIS\n")
+cat("Assessing kidney toxicity rates across antibiotics\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+```
+
+## Descriptive Statistics for Nephrotoxicity
+
+```{r nephro-descriptive}
+# Overall nephrotoxicity statistics
+overall_nephro <- nephro_clean %>%
+  summarise(
+    Total_studies = n_distinct(Name),
+    Total_patients = sum(Samp_sz),
+    Total_toxic = sum(n_nephrotoxic),
+    Overall_toxicity_rate = sum(n_nephrotoxic) / sum(Samp_sz)
+  )
+
+cat("\nOVERALL NEPHROTOXICITY:\n")
+cat("- Total unique studies:", overall_nephro$Total_studies, "\n")
+cat("- Total patients:", overall_nephro$Total_patients, "\n")
+cat("- Total with nephrotoxicity:", overall_nephro$Total_toxic, "\n")
+cat("- Overall toxicity rate:", round(overall_nephro$Overall_toxicity_rate * 100, 2), "%\n")
+
+# Study distribution
+cat("\n\nSTUDY DISTRIBUTION:\n")
+study_dist_nephro <- nephro_clean %>%
+  count(Name) %>%
+  arrange(desc(n))
+
+cat("Number of studies:", nrow(study_dist_nephro), "\n")
+cat("Studies comparing 2 antibiotics:", sum(study_dist_nephro$n == 2), "\n")
+cat("Studies comparing 3 antibiotics:", sum(study_dist_nephro$n == 3), "\n")
+cat("Studies comparing 4+ antibiotics:", sum(study_dist_nephro$n >= 4), "\n")
+```
+
+## Visualization: Nephrotoxicity by Antibiotic
+
+```{r nephro-viz, fig.height=10}
+# Box plot of toxicity rates
+n1 <- ggplot(nephro_clean, aes(x = Antibiotic, y = Proportion, fill = Antibiotic)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 2) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "red", color = "darkred") +
+  labs(title = "Distribution of Nephrotoxicity Rates by Antibiotic",
+       subtitle = "Red diamonds indicate mean toxicity rates",
+       x = "Antibiotic",
+       y = "Nephrotoxicity Rate (Proportion)") +
+  scale_y_continuous(labels = percent_format()) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Violin plot
+n2 <- ggplot(nephro_clean, aes(x = Antibiotic, y = Proportion, fill = Antibiotic)) +
+  geom_violin(alpha = 0.6, trim = FALSE) +
+  geom_boxplot(width = 0.2, alpha = 0.8, outlier.shape = NA) +
+  stat_summary(fun = mean, geom = "point", shape = 18, size = 4, color = "red") +
+  labs(title = "Violin Plot: Nephrotoxicity Rate Distribution",
+       x = "Antibiotic",
+       y = "Nephrotoxicity Rate (Proportion)") +
+  scale_y_continuous(labels = percent_format()) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Bar plot with error bars
+n3 <- ggplot(nephro_summary, aes(x = Antibiotic, y = Mean_toxicity_rate, fill = Antibiotic)) +
+  geom_col(alpha = 0.7) +
+  geom_errorbar(aes(ymin = pmax(0, Mean_toxicity_rate - SD_toxicity_rate),
+                    ymax = Mean_toxicity_rate + SD_toxicity_rate),
+                width = 0.3, linewidth = 0.8) +
+  geom_text(aes(label = paste0(round(Mean_toxicity_rate * 100, 1), "%")),
+            vjust = -0.5, size = 3.5) +
+  labs(title = "Mean Nephrotoxicity Rates with Standard Deviation",
+       x = "Antibiotic",
+       y = "Mean Toxicity Rate") +
+  scale_y_continuous(labels = percent_format()) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Sample size visualization
+n4 <- ggplot(nephro_summary, aes(x = Antibiotic, y = Total_patients, fill = Antibiotic)) +
+  geom_col(alpha = 0.7) +
+  geom_text(aes(label = Total_patients), vjust = -0.5, size = 4) +
+  labs(title = "Total Sample Size by Antibiotic (Nephrotoxicity Studies)",
+       x = "Antibiotic",
+       y = "Total Number of Patients") +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Arrange plots
+grid.arrange(n1, n2, n3, n4, ncol = 2)
+```
+
+## Statistical Comparison: Nephrotoxicity
+
+### Chi-Square Test for Overall Differences
+
+```{r nephro-chisq}
+cat("\n=== CHI-SQUARE TEST FOR NEPHROTOXICITY ===\n\n")
+
+# Create contingency table
+nephro_table <- nephro_clean %>%
+  group_by(Antibiotic) %>%
+  summarise(
+    Toxic = sum(n_nephrotoxic),
+    Not_Toxic = sum(n_failure),
+    .groups = 'drop'
+  )
+
+# Convert to matrix for chi-square test
+nephro_matrix <- as.matrix(nephro_table[, c("Toxic", "Not_Toxic")])
+rownames(nephro_matrix) <- nephro_table$Antibiotic
+
+cat("Contingency Table:\n")
+print(nephro_matrix)
+
+# Chi-square test
+chisq_nephro <- chisq.test(nephro_matrix)
+cat("\n")
+print(chisq_nephro)
+
+cat("\nInterpretation:\n")
+if(chisq_nephro$p.value < 0.05) {
+  cat("There ARE statistically significant differences in nephrotoxicity rates\n")
+  cat("among the antibiotics (p < 0.05).\n")
+} else {
+  cat("There are NO statistically significant differences in nephrotoxicity rates\n")
+  cat("among the antibiotics (p >= 0.05).\n")
+}
+```
+
+### Pairwise Comparisons: Nephrotoxicity
+
+```{r nephro-pairwise}
+cat("\n=== PAIRWISE COMPARISONS: NEPHROTOXICITY ===\n\n")
+
+# Get antibiotics present in nephrotoxicity data
+antibiotics_nephro <- unique(nephro_clean$Antibiotic)
+n_antibiotics_nephro <- length(antibiotics_nephro)
+
+# Prepare results dataframe
+pairwise_nephro_results <- data.frame()
+
+for(i in 1:(n_antibiotics_nephro-1)) {
+  for(j in (i+1):n_antibiotics_nephro) {
+    ab1 <- antibiotics_nephro[i]
+    ab2 <- antibiotics_nephro[j]
+
+    # Filter data for these two antibiotics
+    subset_data <- nephro_clean %>%
+      filter(Antibiotic %in% c(ab1, ab2))
+
+    # Create 2x2 table
+    ab1_data <- subset_data %>% filter(Antibiotic == ab1)
+    ab2_data <- subset_data %>% filter(Antibiotic == ab2)
+
+    contingency <- matrix(c(
+      sum(ab1_data$n_nephrotoxic), sum(ab1_data$n_failure),
+      sum(ab2_data$n_nephrotoxic), sum(ab2_data$n_failure)
+    ), nrow = 2, byrow = TRUE)
+
+    # Fisher's exact test
+    fisher_test <- fisher.test(contingency)
+
+    # Calculate proportions
+    prop1 <- sum(ab1_data$n_nephrotoxic) / sum(ab1_data$Samp_sz)
+    prop2 <- sum(ab2_data$n_nephrotoxic) / sum(ab2_data$Samp_sz)
+
+    # Store results
+    pairwise_nephro_results <- rbind(pairwise_nephro_results, data.frame(
+      Comparison = paste(ab1, "vs", ab2),
+      Prop_1 = prop1,
+      Prop_2 = prop2,
+      Difference = prop1 - prop2,
+      OR = fisher_test$estimate,
+      OR_CI_lower = fisher_test$conf.int[1],
+      OR_CI_upper = fisher_test$conf.int[2],
+      p_value = fisher_test$p.value
+    ))
+  }
+}
+
+kable(pairwise_nephro_results, digits = 3, row.names = FALSE,
+      caption = "Pairwise Comparisons of Nephrotoxicity Rates (Fisher's Exact Test)")
+
+cat("\nSignificant differences (p < 0.05):\n")
+sig_nephro <- pairwise_nephro_results %>% filter(p_value < 0.05)
+if(nrow(sig_nephro) > 0) {
+  kable(sig_nephro[, c("Comparison", "Difference", "OR", "p_value")], digits = 3)
+} else {
+  cat("No significant pairwise differences found.\n")
+}
+```
+
+# Part III: OTOTOXICITY ANALYSIS
+
+```{r oto-header}
+cat("\n\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("PART III: OTOTOXICITY ANALYSIS\n")
+cat("Assessing auditory toxicity rates across antibiotics\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+```
+
+## Descriptive Statistics for Ototoxicity
+
+```{r oto-descriptive}
+# Overall ototoxicity statistics
+overall_oto <- oto_clean %>%
+  summarise(
+    Total_studies = n_distinct(Name),
+    Total_patients = sum(Samp_sz),
+    Total_toxic = sum(n_ototoxic),
+    Overall_toxicity_rate = sum(n_ototoxic) / sum(Samp_sz)
+  )
+
+cat("\nOVERALL OTOTOXICITY:\n")
+cat("- Total unique studies:", overall_oto$Total_studies, "\n")
+cat("- Total patients:", overall_oto$Total_patients, "\n")
+cat("- Total with ototoxicity:", overall_oto$Total_toxic, "\n")
+cat("- Overall toxicity rate:", round(overall_oto$Overall_toxicity_rate * 100, 2), "%\n")
+
+# Study distribution
+cat("\n\nSTUDY DISTRIBUTION:\n")
+study_dist_oto <- oto_clean %>%
+  count(Name) %>%
+  arrange(desc(n))
+
+cat("Number of studies:", nrow(study_dist_oto), "\n")
+cat("Studies comparing 2 antibiotics:", sum(study_dist_oto$n == 2), "\n")
+cat("Studies comparing 3 antibiotics:", sum(study_dist_oto$n == 3), "\n")
+cat("Studies comparing 4+ antibiotics:", sum(study_dist_oto$n >= 4), "\n")
+```
+
+## Visualization: Ototoxicity by Antibiotic
+
+```{r oto-viz, fig.height=10}
+# Box plot of toxicity rates
+o1 <- ggplot(oto_clean, aes(x = Antibiotic, y = Proportion, fill = Antibiotic)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 2) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4,
+               fill = "red", color = "darkred") +
+  labs(title = "Distribution of Ototoxicity Rates by Antibiotic",
+       subtitle = "Red diamonds indicate mean toxicity rates",
+       x = "Antibiotic",
+       y = "Ototoxicity Rate (Proportion)") +
+  scale_y_continuous(labels = percent_format()) +
+  scale_fill_brewer(palette = "Dark2") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Violin plot
+o2 <- ggplot(oto_clean, aes(x = Antibiotic, y = Proportion, fill = Antibiotic)) +
+  geom_violin(alpha = 0.6, trim = FALSE) +
+  geom_boxplot(width = 0.2, alpha = 0.8, outlier.shape = NA) +
+  stat_summary(fun = mean, geom = "point", shape = 18, size = 4, color = "red") +
+  labs(title = "Violin Plot: Ototoxicity Rate Distribution",
+       x = "Antibiotic",
+       y = "Ototoxicity Rate (Proportion)") +
+  scale_y_continuous(labels = percent_format()) +
+  scale_fill_brewer(palette = "Dark2") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Bar plot with error bars
+o3 <- ggplot(oto_summary, aes(x = Antibiotic, y = Mean_toxicity_rate, fill = Antibiotic)) +
+  geom_col(alpha = 0.7) +
+  geom_errorbar(aes(ymin = pmax(0, Mean_toxicity_rate - SD_toxicity_rate),
+                    ymax = Mean_toxicity_rate + SD_toxicity_rate),
+                width = 0.3, linewidth = 0.8) +
+  geom_text(aes(label = paste0(round(Mean_toxicity_rate * 100, 1), "%")),
+            vjust = -0.5, size = 3.5) +
+  labs(title = "Mean Ototoxicity Rates with Standard Deviation",
+       x = "Antibiotic",
+       y = "Mean Toxicity Rate") +
+  scale_y_continuous(labels = percent_format()) +
+  scale_fill_brewer(palette = "Dark2") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Sample size visualization
+o4 <- ggplot(oto_summary, aes(x = Antibiotic, y = Total_patients, fill = Antibiotic)) +
+  geom_col(alpha = 0.7) +
+  geom_text(aes(label = Total_patients), vjust = -0.5, size = 4) +
+  labs(title = "Total Sample Size by Antibiotic (Ototoxicity Studies)",
+       x = "Antibiotic",
+       y = "Total Number of Patients") +
+  scale_fill_brewer(palette = "Dark2") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Arrange plots
+grid.arrange(o1, o2, o3, o4, ncol = 2)
+```
+
+## Statistical Comparison: Ototoxicity
+
+### Chi-Square Test for Overall Differences
+
+```{r oto-chisq}
+cat("\n=== CHI-SQUARE TEST FOR OTOTOXICITY ===\n\n")
+
+# Create contingency table
+oto_table <- oto_clean %>%
+  group_by(Antibiotic) %>%
+  summarise(
+    Toxic = sum(n_ototoxic),
+    Not_Toxic = sum(n_failure),
+    .groups = 'drop'
+  )
+
+# Convert to matrix for chi-square test
+oto_matrix <- as.matrix(oto_table[, c("Toxic", "Not_Toxic")])
+rownames(oto_matrix) <- oto_table$Antibiotic
+
+cat("Contingency Table:\n")
+print(oto_matrix)
+
+# Chi-square test
+chisq_oto <- chisq.test(oto_matrix)
+cat("\n")
+print(chisq_oto)
+
+cat("\nInterpretation:\n")
+if(chisq_oto$p.value < 0.05) {
+  cat("There ARE statistically significant differences in ototoxicity rates\n")
+  cat("among the antibiotics (p < 0.05).\n")
+} else {
+  cat("There are NO statistically significant differences in ototoxicity rates\n")
+  cat("among the antibiotics (p >= 0.05).\n")
+}
+```
+
+### Pairwise Comparisons: Ototoxicity
+
+```{r oto-pairwise}
+cat("\n=== PAIRWISE COMPARISONS: OTOTOXICITY ===\n\n")
+
+# Get antibiotics present in ototoxicity data
+antibiotics_oto <- unique(oto_clean$Antibiotic)
+n_antibiotics_oto <- length(antibiotics_oto)
+
+# Prepare results dataframe
+pairwise_oto_results <- data.frame()
+
+for(i in 1:(n_antibiotics_oto-1)) {
+  for(j in (i+1):n_antibiotics_oto) {
+    ab1 <- antibiotics_oto[i]
+    ab2 <- antibiotics_oto[j]
+
+    # Filter data for these two antibiotics
+    subset_data <- oto_clean %>%
+      filter(Antibiotic %in% c(ab1, ab2))
+
+    # Create 2x2 table
+    ab1_data <- subset_data %>% filter(Antibiotic == ab1)
+    ab2_data <- subset_data %>% filter(Antibiotic == ab2)
+
+    contingency <- matrix(c(
+      sum(ab1_data$n_ototoxic), sum(ab1_data$n_failure),
+      sum(ab2_data$n_ototoxic), sum(ab2_data$n_failure)
+    ), nrow = 2, byrow = TRUE)
+
+    # Fisher's exact test
+    fisher_test <- fisher.test(contingency)
+
+    # Calculate proportions
+    prop1 <- sum(ab1_data$n_ototoxic) / sum(ab1_data$Samp_sz)
+    prop2 <- sum(ab2_data$n_ototoxic) / sum(ab2_data$Samp_sz)
+
+    # Store results
+    pairwise_oto_results <- rbind(pairwise_oto_results, data.frame(
+      Comparison = paste(ab1, "vs", ab2),
+      Prop_1 = prop1,
+      Prop_2 = prop2,
+      Difference = prop1 - prop2,
+      OR = fisher_test$estimate,
+      OR_CI_lower = fisher_test$conf.int[1],
+      OR_CI_upper = fisher_test$conf.int[2],
+      p_value = fisher_test$p.value
+    ))
+  }
+}
+
+kable(pairwise_oto_results, digits = 3, row.names = FALSE,
+      caption = "Pairwise Comparisons of Ototoxicity Rates (Fisher's Exact Test)")
+
+cat("\nSignificant differences (p < 0.05):\n")
+sig_oto <- pairwise_oto_results %>% filter(p_value < 0.05)
+if(nrow(sig_oto) > 0) {
+  kable(sig_oto[, c("Comparison", "Difference", "OR", "p_value")], digits = 3)
+} else {
+  cat("No significant pairwise differences found.\n")
+}
+```
+
+# Comprehensive Comparison Across All Endpoints
+
+## Summary Table: All Three Endpoints
+
+```{r comprehensive-summary}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("COMPREHENSIVE SUMMARY: ALL ENDPOINTS\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Combine summaries
+comprehensive_summary <- data.frame(
+  Antibiotic = eff_summary$Antibiotic,
+  Efficacy_Rate = eff_summary$Mean_cure_rate,
+  Efficacy_N = eff_summary$Total_patients,
+  Nephro_Rate = nephro_summary$Mean_toxicity_rate[match(eff_summary$Antibiotic, nephro_summary$Antibiotic)],
+  Nephro_N = nephro_summary$Total_patients[match(eff_summary$Antibiotic, nephro_summary$Antibiotic)],
+  Oto_Rate = oto_summary$Mean_toxicity_rate[match(eff_summary$Antibiotic, oto_summary$Antibiotic)],
+  Oto_N = oto_summary$Total_patients[match(eff_summary$Antibiotic, oto_summary$Antibiotic)]
+)
+
+kable(comprehensive_summary, digits = 3,
+      caption = "Comprehensive Summary: Efficacy and Toxicity Rates by Antibiotic",
+      col.names = c("Antibiotic", "Cure Rate", "N (Eff)",
+                    "Nephrotox Rate", "N (Nephro)",
+                    "Ototox Rate", "N (Oto)"))
+```
+
+## Comparative Visualization
+
+```{r comprehensive-viz, fig.width=14, fig.height=6}
+# Prepare data for plotting
+comp_long <- comprehensive_summary %>%
+  pivot_longer(cols = c(Efficacy_Rate, Nephro_Rate, Oto_Rate),
+               names_to = "Endpoint",
+               values_to = "Rate") %>%
+  mutate(
+    Endpoint = factor(Endpoint,
+                     levels = c("Efficacy_Rate", "Nephro_Rate", "Oto_Rate"),
+                     labels = c("Efficacy (Cure Rate)",
+                               "Nephrotoxicity",
+                               "Ototoxicity"))
+  )
+
+# Grouped bar chart
+ggplot(comp_long, aes(x = Antibiotic, y = Rate, fill = Endpoint)) +
+  geom_col(position = position_dodge(0.8), alpha = 0.8) +
+  geom_text(aes(label = paste0(round(Rate * 100, 1), "%")),
+            position = position_dodge(0.8), vjust = -0.3, size = 3) +
+  labs(title = "Comparative Analysis: Efficacy and Toxicity Across Antibiotics",
+       subtitle = "Higher values are desirable for Efficacy; lower values for Toxicity",
+       x = "Antibiotic",
+       y = "Rate (Proportion)",
+       fill = "Endpoint") +
+  scale_y_continuous(labels = percent_format(), limits = c(0, 1)) +
+  scale_fill_manual(values = c("Efficacy (Cure Rate)" = "#2E7D32",
+                               "Nephrotoxicity" = "#D32F2F",
+                               "Ototoxicity" = "#F57C00")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "top")
+```
+
+## Risk-Benefit Analysis
+
+```{r risk-benefit}
+cat("\n=== RISK-BENEFIT ANALYSIS ===\n\n")
+
+# Calculate a simple benefit-risk ratio
+# Benefit = Efficacy rate
+# Risk = Average of nephrotoxicity and ototoxicity rates
+
+risk_benefit <- comprehensive_summary %>%
+  mutate(
+    Benefit = Efficacy_Rate,
+    Risk = (Nephro_Rate + Oto_Rate) / 2,
+    Risk_NA = is.na(Risk),
+    Risk = ifelse(Risk_NA, Nephro_Rate, Risk),
+    Risk = ifelse(is.na(Risk), Oto_Rate, Risk),
+    Benefit_Risk_Ratio = Benefit / (Risk + 0.001)  # Add small constant to avoid division by zero
+  ) %>%
+  arrange(desc(Benefit_Risk_Ratio))
+
+kable(risk_benefit %>% select(Antibiotic, Benefit, Risk, Benefit_Risk_Ratio),
+      digits = 3,
+      caption = "Risk-Benefit Analysis (Higher ratio indicates better profile)")
+
+# Visualize risk-benefit
+ggplot(risk_benefit, aes(x = Risk, y = Benefit, color = Antibiotic, size = Benefit_Risk_Ratio)) +
+  geom_point(alpha = 0.7) +
+  geom_text(aes(label = Antibiotic), vjust = -1, size = 4, show.legend = FALSE) +
+  labs(title = "Risk-Benefit Profile of Aminoglycosides",
+       subtitle = "Upper-left quadrant represents optimal profile (high efficacy, low toxicity)",
+       x = "Mean Toxicity Rate (Average of Nephro & Oto)",
+       y = "Mean Cure Rate (Efficacy)",
+       color = "Antibiotic",
+       size = "Benefit/Risk Ratio") +
+  scale_x_continuous(labels = percent_format()) +
+  scale_y_continuous(labels = percent_format()) +
+  theme_minimal() +
+  theme(legend.position = "right")
+```
+
+# Summary of Key Findings
+
+```{r final-summary}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("SUMMARY OF KEY FINDINGS\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+cat("1. DATA OVERVIEW\n")
+cat("   - Efficacy studies:", overall_eff$Total_studies, "studies,",
+    overall_eff$Total_patients, "patients\n")
+cat("   - Nephrotoxicity studies:", overall_nephro$Total_studies, "studies,",
+    overall_nephro$Total_patients, "patients\n")
+cat("   - Ototoxicity studies:", overall_oto$Total_studies, "studies,",
+    overall_oto$Total_patients, "patients\n\n")
+
+cat("2. OVERALL RATES\n")
+cat("   - Overall cure rate:", round(overall_eff$Overall_cure_rate * 100, 2), "%\n")
+cat("   - Overall nephrotoxicity rate:", round(overall_nephro$Overall_toxicity_rate * 100, 2), "%\n")
+cat("   - Overall ototoxicity rate:", round(overall_oto$Overall_toxicity_rate * 100, 2), "%\n\n")
+
+cat("3. STATISTICAL TESTING\n")
+cat("   - Efficacy differences (Chi-square p-value):",
+    format.pval(chisq_eff$p.value, digits = 4), "\n")
+cat("   - Nephrotoxicity differences (Chi-square p-value):",
+    format.pval(chisq_nephro$p.value, digits = 4), "\n")
+cat("   - Ototoxicity differences (Chi-square p-value):",
+    format.pval(chisq_oto$p.value, digits = 4), "\n\n")
+
+cat("4. EFFICACY RANKINGS (by mean cure rate)\n")
+eff_ranked <- eff_summary %>% arrange(desc(Mean_cure_rate))
+for(i in 1:nrow(eff_ranked)) {
+  cat("   ", i, ". ", as.character(eff_ranked$Antibiotic[i]), " - ",
+      round(eff_ranked$Mean_cure_rate[i] * 100, 2), "%\n", sep = "")
+}
+
+cat("\n5. NEPHROTOXICITY RANKINGS (by mean toxicity rate - lower is better)\n")
+nephro_ranked <- nephro_summary %>% arrange(Mean_toxicity_rate)
+for(i in 1:nrow(nephro_ranked)) {
+  cat("   ", i, ". ", as.character(nephro_ranked$Antibiotic[i]), " - ",
+      round(nephro_ranked$Mean_toxicity_rate[i] * 100, 2), "%\n", sep = "")
+}
+
+cat("\n6. OTOTOXICITY RANKINGS (by mean toxicity rate - lower is better)\n")
+oto_ranked <- oto_summary %>% arrange(Mean_toxicity_rate)
+for(i in 1:nrow(oto_ranked)) {
+  cat("   ", i, ". ", as.character(oto_ranked$Antibiotic[i]), " - ",
+      round(oto_ranked$Mean_toxicity_rate[i] * 100, 2), "%\n", sep = "")
+}
+
+cat("\n7. BENEFIT-RISK RANKINGS (higher is better)\n")
+for(i in 1:nrow(risk_benefit)) {
+  cat("   ", i, ". ", as.character(risk_benefit$Antibiotic[i]), " - Ratio: ",
+      round(risk_benefit$Benefit_Risk_Ratio[i], 2), "\n", sep = "")
+}
+
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+```
+
+# Clinical Implications and Conclusions
+
+## Key Takeaways
+
+Based on this meta-analysis of `r overall_eff$Total_studies` randomized controlled trials:
+
+1. **Efficacy**: The overall cure rate across all aminoglycosides was `r round(overall_eff$Overall_cure_rate * 100, 1)`%, with `r ifelse(chisq_eff$p.value < 0.05, "significant differences", "no significant differences")` observed among the five antibiotics (p = `r format.pval(chisq_eff$p.value, digits = 3)`).
+
+2. **Nephrotoxicity**: The pooled nephrotoxicity rate was `r round(overall_nephro$Overall_toxicity_rate * 100, 1)`%, with `r ifelse(chisq_nephro$p.value < 0.05, "significant differences", "no significant differences")` among antibiotics (p = `r format.pval(chisq_nephro$p.value, digits = 3)`).
+
+3. **Ototoxicity**: The pooled ototoxicity rate was `r round(overall_oto$Overall_toxicity_rate * 100, 1)`%, with `r ifelse(chisq_oto$p.value < 0.05, "significant differences", "no significant differences")` among antibiotics (p = `r format.pval(chisq_oto$p.value, digits = 3)`).
+
+## Clinical Decision Making
+
+The choice of aminoglycoside should consider:
+
+- **Patient-specific factors**: Renal function, hearing status, infection severity
+- **Institutional factors**: Local resistance patterns, formulary availability, cost
+- **Risk-benefit profile**: Balance between treatment efficacy and toxicity potential
+
+## Limitations
+
+1. **Study heterogeneity**: Trials varied in design features, populations, and outcome definitions
+2. **Publication bias**: Unpublished negative studies may not be represented
+3. **Temporal factors**: Practice patterns and bacterial resistance may have changed since 1975-1985
+4. **Missing data**: Not all antibiotics were evaluated in all studies for all endpoints
+
+## Future Directions
+
+- Updated meta-analysis including more recent trials
+- Subgroup analyses by infection type and severity
+- Cost-effectiveness analysis
+- Individual patient data meta-analysis for more detailed insights
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
+
+# References
+
+Data source: Rosner, B. Fundamentals of Biostatistics (8th Edition).
+Meta-analysis of randomized controlled trials published June 1975 - September 1985.
+
+---
+
+**Analysis completed:** `r Sys.Date()`

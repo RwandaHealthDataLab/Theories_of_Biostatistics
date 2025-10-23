@@ -1,0 +1,717 @@
+---
+title: "Otolaryngology: Ear Infection Treatment - Logistic Regression Analysis"
+subtitle: "Problem 13.52 - Subject-Level Cure Analysis"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    code_folding: show
+    theme: readable
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Problem Statement
+
+**Problem 13.52**: Consider a subject "cured" if:
+
+1. The subject is a **unilateral case** and the ear clears by 14 days, **OR**
+2. The subject is a **bilateral case** and **both ears** are clear by 14 days
+
+Run a logistic regression with:
+
+- **Outcome variable**: cured (as defined above)
+- **Independent variables**:
+  1. Antibiotic
+  2. Age
+  3. Type of case (unilateral or bilateral)
+
+Assess goodness of fit of the model obtained.
+
+# Background
+
+## Clinical Context
+
+This analysis examines treatment outcomes for ear infections (otitis media) comparing two antibiotics across different age groups and disease presentations (unilateral vs. bilateral).
+
+**Key Clinical Questions**:
+
+- Do the antibiotics differ in cure rates?
+- Does age affect treatment success?
+- Are bilateral cases harder to cure than unilateral cases?
+
+## Outcome Definition
+
+The outcome "cured" has a strict definition:
+
+- **Unilateral cases**: Success = the affected ear clears
+- **Bilateral cases**: Success = **BOTH** ears must clear (more stringent criterion)
+
+This reflects clinical reality: bilateral disease requires complete resolution in both ears for successful treatment.
+
+# Load Required Libraries
+
+```{r load-libraries}
+library(tidyverse)      # Data manipulation and visualization
+library(knitr)          # Tables
+library(ggplot2)        # Advanced plotting
+library(broom)          # Tidy model outputs
+library(car)            # VIF and other diagnostics
+library(ResourceSelection) # Hosmer-Lemeshow test
+library(pROC)           # ROC curves
+library(gridExtra)      # Multiple plots
+library(scales)         # Scale functions
+```
+
+# Load and Explore Data
+
+## Load EAR.DAT
+
+```{r load-data}
+# Load ear infection data
+ear_data <- read.table("../EAR.DAT.txt",
+                       header = TRUE,
+                       sep = ",",
+                       quote = "'\"",
+                       strip.white = TRUE)
+
+cat("Dataset dimensions:", nrow(ear_data), "records\n")
+cat("\nFirst 20 rows:\n")
+kable(head(ear_data, 20),
+      caption = "EAR.DAT - First 20 Records")
+```
+
+## Data Structure
+
+```{r data-structure}
+str(ear_data)
+
+cat("\n\nVariable distributions:\n")
+cat("Clear (0=not cleared, 1=cleared):\n")
+table(ear_data$Clear)
+
+cat("\n\nAntibiotic:\n")
+table(ear_data$Antibo)
+
+cat("\n\nAge group:\n")
+table(ear_data$Age)
+
+cat("\n\nEar (1=left, 2=right):\n")
+table(ear_data$Ear)
+```
+
+## Identify Unilateral vs. Bilateral Cases
+
+```{r identify-case-type}
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("IDENTIFYING UNILATERAL vs BILATERAL CASES\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Count records per subject
+records_per_subject <- ear_data %>%
+  group_by(Id) %>%
+  summarise(
+    n_ears = n(),
+    .groups = 'drop'
+  )
+
+cat("Records per subject distribution:\n")
+table(records_per_subject$n_ears)
+
+cat("\n\nUnilateral cases (1 ear): ", sum(records_per_subject$n_ears == 1), " subjects\n")
+cat("Bilateral cases (2 ears): ", sum(records_per_subject$n_ears == 2), " subjects\n")
+```
+
+# Data Preparation for Subject-Level Analysis
+
+## Create Subject-Level Dataset
+
+```{r create-subject-data}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("CREATING SUBJECT-LEVEL DATASET\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# For each subject, determine:
+# 1. Case type (unilateral or bilateral)
+# 2. Whether cured according to problem definition
+# 3. Antibiotic and age (same for both ears)
+
+subject_data <- ear_data %>%
+  group_by(Id) %>%
+  summarise(
+    # Number of ears (1=unilateral, 2=bilateral)
+    n_ears = n(),
+
+    # Antibiotic (should be same for all ears of a subject)
+    Antibo = first(Antibo),
+
+    # Age (should be same for all ears of a subject)
+    Age = first(Age),
+
+    # For bilateral cases: both ears must clear
+    # For unilateral cases: the one ear must clear
+    both_ears_cleared = sum(Clear) == n_ears,
+
+    # Individual ear clearance
+    left_ear_cleared = ifelse(any(Ear == 1), Clear[Ear == 1][1], NA),
+    right_ear_cleared = ifelse(any(Ear == 2), Clear[Ear == 2][1], NA),
+
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    # Case type
+    case_type = ifelse(n_ears == 1, "Unilateral", "Bilateral"),
+
+    # Cured according to problem definition
+    cured = both_ears_cleared,
+
+    # Convert to factors with meaningful labels
+    case_type_factor = factor(case_type, levels = c("Unilateral", "Bilateral")),
+    antibiotic = factor(Antibo, levels = 1:2,
+                       labels = c("Antibiotic 1", "Antibiotic 2")),
+    age_group = factor(Age, levels = 1:3,
+                      labels = c("Age Group 1", "Age Group 2", "Age Group 3"))
+  )
+
+cat("Subject-level dataset created.\n")
+cat("Total subjects:", nrow(subject_data), "\n\n")
+
+cat("First 15 subjects:\n")
+kable(head(subject_data %>% select(Id, case_type, antibiotic, age_group,
+                                    left_ear_cleared, right_ear_cleared, cured), 15),
+      caption = "Subject-Level Data (First 15)")
+```
+
+## Summary Statistics
+
+```{r summary-stats}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("SUMMARY STATISTICS\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Overall cure rate
+overall_cure <- subject_data %>%
+  summarise(
+    n = n(),
+    n_cured = sum(cured),
+    cure_rate = mean(cured)
+  )
+
+cat("Overall:\n")
+cat("  Total subjects:", overall_cure$n, "\n")
+cat("  Cured:", overall_cure$n_cured, "\n")
+cat("  Cure rate:", round(overall_cure$cure_rate * 100, 2), "%\n\n")
+
+# By case type
+by_case_type <- subject_data %>%
+  group_by(case_type_factor) %>%
+  summarise(
+    n = n(),
+    n_cured = sum(cured),
+    cure_rate = mean(cured),
+    .groups = 'drop'
+  )
+
+cat("By Case Type:\n")
+kable(by_case_type, digits = 3,
+      caption = "Cure Rates by Case Type")
+
+# By antibiotic
+by_antibiotic <- subject_data %>%
+  group_by(antibiotic) %>%
+  summarise(
+    n = n(),
+    n_cured = sum(cured),
+    cure_rate = mean(cured),
+    .groups = 'drop'
+  )
+
+cat("\n\nBy Antibiotic:\n")
+kable(by_antibiotic, digits = 3,
+      caption = "Cure Rates by Antibiotic")
+
+# By age group
+by_age <- subject_data %>%
+  group_by(age_group) %>%
+  summarise(
+    n = n(),
+    n_cured = sum(cured),
+    cure_rate = mean(cured),
+    .groups = 'drop'
+  )
+
+cat("\n\nBy Age Group:\n")
+kable(by_age, digits = 3,
+      caption = "Cure Rates by Age Group")
+
+# Cross-tabulation
+cat("\n\nCross-tabulation: Case Type × Antibiotic\n")
+cross_tab <- subject_data %>%
+  group_by(case_type_factor, antibiotic) %>%
+  summarise(
+    n = n(),
+    n_cured = sum(cured),
+    cure_rate = mean(cured),
+    .groups = 'drop'
+  )
+kable(cross_tab, digits = 3)
+```
+
+# Exploratory Visualizations
+
+```{r exploratory-viz, fig.height=10}
+# Cure rates by antibiotic
+p1 <- ggplot(by_antibiotic, aes(x = antibiotic, y = cure_rate, fill = antibiotic)) +
+  geom_col(alpha = 0.7) +
+  geom_text(aes(label = paste0(round(cure_rate * 100, 1), "%")),
+            vjust = -0.5, size = 5) +
+  labs(title = "Cure Rates by Antibiotic",
+       x = "Antibiotic",
+       y = "Cure Rate") +
+  scale_y_continuous(labels = percent_format(), limits = c(0, 1)) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Cure rates by age
+p2 <- ggplot(by_age, aes(x = age_group, y = cure_rate, fill = age_group)) +
+  geom_col(alpha = 0.7) +
+  geom_text(aes(label = paste0(round(cure_rate * 100, 1), "%")),
+            vjust = -0.5, size = 5) +
+  labs(title = "Cure Rates by Age Group",
+       x = "Age Group",
+       y = "Cure Rate") +
+  scale_y_continuous(labels = percent_format(), limits = c(0, 1)) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Cure rates by case type
+p3 <- ggplot(by_case_type, aes(x = case_type_factor, y = cure_rate,
+                                fill = case_type_factor)) +
+  geom_col(alpha = 0.7) +
+  geom_text(aes(label = paste0(round(cure_rate * 100, 1), "%")),
+            vjust = -0.5, size = 5) +
+  labs(title = "Cure Rates by Case Type",
+       x = "Case Type",
+       y = "Cure Rate") +
+  scale_y_continuous(labels = percent_format(), limits = c(0, 1)) +
+  scale_fill_brewer(palette = "Dark2") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Grouped bar plot
+p4 <- ggplot(cross_tab, aes(x = antibiotic, y = cure_rate, fill = case_type_factor)) +
+  geom_col(position = position_dodge(0.9), alpha = 0.7) +
+  geom_text(aes(label = paste0(round(cure_rate * 100, 1), "%")),
+            position = position_dodge(0.9), vjust = -0.5, size = 3) +
+  labs(title = "Cure Rates by Antibiotic and Case Type",
+       x = "Antibiotic",
+       y = "Cure Rate",
+       fill = "Case Type") +
+  scale_y_continuous(labels = percent_format(), limits = c(0, 1)) +
+  scale_fill_brewer(palette = "Set3") +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+# Problem 13.52: Logistic Regression Analysis
+
+## Fit Logistic Regression Model
+
+```{r logistic-model}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("PROBLEM 13.52: LOGISTIC REGRESSION MODEL\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Fit logistic regression
+# Outcome: cured (1=yes, 0=no)
+# Predictors: antibiotic, age_group, case_type_factor
+
+logit_model <- glm(cured ~ antibiotic + age_group + case_type_factor,
+                   data = subject_data,
+                   family = binomial(link = "logit"))
+
+# Model summary
+summary(logit_model)
+
+cat("\n\nModel Formula:\n")
+cat("logit(P(cured)) = β0 + β1·(Antibiotic 2) + β2·(Age Group 2) + β3·(Age Group 3) + β4·(Bilateral)\n")
+```
+
+## Interpretation of Coefficients
+
+```{r coef-interpretation}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("COEFFICIENT INTERPRETATION\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Get coefficients and odds ratios
+coef_table <- tidy(logit_model, conf.int = TRUE, exponentiate = FALSE)
+or_table <- tidy(logit_model, conf.int = TRUE, exponentiate = TRUE)
+
+cat("COEFFICIENTS (Log-Odds Scale):\n")
+kable(coef_table, digits = 4,
+      caption = "Logistic Regression Coefficients")
+
+cat("\n\nODDS RATIOS:\n")
+kable(or_table %>% select(term, estimate, conf.low, conf.high, p.value),
+      digits = 4,
+      col.names = c("Variable", "Odds Ratio", "95% CI Lower", "95% CI Upper", "p-value"),
+      caption = "Odds Ratios and 95% Confidence Intervals")
+
+cat("\n\nINTERPRETATION:\n\n")
+
+# Antibiotic effect
+ab_or <- or_table %>% filter(grepl("Antibiotic 2", term)) %>% pull(estimate)
+ab_p <- coef_table %>% filter(grepl("Antibiotic 2", term)) %>% pull(p.value)
+
+cat("1. ANTIBIOTIC EFFECT:\n")
+if(length(ab_or) > 0) {
+  cat("   - Odds Ratio:", round(ab_or, 3), "\n")
+  cat("   - p-value:", format.pval(ab_p, digits = 4), "\n")
+  if(ab_p < 0.05) {
+    if(ab_or > 1) {
+      cat("   - Antibiotic 2 has SIGNIFICANTLY HIGHER odds of cure (p < 0.05)\n")
+    } else {
+      cat("   - Antibiotic 2 has SIGNIFICANTLY LOWER odds of cure (p < 0.05)\n")
+    }
+  } else {
+    cat("   - No significant difference between antibiotics (p >= 0.05)\n")
+  }
+}
+
+# Age effects
+cat("\n2. AGE EFFECTS:\n")
+age2_or <- or_table %>% filter(grepl("Age Group 2", term)) %>% pull(estimate)
+age2_p <- coef_table %>% filter(grepl("Age Group 2", term)) %>% pull(p.value)
+age3_or <- or_table %>% filter(grepl("Age Group 3", term)) %>% pull(estimate)
+age3_p <- coef_table %>% filter(grepl("Age Group 3", term)) %>% pull(p.value)
+
+if(length(age2_or) > 0) {
+  cat("   Age Group 2 vs Age Group 1:\n")
+  cat("     - Odds Ratio:", round(age2_or, 3), "\n")
+  cat("     - p-value:", format.pval(age2_p, digits = 4), "\n")
+}
+
+if(length(age3_or) > 0) {
+  cat("   Age Group 3 vs Age Group 1:\n")
+  cat("     - Odds Ratio:", round(age3_or, 3), "\n")
+  cat("     - p-value:", format.pval(age3_p, digits = 4), "\n")
+}
+
+# Case type effect
+case_or <- or_table %>% filter(grepl("Bilateral", term)) %>% pull(estimate)
+case_p <- coef_table %>% filter(grepl("Bilateral", term)) %>% pull(p.value)
+
+cat("\n3. CASE TYPE EFFECT (Bilateral vs Unilateral):\n")
+if(length(case_or) > 0) {
+  cat("   - Odds Ratio:", round(case_or, 3), "\n")
+  cat("   - p-value:", format.pval(case_p, digits = 4), "\n")
+  if(case_p < 0.05) {
+    if(case_or < 1) {
+      cat("   - Bilateral cases have SIGNIFICANTLY LOWER odds of cure (p < 0.05)\n")
+      cat("   - This makes clinical sense: both ears must clear for bilateral cure\n")
+    } else {
+      cat("   - Bilateral cases have SIGNIFICANTLY HIGHER odds of cure (p < 0.05)\n")
+    }
+  } else {
+    cat("   - No significant difference between unilateral and bilateral cases (p >= 0.05)\n")
+  }
+}
+```
+
+## Model Diagnostics
+
+```{r model-diagnostics}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("MODEL DIAGNOSTICS\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Add predicted probabilities and residuals
+subject_data <- subject_data %>%
+  mutate(
+    predicted_prob = predict(logit_model, type = "response"),
+    predicted_logit = predict(logit_model, type = "link"),
+    residuals_deviance = residuals(logit_model, type = "deviance"),
+    residuals_pearson = residuals(logit_model, type = "pearson"),
+    fitted_values = fitted(logit_model)
+  )
+
+# Check for influential observations
+influence_measures <- influence(logit_model)
+subject_data$cooks_d <- cooks.distance(logit_model)
+subject_data$leverage <- hatvalues(logit_model)
+
+cat("Observations with high Cook's Distance (> 4/n):\n")
+high_influence <- subject_data %>%
+  filter(cooks_d > 4/nrow(subject_data)) %>%
+  select(Id, cured, antibiotic, age_group, case_type_factor, cooks_d)
+
+if(nrow(high_influence) > 0) {
+  kable(high_influence, digits = 4)
+} else {
+  cat("No highly influential observations detected.\n")
+}
+```
+
+## Diagnostic Plots
+
+```{r diagnostic-plots, fig.height=10}
+# Residual plots
+par(mfrow = c(2, 2))
+
+# 1. Residuals vs Fitted
+plot(subject_data$predicted_logit, subject_data$residuals_deviance,
+     xlab = "Predicted Log-Odds", ylab = "Deviance Residuals",
+     main = "Residuals vs Fitted Values",
+     pch = 19, col = alpha("blue", 0.5))
+abline(h = 0, col = "red", lty = 2)
+lowess_fit <- lowess(subject_data$predicted_logit, subject_data$residuals_deviance)
+lines(lowess_fit, col = "red", lwd = 2)
+
+# 2. Q-Q plot of deviance residuals
+qqnorm(subject_data$residuals_deviance, main = "Q-Q Plot of Deviance Residuals",
+       pch = 19, col = alpha("blue", 0.5))
+qqline(subject_data$residuals_deviance, col = "red", lwd = 2)
+
+# 3. Cook's Distance
+plot(subject_data$cooks_d, type = "h",
+     xlab = "Observation Number", ylab = "Cook's Distance",
+     main = "Cook's Distance",
+     col = "blue")
+abline(h = 4/nrow(subject_data), col = "red", lty = 2)
+
+# 4. Leverage vs Residuals
+plot(subject_data$leverage, subject_data$residuals_deviance,
+     xlab = "Leverage", ylab = "Deviance Residuals",
+     main = "Leverage vs Residuals",
+     pch = 19, col = alpha("blue", 0.5))
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+# Goodness of Fit Assessment
+
+## Hosmer-Lemeshow Test
+
+```{r hosmer-lemeshow}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("GOODNESS OF FIT: HOSMER-LEMESHOW TEST\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Hosmer-Lemeshow test
+hl_test <- hoslem.test(subject_data$cured, subject_data$predicted_prob, g = 10)
+
+print(hl_test)
+
+cat("\n\nInterpretation:\n")
+cat("- Null hypothesis: Model fits the data well\n")
+cat("- p-value:", format.pval(hl_test$p.value, digits = 4), "\n")
+
+if(hl_test$p.value >= 0.05) {
+  cat("- CONCLUSION: Good fit - we do NOT reject the null hypothesis (p >= 0.05)\n")
+  cat("  The model adequately fits the data.\n")
+} else {
+  cat("- CONCLUSION: Poor fit - we reject the null hypothesis (p < 0.05)\n")
+  cat("  The model may not adequately fit the data.\n")
+}
+```
+
+## Deviance and AIC
+
+```{r deviance-aic}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("MODEL FIT STATISTICS\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Null model (intercept only)
+null_model <- glm(cured ~ 1, data = subject_data, family = binomial)
+
+# Model comparison
+cat("Null Model (Intercept Only):\n")
+cat("  Residual Deviance:", round(null_model$deviance, 2), "\n")
+cat("  AIC:", round(AIC(null_model), 2), "\n\n")
+
+cat("Full Model (with predictors):\n")
+cat("  Residual Deviance:", round(logit_model$deviance, 2), "\n")
+cat("  AIC:", round(AIC(logit_model), 2), "\n\n")
+
+# Likelihood ratio test
+lrt_stat <- null_model$deviance - logit_model$deviance
+lrt_df <- null_model$df.residual - logit_model$df.residual
+lrt_p <- pchisq(lrt_stat, lrt_df, lower.tail = FALSE)
+
+cat("Likelihood Ratio Test (Full vs Null):\n")
+cat("  Chi-square statistic:", round(lrt_stat, 3), "\n")
+cat("  Degrees of freedom:", lrt_df, "\n")
+cat("  p-value:", format.pval(lrt_p, digits = 4), "\n\n")
+
+if(lrt_p < 0.05) {
+  cat("  CONCLUSION: The full model is significantly better than the null model (p < 0.05)\n")
+} else {
+  cat("  CONCLUSION: The full model is not significantly better than the null model (p >= 0.05)\n")
+}
+
+# Pseudo R-squared (McFadden's)
+mcfadden_r2 <- 1 - (logit_model$deviance / null_model$deviance)
+cat("\n\nMcFadden's Pseudo R²:", round(mcfadden_r2, 4), "\n")
+cat("  (Values 0.2-0.4 indicate excellent fit)\n")
+```
+
+## Classification Performance
+
+```{r classification}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("CLASSIFICATION PERFORMANCE\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Confusion matrix at threshold 0.5
+subject_data$predicted_class <- ifelse(subject_data$predicted_prob > 0.5, 1, 0)
+
+conf_matrix <- table(Predicted = subject_data$predicted_class,
+                     Actual = subject_data$cured)
+
+cat("Confusion Matrix (threshold = 0.5):\n")
+print(conf_matrix)
+
+# Calculate metrics
+if(nrow(conf_matrix) == 2 && ncol(conf_matrix) == 2) {
+  TP <- conf_matrix[2, 2]
+  TN <- conf_matrix[1, 1]
+  FP <- conf_matrix[2, 1]
+  FN <- conf_matrix[1, 2]
+
+  accuracy <- (TP + TN) / sum(conf_matrix)
+  sensitivity <- TP / (TP + FN)
+  specificity <- TN / (TN + FP)
+  ppv <- TP / (TP + FP)
+  npv <- TN / (TN + FN)
+
+  cat("\n\nClassification Metrics:\n")
+  cat("  Accuracy:", round(accuracy, 4), "\n")
+  cat("  Sensitivity (True Positive Rate):", round(sensitivity, 4), "\n")
+  cat("  Specificity (True Negative Rate):", round(specificity, 4), "\n")
+  cat("  Positive Predictive Value:", round(ppv, 4), "\n")
+  cat("  Negative Predictive Value:", round(npv, 4), "\n")
+}
+```
+
+## ROC Curve
+
+```{r roc-curve}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("ROC CURVE ANALYSIS\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# ROC curve
+roc_obj <- roc(subject_data$cured, subject_data$predicted_prob)
+
+cat("Area Under the Curve (AUC):", round(auc(roc_obj), 4), "\n")
+cat("  AUC interpretation:\n")
+cat("    0.90-1.00 = Excellent\n")
+cat("    0.80-0.90 = Good\n")
+cat("    0.70-0.80 = Fair\n")
+cat("    0.60-0.70 = Poor\n")
+cat("    0.50-0.60 = Fail\n\n")
+
+# Plot ROC curve
+plot(roc_obj, main = "ROC Curve for Logistic Regression Model",
+     col = "blue", lwd = 2, print.auc = TRUE, print.auc.y = 0.4)
+abline(a = 0, b = 1, lty = 2, col = "gray")
+```
+
+# Summary of Results
+
+```{r summary}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("SUMMARY: PROBLEM 13.52\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+cat("MODEL SPECIFICATION:\n")
+cat("  Outcome: Subject cured (1=yes, 0=no)\n")
+cat("    - Unilateral: ear clears by 14 days\n")
+cat("    - Bilateral: BOTH ears clear by 14 days\n")
+cat("  Predictors:\n")
+cat("    1. Antibiotic (1 or 2)\n")
+cat("    2. Age group (1, 2, or 3)\n")
+cat("    3. Case type (Unilateral or Bilateral)\n\n")
+
+cat("SAMPLE:\n")
+cat("  Total subjects:", nrow(subject_data), "\n")
+cat("  Unilateral cases:", sum(subject_data$case_type == "Unilateral"), "\n")
+cat("  Bilateral cases:", sum(subject_data$case_type == "Bilateral"), "\n")
+cat("  Overall cure rate:", round(mean(subject_data$cured) * 100, 1), "%\n\n")
+
+cat("MODEL RESULTS:\n")
+cat("  Significant predictors (p < 0.05):\n")
+sig_predictors <- coef_table %>% filter(p.value < 0.05, term != "(Intercept)")
+if(nrow(sig_predictors) > 0) {
+  for(i in 1:nrow(sig_predictors)) {
+    cat("    -", sig_predictors$term[i], "(p =", format.pval(sig_predictors$p.value[i], digits = 3), ")\n")
+  }
+} else {
+  cat("    None\n")
+}
+
+cat("\n  Non-significant predictors (p >= 0.05):\n")
+nonsig_predictors <- coef_table %>% filter(p.value >= 0.05, term != "(Intercept)")
+if(nrow(nonsig_predictors) > 0) {
+  for(i in 1:nrow(nonsig_predictors)) {
+    cat("    -", nonsig_predictors$term[i], "(p =", format.pval(nonsig_predictors$p.value[i], digits = 3), ")\n")
+  }
+} else {
+  cat("    None\n")
+}
+
+cat("\nGOODNESS OF FIT:\n")
+cat("  Hosmer-Lemeshow test: p =", format.pval(hl_test$p.value, digits = 3), "\n")
+cat("    Conclusion:",
+    ifelse(hl_test$p.value >= 0.05, "Good fit", "Poor fit"), "\n")
+cat("  McFadden's R²:", round(mcfadden_r2, 3), "\n")
+cat("  AIC:", round(AIC(logit_model), 2), "\n")
+cat("  AUC:", round(auc(roc_obj), 3), "\n\n")
+
+cat("CLASSIFICATION PERFORMANCE:\n")
+if(exists("accuracy")) {
+  cat("  Accuracy:", round(accuracy, 3), "\n")
+  cat("  Sensitivity:", round(sensitivity, 3), "\n")
+  cat("  Specificity:", round(specificity, 3), "\n\n")
+}
+
+cat("CLINICAL INTERPRETATION:\n")
+cat("  The logistic regression model provides insights into factors\n")
+cat("  affecting treatment success in ear infections. The goodness-of-fit\n")
+cat("  assessment indicates", ifelse(hl_test$p.value >= 0.05, "adequate", "inadequate"),
+    "model fit.\n")
+
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+```
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
