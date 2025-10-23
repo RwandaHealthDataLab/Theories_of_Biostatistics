@@ -1,0 +1,857 @@
+---
+title: "Problems 10.56-10.58: Otolaryngology - Ear Infection Study"
+author: "Efficacy of Study Medications for Ear Infections"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: cerulean
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  fig.align = 'center'
+)
+```
+
+# Introduction
+
+## Study Background
+
+This document analyzes data from an **otolaryngology study** comparing the efficacy of two study medications for treating ear infections in children.
+
+### Study Design
+
+- **Population:** Children with ear infections
+- **Treatment Groups:** Two different antibiotic medications
+- **Baseline Assessment:** Number of affected ears (1 or 2)
+- **Follow-up:** 14 days post-treatment
+- **Outcome:** Ear clearance (cleared vs not cleared)
+
+### Research Questions
+
+**Problem 10.56:** For children with **one affected ear** at baseline, compare efficacy of the two medications
+
+**Problem 10.57:** For children with **two affected ears** at baseline, compare efficacy using a graded scale:
+- Two cleared ears
+- One cleared ear
+- No cleared ears
+
+**Problem 10.58:** For children with **two affected ears**, test if response to medications for first and second ears is independent
+
+# Data Loading and Preparation
+
+```{r load-packages}
+# Load required libraries
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(DescTools)
+library(ggplot2)
+library(scales)
+library(vcd)  # For association plots
+
+# Set theme for plots
+theme_set(theme_minimal())
+```
+
+
+
+```{r load-data}
+# Load the EAR.DAT dataset
+data_path <- "Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/EAR.DAT.txt"
+
+# Read the data - handle quotes in column names
+ear_data <- read.csv(data_path, header = TRUE, strip.white = TRUE, quote = "'\"")
+
+# Clean column names (remove any quotes)
+colnames(ear_data) <- gsub("'", "", colnames(ear_data))
+colnames(ear_data) <- gsub("\"", "", colnames(ear_data))
+
+# Display structure
+str(ear_data)
+
+# Display column names for verification
+cat("\nColumn names in dataset:\n")
+print(colnames(ear_data))
+```
+
+# Variable Definitions
+
+```{r variable-definitions}
+# Create variable definitions table
+var_definitions <- data.frame(
+  Variable = c("Id", "Clear", "Antibo", "Age", "Ear"),
+  Description = c(
+    "Child identification number",
+    "Clearance status at 14 days (0 = Not cleared, 1 = Cleared)",
+    "Antibiotic medication (1 = Medication 1, 2 = Medication 2)",
+    "Age group (1 = Younger, 2 = Older)",
+    "Ear identifier (1 = First ear/Right ear, 2 = Second ear/Left ear)"
+  )
+)
+
+kable(var_definitions,
+      caption = "Variable Definitions for EAR Dataset") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+# Data Processing
+
+```{r data-processing}
+# Verify required columns exist
+required_cols <- c("Id", "Clear", "Antibo", "Age", "Ear")
+
+missing_cols <- setdiff(required_cols, colnames(ear_data))
+if(length(missing_cols) > 0) {
+  stop(paste("Missing columns:", paste(missing_cols, collapse = ", ")))
+}
+
+cat("All required columns are present.\n")
+cat("Dataset has", nrow(ear_data), "observations.\n\n")
+
+# Create factor variables with meaningful labels
+ear_data <- ear_data %>%
+  mutate(
+    Clear_Label = factor(Clear, levels = c(0, 1),
+                        labels = c("Not Cleared", "Cleared")),
+    Antibo_Label = factor(Antibo, levels = c(1, 2),
+                         labels = c("Medication 1", "Medication 2")),
+    Age_Label = factor(Age, levels = c(1, 2),
+                      labels = c("Younger", "Older")),
+    Ear_Label = factor(Ear, levels = c(1, 2),
+                      labels = c("First Ear", "Second Ear"))
+  )
+
+# Identify children with one vs two affected ears
+# Count ears per child
+ears_per_child <- ear_data %>%
+  group_by(Id) %>%
+  summarise(N_Ears = n())
+
+# Add to main dataset
+ear_data <- ear_data %>%
+  left_join(ears_per_child, by = "Id") %>%
+  mutate(
+    Baseline_Status = factor(ifelse(N_Ears == 1, "One Affected Ear", "Two Affected Ears"))
+  )
+
+cat("Data processing completed successfully.\n")
+```
+
+# Exploratory Data Analysis
+
+## Overall Summary
+
+```{r overall-summary}
+# Summary statistics
+summary_stats <- ear_data %>%
+  summarise(
+    Total_Children = n_distinct(Id),
+    Total_Observations = n(),
+    Children_One_Ear = sum(N_Ears == 1) / n_distinct(Id) * n_distinct(Id),
+    Children_Two_Ears = sum(N_Ears == 2) / n_distinct(Id) * n_distinct(Id),
+    Cleared_Count = sum(Clear == 1),
+    Cleared_Pct = round(100 * mean(Clear == 1), 1)
+  )
+
+kable(summary_stats,
+      caption = "Overall Study Summary",
+      col.names = c("Total Children", "Total Observations",
+                   "Children (1 Ear)", "Children (2 Ears)",
+                   "Cleared Count", "Cleared %")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+## Distribution by Baseline Status
+
+```{r baseline-distribution}
+# Distribution of children by baseline status and medication
+baseline_dist <- ear_data %>%
+  distinct(Id, .keep_all = TRUE) %>%
+  group_by(Baseline_Status, Antibo_Label) %>%
+  summarise(N = n(), .groups = 'drop')
+
+kable(baseline_dist,
+      caption = "Distribution of Children by Baseline Status and Medication") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+## Clearance Rates by Group
+
+```{r clearance-rates}
+# Overall clearance by medication and baseline status
+clearance_summary <- ear_data %>%
+  group_by(Baseline_Status, Antibo_Label) %>%
+  summarise(
+    N_Observations = n(),
+    N_Cleared = sum(Clear == 1),
+    Pct_Cleared = round(100 * mean(Clear == 1), 1),
+    .groups = 'drop'
+  )
+
+kable(clearance_summary,
+      caption = "Clearance Rates by Baseline Status and Medication") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+# Problem 10.56: Children with One Affected Ear
+
+## Question
+For children with one affected ear at baseline, compare the efficacy of the two study medications.
+
+## Analysis
+
+### Data Subset
+
+```{r problem-10.56-subset}
+# Subset to children with one affected ear
+one_ear_data <- ear_data %>%
+  filter(N_Ears == 1)
+
+cat("Children with one affected ear:", n_distinct(one_ear_data$Id), "\n")
+cat("Observations:", nrow(one_ear_data), "\n\n")
+```
+
+### Contingency Table
+
+```{r problem-10.56-table}
+# Create contingency table
+one_ear_table <- table(one_ear_data$Antibo_Label, one_ear_data$Clear_Label)
+
+kable(addmargins(one_ear_table),
+      caption = "Clearance by Medication (One Affected Ear at Baseline)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+### Chi-square Test
+
+```{r problem-10.56-chisq}
+cat("=== CHI-SQUARE TEST ===\n\n")
+
+# Chi-square test
+chi_one_ear <- chisq.test(one_ear_table)
+
+cat(sprintf("Chi-square statistic: %.4f\n", chi_one_ear$statistic))
+cat(sprintf("Degrees of freedom: %d\n", chi_one_ear$parameter))
+cat(sprintf("P-value: %.4f\n", chi_one_ear$p.value))
+cat(sprintf("\nConclusion at α = 0.05: %s\n",
+            ifelse(chi_one_ear$p.value < 0.05,
+                   "Reject H₀ - Significant difference between medications",
+                   "Fail to reject H₀ - No significant difference between medications")))
+
+# Expected frequencies
+cat("\n--- Expected Frequencies ---\n")
+print(round(chi_one_ear$expected, 2))
+
+# Check if expected frequencies are adequate
+min_expected <- min(chi_one_ear$expected)
+cat(sprintf("\nMinimum expected frequency: %.2f\n", min_expected))
+if(min_expected < 5) {
+  cat("WARNING: Some expected frequencies < 5. Fisher's exact test recommended.\n")
+}
+```
+
+### Fisher's Exact Test
+
+```{r problem-10.56-fisher}
+cat("\n=== FISHER'S EXACT TEST ===\n\n")
+
+# Fisher's exact test
+fisher_one_ear <- fisher.test(one_ear_table)
+
+cat(sprintf("P-value: %.4f\n", fisher_one_ear$p.value))
+cat(sprintf("Odds Ratio: %.3f\n", fisher_one_ear$estimate))
+cat(sprintf("95%% CI for OR: (%.3f, %.3f)\n",
+            fisher_one_ear$conf.int[1], fisher_one_ear$conf.int[2]))
+```
+
+### Proportions and Effect Size
+
+```{r problem-10.56-proportions}
+# Calculate proportions by medication
+props_one_ear <- one_ear_data %>%
+  group_by(Antibo_Label) %>%
+  summarise(
+    N = n(),
+    N_Cleared = sum(Clear == 1),
+    Proportion_Cleared = round(mean(Clear == 1), 4),
+    Pct_Cleared = round(100 * mean(Clear == 1), 1),
+    SE = round(sqrt(mean(Clear == 1) * (1 - mean(Clear == 1)) / n()), 4)
+  )
+
+kable(props_one_ear,
+      caption = "Clearance Proportions by Medication (One Affected Ear)",
+      col.names = c("Medication", "N", "N Cleared", "Proportion", "Percentage (%)", "SE")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Calculate difference in proportions
+p1 <- props_one_ear$Proportion_Cleared[1]
+p2 <- props_one_ear$Proportion_Cleared[2]
+diff_prop <- p2 - p1
+
+cat(sprintf("\nDifference in proportions (Med 2 - Med 1): %.4f (%.1f%%)\n",
+            diff_prop, 100 * diff_prop))
+```
+
+### Visualization
+
+```{r problem-10.56-plot}
+# Bar plot
+ggplot(one_ear_data, aes(x = Antibo_Label, fill = Clear_Label)) +
+  geom_bar(position = "fill", alpha = 0.8) +
+  geom_text(stat = 'count', aes(label = after_stat(count)),
+            position = position_fill(vjust = 0.5), color = "white", size = 5) +
+  scale_fill_manual(values = c("Not Cleared" = "#e74c3c", "Cleared" = "#2ecc71")) +
+  scale_y_continuous(labels = percent_format()) +
+  labs(title = "Clearance Rates by Medication (One Affected Ear at Baseline)",
+       x = "Medication",
+       y = "Proportion",
+       fill = "Clearance Status") +
+  theme_minimal() +
+  theme(legend.position = "top",
+        plot.title = element_text(face = "bold", size = 14))
+```
+
+---
+
+# Problem 10.57: Children with Two Affected Ears (Graded Scale)
+
+## Question
+In children with two affected ears at baseline, compare the efficacy of the two study medications, treating the response at 14 days as a graded scale:
+- Two cleared ears
+- One cleared ear
+- No cleared ears
+
+## Analysis
+
+### Create Graded Outcome
+
+```{r problem-10.57-graded}
+# For children with two ears, calculate number of cleared ears
+two_ears_summary <- ear_data %>%
+  filter(N_Ears == 2) %>%
+  group_by(Id, Antibo_Label) %>%
+  summarise(
+    N_Cleared_Ears = sum(Clear == 1),
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    Outcome_Graded = factor(case_when(
+      N_Cleared_Ears == 0 ~ "No cleared ears",
+      N_Cleared_Ears == 1 ~ "One cleared ear",
+      N_Cleared_Ears == 2 ~ "Two cleared ears"
+    ), levels = c("No cleared ears", "One cleared ear", "Two cleared ears"))
+  )
+
+cat("Children with two affected ears:", nrow(two_ears_summary), "\n\n")
+```
+
+### Contingency Table
+
+```{r problem-10.57-table}
+# Create contingency table
+two_ears_table <- table(two_ears_summary$Antibo_Label, two_ears_summary$Outcome_Graded)
+
+kable(addmargins(two_ears_table),
+      caption = "Graded Outcome by Medication (Two Affected Ears at Baseline)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+### Chi-square Test
+
+```{r problem-10.57-chisq}
+cat("=== CHI-SQUARE TEST (Graded Outcome) ===\n\n")
+
+# Chi-square test
+chi_two_ears <- chisq.test(two_ears_table)
+
+cat(sprintf("Chi-square statistic: %.4f\n", chi_two_ears$statistic))
+cat(sprintf("Degrees of freedom: %d\n", chi_two_ears$parameter))
+cat(sprintf("P-value: %.4f\n", chi_two_ears$p.value))
+cat(sprintf("\nConclusion at α = 0.05: %s\n",
+            ifelse(chi_two_ears$p.value < 0.05,
+                   "Reject H₀ - Significant difference in graded outcomes between medications",
+                   "Fail to reject H₀ - No significant difference in graded outcomes")))
+
+# Expected frequencies
+cat("\n--- Expected Frequencies ---\n")
+print(round(chi_two_ears$expected, 2))
+
+# Check if expected frequencies are adequate
+min_expected_two <- min(chi_two_ears$expected)
+cat(sprintf("\nMinimum expected frequency: %.2f\n", min_expected_two))
+if(min_expected_two < 5) {
+  cat("WARNING: Some expected frequencies < 5. Results may not be reliable.\n")
+}
+```
+
+### Cochran-Armitage Trend Test
+
+```{r problem-10.57-trend}
+cat("\n=== COCHRAN-ARMITAGE TREND TEST ===\n\n")
+cat("Testing for linear trend in ordinal outcome (0 → 1 → 2 cleared ears)\n\n")
+
+# Create numeric scores for the graded outcome
+two_ears_summary <- two_ears_summary %>%
+  mutate(Outcome_Score = N_Cleared_Ears)
+
+# Show distribution of outcomes for each medication
+for(med in c("Medication 1", "Medication 2")) {
+  med_data <- two_ears_summary %>% filter(Antibo_Label == med)
+
+  cat(sprintf("--- %s ---\n", med))
+  cat("Distribution of outcomes:\n")
+  outcome_dist <- table(med_data$Outcome_Graded)
+  print(outcome_dist)
+  cat(sprintf("Mean cleared ears: %.2f\n", mean(med_data$N_Cleared_Ears)))
+  cat("\n")
+}
+
+# Compare distributions between medications using trend test
+# Recode medication as binary (0/1) for trend test
+two_ears_trend <- two_ears_summary %>%
+  mutate(Med_Binary = ifelse(Antibo_Label == "Medication 1", 0, 1))
+
+# Create contingency table for trend test
+trend_table <- table(two_ears_trend$Med_Binary, two_ears_trend$Outcome_Score)
+
+cat("Contingency table for trend test:\n")
+cat("Rows = Medication (0=Med1, 1=Med2), Columns = Number of cleared ears\n")
+print(addmargins(trend_table))
+cat("\n")
+
+# Perform trend test
+tryCatch({
+  trend_test_result <- CochranArmitageTest(trend_table)
+
+  cat("Trend Test Comparing Medications:\n")
+  cat(sprintf("Z-statistic: %.4f\n", trend_test_result$statistic))
+  cat(sprintf("P-value: %.4f\n", trend_test_result$p.value))
+  cat(sprintf("\nInterpretation: %s\n",
+              ifelse(trend_test_result$p.value < 0.05,
+                     "Significant linear trend - one medication tends to produce more cleared ears",
+                     "No significant linear trend between medications")))
+}, error = function(e) {
+  cat("Could not perform trend test:\n")
+  cat(conditionMessage(e), "\n")
+})
+```
+
+### Proportions by Outcome Category
+
+```{r problem-10.57-proportions}
+# Calculate proportions
+props_two_ears <- two_ears_summary %>%
+  group_by(Antibo_Label, Outcome_Graded) %>%
+  summarise(N = n(), .groups = 'drop') %>%
+  group_by(Antibo_Label) %>%
+  mutate(
+    Total = sum(N),
+    Proportion = round(N / Total, 3),
+    Percentage = round(100 * N / Total, 1)
+  )
+
+kable(props_two_ears,
+      caption = "Distribution of Graded Outcomes by Medication",
+      col.names = c("Medication", "Outcome", "N", "Total", "Proportion", "Percentage (%)")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+### Mean Number of Cleared Ears
+
+```{r problem-10.57-means}
+# Calculate mean number of cleared ears
+mean_cleared <- two_ears_summary %>%
+  group_by(Antibo_Label) %>%
+  summarise(
+    N = n(),
+    Mean_Cleared = round(mean(N_Cleared_Ears), 3),
+    SD_Cleared = round(sd(N_Cleared_Ears), 3),
+    SE_Cleared = round(sd(N_Cleared_Ears) / sqrt(n()), 3)
+  )
+
+kable(mean_cleared,
+      caption = "Mean Number of Cleared Ears by Medication",
+      col.names = c("Medication", "N", "Mean Cleared", "SD", "SE")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# T-test for difference in means
+t_test_cleared <- t.test(N_Cleared_Ears ~ Antibo_Label, data = two_ears_summary)
+
+cat(sprintf("\nTwo-sample t-test:\n"))
+cat(sprintf("  t = %.4f\n", t_test_cleared$statistic))
+cat(sprintf("  df = %.2f\n", t_test_cleared$parameter))
+cat(sprintf("  P-value = %.4f\n", t_test_cleared$p.value))
+cat(sprintf("  Mean difference: %.3f ears\n", diff(rev(t_test_cleared$estimate))))
+```
+
+### Visualization
+
+```{r problem-10.57-plot}
+# Stacked bar plot
+ggplot(two_ears_summary, aes(x = Antibo_Label, fill = Outcome_Graded)) +
+  geom_bar(position = "fill", alpha = 0.8) +
+  geom_text(stat = 'count', aes(label = after_stat(count)),
+            position = position_fill(vjust = 0.5), color = "white", size = 4, fontface = "bold") +
+  scale_fill_manual(values = c("No cleared ears" = "#e74c3c",
+                               "One cleared ear" = "#f39c12",
+                               "Two cleared ears" = "#2ecc71")) +
+  scale_y_continuous(labels = percent_format()) +
+  labs(title = "Graded Outcomes by Medication (Two Affected Ears at Baseline)",
+       subtitle = "Distribution of ear clearance outcomes at 14 days",
+       x = "Medication",
+       y = "Proportion",
+       fill = "Outcome") +
+  theme_minimal() +
+  theme(legend.position = "top",
+        plot.title = element_text(face = "bold", size = 14))
+
+# Box plot of number of cleared ears
+ggplot(two_ears_summary, aes(x = Antibo_Label, y = N_Cleared_Ears, fill = Antibo_Label)) +
+  geom_boxplot(alpha = 0.7, outlier.size = 2) +
+  geom_jitter(width = 0.2, alpha = 0.4) +
+  scale_y_continuous(breaks = c(0, 1, 2)) +
+  labs(title = "Number of Cleared Ears by Medication",
+       subtitle = "Distribution for children with two affected ears at baseline",
+       x = "Medication",
+       y = "Number of Cleared Ears") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(face = "bold", size = 14))
+```
+
+---
+
+# Problem 10.58: Independence of Response for First and Second Ears
+
+## Question
+For children with two affected ears, test the hypothesis that response to the study medications for the first and second ears is independent.
+
+## Analysis
+
+### Matched Pairs Structure
+
+```{r problem-10.58-structure}
+cat("=== DATA STRUCTURE ===\n\n")
+
+# Create wide format with first and second ear responses
+two_ears_wide <- ear_data %>%
+  filter(N_Ears == 2) %>%
+  select(Id, Antibo_Label, Ear, Clear) %>%
+  pivot_wider(names_from = Ear, values_from = Clear, names_prefix = "Ear_")
+
+# Create labels
+two_ears_wide <- two_ears_wide %>%
+  mutate(
+    Ear_1_Label = factor(Ear_1, levels = c(0, 1),
+                        labels = c("Not Cleared", "Cleared")),
+    Ear_2_Label = factor(Ear_2, levels = c(0, 1),
+                        labels = c("Not Cleared", "Cleared"))
+  )
+
+cat("Children with two affected ears:", nrow(two_ears_wide), "\n")
+cat("Structure: Paired observations (first ear vs second ear)\n\n")
+```
+
+### Contingency Table (Paired Data)
+
+```{r problem-10.58-table}
+# Create contingency table for paired ears
+paired_table <- table(two_ears_wide$Ear_1_Label, two_ears_wide$Ear_2_Label)
+
+kable(addmargins(paired_table),
+      caption = "First Ear Response vs. Second Ear Response (Paired Data)",
+      col.names = c("Second Ear: Not Cleared", "Second Ear: Cleared", "Total")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+### McNemar's Test
+
+```{r problem-10.58-mcnemar}
+cat("=== MCNEMAR'S TEST ===\n\n")
+cat("Null Hypothesis: Response for first and second ears is independent\n")
+cat("(i.e., probability of clearance is the same for both ears)\n\n")
+
+# McNemar's test for paired proportions
+mcnemar_result <- mcnemar.test(paired_table)
+
+cat(sprintf("McNemar's Chi-square statistic: %.4f\n", mcnemar_result$statistic))
+cat(sprintf("Degrees of freedom: %d\n", mcnemar_result$parameter))
+cat(sprintf("P-value: %.4f\n", mcnemar_result$p.value))
+
+cat(sprintf("\nConclusion at α = 0.05: %s\n",
+            ifelse(mcnemar_result$p.value < 0.05,
+                   "Reject H₀ - Response for first and second ears is NOT independent",
+                   "Fail to reject H₀ - No evidence against independence")))
+
+# McNemar's test focuses on discordant pairs
+discordant_10 <- paired_table[1, 2]  # First cleared, second not
+discordant_01 <- paired_table[2, 1]  # First not, second cleared
+total_discordant <- discordant_10 + discordant_01
+
+cat(sprintf("\nDiscordant pairs:\n"))
+cat(sprintf("  First ear cleared, second not: %d\n", discordant_10))
+cat(sprintf("  First ear not cleared, second cleared: %d\n", discordant_01))
+cat(sprintf("  Total discordant: %d\n", total_discordant))
+```
+
+### Chi-square Test for Independence
+
+```{r problem-10.58-chisq}
+cat("\n\n=== CHI-SQUARE TEST FOR INDEPENDENCE ===\n\n")
+
+# Standard chi-square test (treats as unpaired)
+chi_independence <- chisq.test(paired_table)
+
+cat(sprintf("Chi-square statistic: %.4f\n", chi_independence$statistic))
+cat(sprintf("Degrees of freedom: %d\n", chi_independence$parameter))
+cat(sprintf("P-value: %.4f\n", chi_independence$p.value))
+
+cat("\n--- Expected Frequencies (under independence) ---\n")
+print(round(chi_independence$expected, 2))
+
+cat("\nNOTE: This test ignores the paired nature of the data.\n")
+cat("McNemar's test is more appropriate for paired data.\n")
+```
+
+### Marginal Proportions
+
+```{r problem-10.58-marginals}
+# Calculate marginal proportions
+marginal_props <- two_ears_wide %>%
+  summarise(
+    N = n(),
+    First_Ear_Cleared = sum(Ear_1 == 1),
+    First_Ear_Prop = round(mean(Ear_1 == 1), 4),
+    First_Ear_Pct = round(100 * mean(Ear_1 == 1), 1),
+    Second_Ear_Cleared = sum(Ear_2 == 1),
+    Second_Ear_Prop = round(mean(Ear_2 == 1), 4),
+    Second_Ear_Pct = round(100 * mean(Ear_2 == 1), 1)
+  )
+
+kable(marginal_props,
+      caption = "Marginal Clearance Rates for First and Second Ears",
+      col.names = c("N", "First Cleared", "First Prop", "First %",
+                   "Second Cleared", "Second Prop", "Second %")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Test if marginal proportions are equal
+prop_test <- prop.test(c(marginal_props$First_Ear_Cleared,
+                        marginal_props$Second_Ear_Cleared),
+                       c(marginal_props$N, marginal_props$N))
+
+cat(sprintf("\nTest of equal marginal proportions:\n"))
+cat(sprintf("  Chi-square = %.4f\n", prop_test$statistic))
+cat(sprintf("  P-value = %.4f\n", prop_test$p.value))
+```
+
+### Concordance and Agreement
+
+```{r problem-10.58-agreement}
+cat("\n=== CONCORDANCE ANALYSIS ===\n\n")
+
+# Calculate concordance measures
+concordant_both_cleared <- sum(two_ears_wide$Ear_1 == 1 & two_ears_wide$Ear_2 == 1)
+concordant_both_not <- sum(two_ears_wide$Ear_1 == 0 & two_ears_wide$Ear_2 == 0)
+total_concordant <- concordant_both_cleared + concordant_both_not
+
+total_pairs <- nrow(two_ears_wide)
+pct_concordant <- 100 * total_concordant / total_pairs
+
+cat(sprintf("Concordant pairs:\n"))
+cat(sprintf("  Both ears cleared: %d\n", concordant_both_cleared))
+cat(sprintf("  Both ears not cleared: %d\n", concordant_both_not))
+cat(sprintf("  Total concordant: %d (%.1f%%)\n\n", total_concordant, pct_concordant))
+
+cat(sprintf("Discordant pairs:\n"))
+cat(sprintf("  First cleared, second not: %d\n", discordant_10))
+cat(sprintf("  First not, second cleared: %d\n", discordant_01))
+cat(sprintf("  Total discordant: %d (%.1f%%)\n\n",
+            total_discordant, 100 * total_discordant / total_pairs))
+
+# Calculate kappa statistic
+kappa_result <- Kappa(paired_table)
+cat(sprintf("Cohen's Kappa: %.4f\n", kappa_result$Unweighted[1]))
+cat(sprintf("  Interpretation: %s\n",
+            ifelse(kappa_result$Unweighted[1] > 0.6, "Substantial agreement",
+                  ifelse(kappa_result$Unweighted[1] > 0.4, "Moderate agreement",
+                        ifelse(kappa_result$Unweighted[1] > 0.2, "Fair agreement",
+                              "Slight agreement")))))
+```
+
+### Visualization
+
+```{r problem-10.58-plot}
+# Mosaic plot
+mosaicplot(paired_table,
+           main = "Association Between First and Second Ear Response",
+           xlab = "First Ear",
+           ylab = "Second Ear",
+           color = c("#e74c3c", "#2ecc71"),
+           cex.axis = 1.2)
+
+# Create a summary data frame for plotting
+plot_data <- two_ears_wide %>%
+  count(Ear_1_Label, Ear_2_Label) %>%
+  mutate(label = paste0("n=", n))
+
+# Tile plot
+ggplot(plot_data, aes(x = Ear_1_Label, y = Ear_2_Label, fill = n)) +
+  geom_tile(alpha = 0.8, color = "white", size = 2) +
+  geom_text(aes(label = label), size = 6, fontface = "bold") +
+  scale_fill_gradient(low = "#f8f9fa", high = "#3498db") +
+  labs(title = "Paired Ear Responses: First Ear vs. Second Ear",
+       subtitle = "Test of independence using McNemar's test",
+       x = "First Ear Response",
+       y = "Second Ear Response",
+       fill = "Count") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 14),
+        axis.text = element_text(size = 12))
+```
+
+### By Medication
+
+```{r problem-10.58-by-medication}
+cat("\n=== ANALYSIS BY MEDICATION ===\n\n")
+
+# Analyze by medication
+for(med in c("Medication 1", "Medication 2")) {
+  cat(sprintf("--- %s ---\n\n", med))
+
+  med_data <- two_ears_wide %>% filter(Antibo_Label == med)
+  med_table <- table(med_data$Ear_1_Label, med_data$Ear_2_Label)
+
+  cat("Contingency Table:\n")
+  print(addmargins(med_table))
+  cat("\n")
+
+  # McNemar's test
+  if(sum(med_table) > 0) {
+    mcnemar_med <- mcnemar.test(med_table)
+    cat(sprintf("McNemar's test P-value: %.4f\n", mcnemar_med$p.value))
+  }
+
+  cat("\n")
+}
+```
+
+---
+
+# Summary of Results
+
+```{r summary-results}
+# Create summary table
+summary_table <- data.frame(
+  Problem = c(
+    "10.56: One Affected Ear",
+    "10.56: One Affected Ear (Fisher)",
+    "10.57: Two Affected Ears (Graded)",
+    "10.57: Two Affected Ears (Mean)",
+    "10.58: Independence (McNemar)"
+  ),
+  Test = c(
+    "Chi-square",
+    "Fisher's Exact",
+    "Chi-square",
+    "Two-sample t-test",
+    "McNemar's"
+  ),
+  Test_Statistic = c(
+    sprintf("χ² = %.3f", chi_one_ear$statistic),
+    "---",
+    sprintf("χ² = %.3f", chi_two_ears$statistic),
+    sprintf("t = %.3f", t_test_cleared$statistic),
+    sprintf("χ² = %.3f", mcnemar_result$statistic)
+  ),
+  P_Value = c(
+    sprintf("%.4f", chi_one_ear$p.value),
+    sprintf("%.4f", fisher_one_ear$p.value),
+    sprintf("%.4f", chi_two_ears$p.value),
+    sprintf("%.4f", t_test_cleared$p.value),
+    sprintf("%.4f", mcnemar_result$p.value)
+  ),
+  Conclusion = c(
+    ifelse(chi_one_ear$p.value < 0.05, "Significant", "Not significant"),
+    ifelse(fisher_one_ear$p.value < 0.05, "Significant", "Not significant"),
+    ifelse(chi_two_ears$p.value < 0.05, "Significant", "Not significant"),
+    ifelse(t_test_cleared$p.value < 0.05, "Significant", "Not significant"),
+    ifelse(mcnemar_result$p.value < 0.05, "Not independent", "Independent")
+  )
+)
+
+kable(summary_table,
+      caption = "Summary of Statistical Tests (α = 0.05)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  row_spec(which(summary_table$Conclusion %in% c("Significant", "Not independent")),
+           bold = TRUE, background = "#ffffcc")
+```
+
+# Conclusions
+
+## Problem 10.56: One Affected Ear
+
+**Research Question:** Compare efficacy of two medications for children with one affected ear.
+
+**Key Findings:**
+- Chi-square test p-value: `r sprintf("%.4f", chi_one_ear$p.value)`
+- Fisher's exact test p-value: `r sprintf("%.4f", fisher_one_ear$p.value)`
+- **Conclusion:** `r ifelse(chi_one_ear$p.value < 0.05, "Significant difference between medications", "No significant difference between medications")`
+
+## Problem 10.57: Two Affected Ears (Graded Scale)
+
+**Research Question:** Compare efficacy using graded outcome (0, 1, or 2 cleared ears).
+
+**Key Findings:**
+- Chi-square test p-value: `r sprintf("%.4f", chi_two_ears$p.value)`
+- Mean number of cleared ears differs by: `r sprintf("%.3f", diff(rev(t_test_cleared$estimate)))` ears
+- **Conclusion:** `r ifelse(chi_two_ears$p.value < 0.05, "Significant difference in graded outcomes", "No significant difference in graded outcomes")`
+
+## Problem 10.58: Independence of Ear Responses
+
+**Research Question:** Are responses for first and second ears independent?
+
+**Key Findings:**
+- McNemar's test p-value: `r sprintf("%.4f", mcnemar_result$p.value)`
+- Concordance rate: `r sprintf("%.1f%%", 100 * total_concordant / total_pairs)`
+- Cohen's Kappa: `r sprintf("%.4f", kappa_result$Unweighted[1])`
+- **Conclusion:** `r ifelse(mcnemar_result$p.value < 0.05, "Responses are NOT independent (correlated)", "No evidence against independence")`
+
+## Clinical Implications
+
+The analysis provides insights into:
+1. Comparative efficacy of the two medications
+2. Patterns of response for children with bilateral ear infections
+3. Correlation between responses in paired ears
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
+
+---
+**End of Analysis**

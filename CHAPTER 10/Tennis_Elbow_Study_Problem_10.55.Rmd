@@ -1,0 +1,932 @@
+---
+title: "Problem 10.55: Tennis Elbow Case-Control Study"
+author: "Sports Medicine - Observational Study Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: cerulean
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  fig.align = 'center'
+)
+```
+
+# Introduction
+
+## Study Background
+
+This document analyzes data from a **case-control observational study** on tennis elbow conducted among tennis club members in the greater Boston area.
+
+### Study Design
+
+- **Type:** Case-control observational study
+- **Population:** Tennis club members in greater Boston area
+- **Cases:** Participants with at least one episode of tennis elbow
+- **Controls:** Participants with no episodes of tennis elbow
+- **Sampling:** Roughly equal enrollment of cases and controls
+
+### Research Question
+
+Identify risk factors associated with tennis elbow by examining:
+- Demographic factors (age, sex)
+- Racquet characteristics (type, weight, material, string type)
+- Both current and last racquet used
+
+### Important Note on Causation
+
+As an **observational study** (not a randomized clinical trial):
+- We can identify **associations** between risk factors and tennis elbow
+- We **cannot make causal inferences** (e.g., "wood racquets cause tennis elbow")
+- Confounding variables may explain observed relationships
+- Nevertheless, these findings provide important clues about disease etiology
+
+# Data Loading and Preparation
+
+```{r load-packages}
+# Load required libraries
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(DescTools)
+library(ggplot2)
+library(scales)
+library(gridExtra)
+library(epitools)  # For odds ratios
+
+# Set theme for plots
+theme_set(theme_minimal())
+```
+
+
+
+```{r load-data}
+# Load the TENNIS1.DAT dataset
+data_path <- "Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/TENNIS1.DAT.txt"
+
+# Read the data - handle quotes in column names
+tennis_data <- read.csv(data_path, header = TRUE, strip.white = TRUE, quote = "'\"")
+
+# Clean column names (remove any quotes)
+colnames(tennis_data) <- gsub("'", "", colnames(tennis_data))
+colnames(tennis_data) <- gsub("\"", "", colnames(tennis_data))
+
+# Display structure
+str(tennis_data)
+
+# Display column names for verification
+cat("\nColumn names in dataset:\n")
+print(colnames(tennis_data))
+```
+
+# Variable Definitions
+
+```{r variable-definitions}
+# Create variable definitions table
+var_definitions <- data.frame(
+  Variable = colnames(tennis_data),
+  Description = c(
+    "Participant identification number",
+    "Age in years",
+    "Sex (1 = Male, 2 = Female)",
+    "Number of episodes of tennis elbow",
+    "Type of racquet last used (1 = Midsize, 2 = Oversize, 9 = Missing)",
+    "Weight of racquet last used (1 = Light, 2 = Medium, 3 = Heavy)",
+    "Material of racquet last used (1 = Graphite, 2 = Metal, 3 = Wood, 4 = Composite, 5 = Other, 7 = Missing)",
+    "String type last used (1 = Nylon, 2 = Gut)",
+    "Type of current racquet (1 = Midsize, 2 = Oversize, 9 = Missing)",
+    "Weight of current racquet (1 = Light, 2 = Medium, 3 = Heavy)",
+    "Material of current racquet (1 = Graphite, 2 = Metal, 3 = Wood, 4 = Composite, 5 = Other, 7 = Missing)",
+    "String type currently used (1 = Nylon, 2 = Gut)"
+  )
+)
+
+kable(var_definitions,
+      caption = "Variable Definitions for TENNIS1 Dataset") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+# Data Processing
+
+## Create Factor Variables
+
+```{r create-factors}
+# Verify required columns exist
+required_cols <- c("Id", "Age", "Sex", "Num_epis", "Typ_last", "Wgt_Last",
+                   "Mat_last", "Str_last", "Typ_curr", "Wgt_curr", "Mat_curr", "Str_curr")
+
+missing_cols <- setdiff(required_cols, colnames(tennis_data))
+if(length(missing_cols) > 0) {
+  stop(paste("Missing columns:", paste(missing_cols, collapse = ", ")))
+}
+
+cat("All required columns are present.\n")
+cat("Dataset has", nrow(tennis_data), "rows and", ncol(tennis_data), "columns.\n\n")
+
+# Create factor variables with meaningful labels
+tennis_data <- tennis_data %>%
+  mutate(
+    # Sex factor
+    Sex_Label = factor(Sex, levels = c(1, 2), labels = c("Male", "Female")),
+
+    # Tennis elbow classification (multiple definitions as suggested)
+    TE_Binary = factor(ifelse(Num_epis >= 1, "Case (1+ episodes)", "Control (0 episodes)")),
+    TE_Multiple = factor(ifelse(Num_epis >= 2, "Multiple (2+ episodes)",
+                                ifelse(Num_epis == 1, "Single (1 episode)", "Control (0 episodes)"))),
+    TE_Graded = factor(case_when(
+      Num_epis == 0 ~ "0 episodes",
+      Num_epis == 1 ~ "1 episode",
+      Num_epis >= 2 ~ "2+ episodes"
+    ), levels = c("0 episodes", "1 episode", "2+ episodes")),
+
+    # Age groups
+    Age_Group = cut(Age, breaks = c(0, 35, 45, 100),
+                   labels = c("Under 35", "35-45", "Over 45"),
+                   include.lowest = TRUE),
+
+    # Last racquet characteristics
+    Typ_last_Label = factor(Typ_last, levels = c(1, 2, 9),
+                           labels = c("Midsize", "Oversize", "Missing")),
+    Wgt_Last_Label = factor(Wgt_Last, levels = c(1, 2, 3),
+                           labels = c("Light", "Medium", "Heavy")),
+    Mat_last_Label = factor(Mat_last, levels = c(1, 2, 3, 4, 5, 7),
+                           labels = c("Graphite", "Metal", "Wood", "Composite", "Other", "Missing")),
+    Str_last_Label = factor(Str_last, levels = c(1, 2),
+                           labels = c("Nylon", "Gut")),
+
+    # Current racquet characteristics
+    Typ_curr_Label = factor(Typ_curr, levels = c(1, 2, 9),
+                           labels = c("Midsize", "Oversize", "Missing")),
+    Wgt_curr_Label = factor(Wgt_curr, levels = c(1, 2, 3),
+                           labels = c("Light", "Medium", "Heavy")),
+    Mat_curr_Label = factor(Mat_curr, levels = c(1, 2, 3, 4, 5, 7),
+                           labels = c("Graphite", "Metal", "Wood", "Composite", "Other", "Missing")),
+    Str_curr_Label = factor(Str_curr, levels = c(1, 2),
+                           labels = c("Nylon", "Gut"))
+  )
+
+cat("Data processing completed successfully.\n")
+```
+
+# Exploratory Data Analysis
+
+## Summary Statistics
+
+```{r summary-stats}
+# Overall summary
+summary_overall <- tennis_data %>%
+  summarise(
+    N = n(),
+    Mean_Age = round(mean(Age, na.rm = TRUE), 1),
+    SD_Age = round(sd(Age, na.rm = TRUE), 1),
+    Min_Age = min(Age, na.rm = TRUE),
+    Max_Age = max(Age, na.rm = TRUE),
+    N_Male = sum(Sex == 1, na.rm = TRUE),
+    Pct_Male = round(100 * mean(Sex == 1, na.rm = TRUE), 1),
+    N_Cases = sum(Num_epis >= 1, na.rm = TRUE),
+    Pct_Cases = round(100 * mean(Num_epis >= 1, na.rm = TRUE), 1)
+  )
+
+kable(summary_overall,
+      caption = "Overall Study Population Summary",
+      col.names = c("N", "Mean Age", "SD Age", "Min Age", "Max Age",
+                   "N Male", "% Male", "N Cases", "% Cases")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+## Tennis Elbow Distribution
+
+```{r te-distribution}
+# Distribution of tennis elbow episodes
+te_dist <- tennis_data %>%
+  group_by(Num_epis) %>%
+  summarise(
+    N = n(),
+    Percentage = round(100 * n() / nrow(tennis_data), 1)
+  )
+
+kable(te_dist,
+      caption = "Distribution of Tennis Elbow Episodes",
+      col.names = c("Number of Episodes", "N", "Percentage (%)")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Visualize distribution
+ggplot(tennis_data, aes(x = factor(Num_epis))) +
+  geom_bar(fill = "#3498db", alpha = 0.8) +
+  geom_text(stat = 'count', aes(label = after_stat(count)), vjust = -0.5) +
+  labs(title = "Distribution of Tennis Elbow Episodes",
+       x = "Number of Episodes",
+       y = "Count") +
+  theme_minimal()
+```
+
+## Case-Control Definitions
+
+```{r case-control-summary}
+# Summary by different definitions
+def_summary <- data.frame(
+  Definition = c("Binary (1+ vs 0)", "Multiple (2+ vs 0-1)", "Graded (0, 1, 2+)"),
+  Cases = c(
+    sum(tennis_data$Num_epis >= 1),
+    sum(tennis_data$Num_epis >= 2),
+    paste(sum(tennis_data$Num_epis >= 2), "with 2+")
+  ),
+  Controls = c(
+    sum(tennis_data$Num_epis == 0),
+    sum(tennis_data$Num_epis <= 1),
+    paste(sum(tennis_data$Num_epis == 0), "with 0")
+  )
+)
+
+kable(def_summary,
+      caption = "Case-Control Definitions Used in Analysis") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+# Problem 10.55: Risk Factor Analysis
+
+## Analytical Approach
+
+We will examine each risk factor separately and assess its relationship with tennis elbow using:
+
+1. **Chi-square tests** - To test for association between categorical risk factors and tennis elbow
+2. **Odds ratios** - To quantify the strength of association
+3. **Multiple definitions** of tennis elbow:
+   - Binary: 1+ episodes vs. 0 episodes
+   - Graded: 0, 1, 2+ episodes
+
+---
+
+# Risk Factor 1: Sex
+
+## Binary Outcome (1+ vs 0 episodes)
+
+```{r sex-binary}
+cat("=== SEX vs. TENNIS ELBOW (Binary) ===\n\n")
+
+# Contingency table
+sex_table <- table(tennis_data$Sex_Label, tennis_data$TE_Binary)
+
+kable(addmargins(sex_table),
+      caption = "Sex by Tennis Elbow Status (Binary)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Chi-square test
+chi_sex <- chisq.test(sex_table)
+cat(sprintf("\nChi-square test:\n"))
+cat(sprintf("  χ² = %.4f\n", chi_sex$statistic))
+cat(sprintf("  df = %d\n", chi_sex$parameter))
+cat(sprintf("  P-value = %.4f\n", chi_sex$p.value))
+cat(sprintf("  Conclusion: %s\n",
+            ifelse(chi_sex$p.value < 0.05,
+                   "Significant association between sex and tennis elbow",
+                   "No significant association")))
+
+# Proportions
+prop_sex <- tennis_data %>%
+  group_by(Sex_Label) %>%
+  summarise(
+    N = n(),
+    N_Cases = sum(Num_epis >= 1),
+    Prop_Cases = round(mean(Num_epis >= 1), 3),
+    Pct_Cases = round(100 * mean(Num_epis >= 1), 1)
+  )
+
+cat("\n")
+kable(prop_sex,
+      caption = "Tennis Elbow Proportions by Sex",
+      col.names = c("Sex", "Total N", "N Cases", "Proportion", "Percentage (%)")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Visualization
+ggplot(tennis_data, aes(x = Sex_Label, fill = TE_Binary)) +
+  geom_bar(position = "fill", alpha = 0.8) +
+  scale_fill_manual(values = c("Control (0 episodes)" = "#2ecc71",
+                               "Case (1+ episodes)" = "#e74c3c")) +
+  scale_y_continuous(labels = percent_format()) +
+  labs(title = "Tennis Elbow Status by Sex",
+       x = "Sex",
+       y = "Proportion",
+       fill = "Tennis Elbow Status") +
+  theme_minimal() +
+  theme(legend.position = "top")
+```
+
+## Graded Outcome (0, 1, 2+ episodes)
+
+```{r sex-graded}
+cat("\n=== SEX vs. TENNIS ELBOW (Graded) ===\n\n")
+
+# Contingency table
+sex_table_graded <- table(tennis_data$Sex_Label, tennis_data$TE_Graded)
+
+kable(addmargins(sex_table_graded),
+      caption = "Sex by Tennis Elbow Episodes (Graded)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Chi-square test
+chi_sex_graded <- chisq.test(sex_table_graded)
+cat(sprintf("\nChi-square test:\n"))
+cat(sprintf("  χ² = %.4f\n", chi_sex_graded$statistic))
+cat(sprintf("  df = %d\n", chi_sex_graded$parameter))
+cat(sprintf("  P-value = %.4f\n", chi_sex_graded$p.value))
+```
+
+---
+
+# Risk Factor 2: Age
+
+## Age as Continuous Variable
+
+```{r age-continuous}
+cat("=== AGE vs. TENNIS ELBOW ===\n\n")
+
+# Summary statistics by case-control status
+age_summary <- tennis_data %>%
+  group_by(TE_Binary) %>%
+  summarise(
+    N = n(),
+    Mean_Age = round(mean(Age, na.rm = TRUE), 1),
+    SD_Age = round(sd(Age, na.rm = TRUE), 1),
+    Median_Age = median(Age, na.rm = TRUE),
+    Min_Age = min(Age, na.rm = TRUE),
+    Max_Age = max(Age, na.rm = TRUE)
+  )
+
+kable(age_summary,
+      caption = "Age Distribution by Tennis Elbow Status") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# T-test
+t_test_age <- t.test(Age ~ TE_Binary, data = tennis_data)
+cat(sprintf("\nTwo-sample t-test:\n"))
+cat(sprintf("  t = %.4f\n", t_test_age$statistic))
+cat(sprintf("  df = %.2f\n", t_test_age$parameter))
+cat(sprintf("  P-value = %.4f\n", t_test_age$p.value))
+cat(sprintf("  Mean difference: %.2f years\n",
+            diff(rev(t_test_age$estimate))))
+
+# Boxplot
+ggplot(tennis_data, aes(x = TE_Binary, y = Age, fill = TE_Binary)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  scale_fill_manual(values = c("Control (0 episodes)" = "#2ecc71",
+                               "Case (1+ episodes)" = "#e74c3c")) +
+  labs(title = "Age Distribution by Tennis Elbow Status",
+       x = "Tennis Elbow Status",
+       y = "Age (years)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+## Age Groups
+
+```{r age-groups}
+cat("\n=== AGE GROUPS vs. TENNIS ELBOW ===\n\n")
+
+# Contingency table
+age_table <- table(tennis_data$Age_Group, tennis_data$TE_Binary)
+
+kable(addmargins(age_table),
+      caption = "Age Group by Tennis Elbow Status") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Chi-square test
+chi_age <- chisq.test(age_table)
+cat(sprintf("\nChi-square test:\n"))
+cat(sprintf("  χ² = %.4f\n", chi_age$statistic))
+cat(sprintf("  df = %d\n", chi_age$parameter))
+cat(sprintf("  P-value = %.4f\n", chi_age$p.value))
+
+# Proportions
+prop_age <- tennis_data %>%
+  group_by(Age_Group) %>%
+  summarise(
+    N = n(),
+    N_Cases = sum(Num_epis >= 1),
+    Pct_Cases = round(100 * mean(Num_epis >= 1), 1)
+  )
+
+cat("\n")
+kable(prop_age,
+      caption = "Tennis Elbow Proportions by Age Group") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+---
+
+# Risk Factor 3: Last Racquet Type
+
+```{r racquet-type-last}
+cat("=== LAST RACQUET TYPE vs. TENNIS ELBOW ===\n\n")
+
+# Remove missing values
+tennis_clean <- tennis_data %>%
+  filter(Typ_last != 9)
+
+# Contingency table
+typ_last_table <- table(tennis_clean$Typ_last_Label, tennis_clean$TE_Binary)
+
+kable(addmargins(typ_last_table),
+      caption = "Last Racquet Type by Tennis Elbow Status") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Chi-square test
+chi_typ_last <- chisq.test(typ_last_table)
+cat(sprintf("\nChi-square test:\n"))
+cat(sprintf("  χ² = %.4f\n", chi_typ_last$statistic))
+cat(sprintf("  df = %d\n", chi_typ_last$parameter))
+cat(sprintf("  P-value = %.4f\n", chi_typ_last$p.value))
+
+# Proportions
+prop_typ_last <- tennis_clean %>%
+  group_by(Typ_last_Label) %>%
+  summarise(
+    N = n(),
+    N_Cases = sum(Num_epis >= 1),
+    Pct_Cases = round(100 * mean(Num_epis >= 1), 1)
+  )
+
+cat("\n")
+kable(prop_typ_last,
+      caption = "Tennis Elbow Proportions by Last Racquet Type") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Visualization
+ggplot(tennis_clean, aes(x = Typ_last_Label, fill = TE_Binary)) +
+  geom_bar(position = "fill", alpha = 0.8) +
+  scale_fill_manual(values = c("Control (0 episodes)" = "#2ecc71",
+                               "Case (1+ episodes)" = "#e74c3c")) +
+  scale_y_continuous(labels = percent_format()) +
+  labs(title = "Tennis Elbow Status by Last Racquet Type",
+       x = "Last Racquet Type",
+       y = "Proportion",
+       fill = "Tennis Elbow Status") +
+  theme_minimal() +
+  theme(legend.position = "top")
+```
+
+---
+
+# Risk Factor 4: Last Racquet Weight
+
+```{r racquet-weight-last}
+cat("=== LAST RACQUET WEIGHT vs. TENNIS ELBOW ===\n\n")
+
+# Contingency table
+wgt_last_table <- table(tennis_data$Wgt_Last_Label, tennis_data$TE_Binary)
+
+kable(addmargins(wgt_last_table),
+      caption = "Last Racquet Weight by Tennis Elbow Status") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Chi-square test
+chi_wgt_last <- chisq.test(wgt_last_table)
+cat(sprintf("\nChi-square test:\n"))
+cat(sprintf("  χ² = %.4f\n", chi_wgt_last$statistic))
+cat(sprintf("  df = %d\n", chi_wgt_last$parameter))
+cat(sprintf("  P-value = %.4f\n", chi_wgt_last$p.value))
+
+# Trend test (ordinal variable)
+trend_wgt_last <- CochranArmitageTest(table(tennis_data$Wgt_Last, tennis_data$Num_epis >= 1))
+cat(sprintf("\nCochran-Armitage Trend Test:\n"))
+cat(sprintf("  Z = %.4f\n", trend_wgt_last$statistic))
+cat(sprintf("  P-value = %.4f\n", trend_wgt_last$p.value))
+
+# Proportions
+prop_wgt_last <- tennis_data %>%
+  group_by(Wgt_Last_Label) %>%
+  summarise(
+    N = n(),
+    N_Cases = sum(Num_epis >= 1),
+    Pct_Cases = round(100 * mean(Num_epis >= 1), 1)
+  )
+
+cat("\n")
+kable(prop_wgt_last,
+      caption = "Tennis Elbow Proportions by Last Racquet Weight") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+---
+
+# Risk Factor 5: Last Racquet Material
+
+```{r racquet-material-last}
+cat("=== LAST RACQUET MATERIAL vs. TENNIS ELBOW ===\n\n")
+
+# Remove missing values
+tennis_mat_clean <- tennis_data %>%
+  filter(Mat_last != 7)
+
+# Contingency table
+mat_last_table <- table(tennis_mat_clean$Mat_last_Label, tennis_mat_clean$TE_Binary)
+
+kable(addmargins(mat_last_table),
+      caption = "Last Racquet Material by Tennis Elbow Status") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Chi-square test
+chi_mat_last <- chisq.test(mat_last_table)
+cat(sprintf("\nChi-square test:\n"))
+cat(sprintf("  χ² = %.4f\n", chi_mat_last$statistic))
+cat(sprintf("  df = %d\n", chi_mat_last$parameter))
+cat(sprintf("  P-value = %.4f\n", chi_mat_last$p.value))
+
+# Proportions
+prop_mat_last <- tennis_mat_clean %>%
+  group_by(Mat_last_Label) %>%
+  summarise(
+    N = n(),
+    N_Cases = sum(Num_epis >= 1),
+    Pct_Cases = round(100 * mean(Num_epis >= 1), 1)
+  ) %>%
+  arrange(desc(Pct_Cases))
+
+cat("\n")
+kable(prop_mat_last,
+      caption = "Tennis Elbow Proportions by Last Racquet Material") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Visualization
+ggplot(tennis_mat_clean, aes(x = reorder(Mat_last_Label, Num_epis >= 1), fill = TE_Binary)) +
+  geom_bar(position = "fill", alpha = 0.8) +
+  scale_fill_manual(values = c("Control (0 episodes)" = "#2ecc71",
+                               "Case (1+ episodes)" = "#e74c3c")) +
+  scale_y_continuous(labels = percent_format()) +
+  labs(title = "Tennis Elbow Status by Last Racquet Material",
+       x = "Last Racquet Material",
+       y = "Proportion",
+       fill = "Tennis Elbow Status") +
+  theme_minimal() +
+  theme(legend.position = "top",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+---
+
+# Risk Factor 6: Last String Type
+
+```{r string-type-last}
+cat("=== LAST STRING TYPE vs. TENNIS ELBOW ===\n\n")
+
+# Contingency table
+str_last_table <- table(tennis_data$Str_last_Label, tennis_data$TE_Binary)
+
+kable(addmargins(str_last_table),
+      caption = "Last String Type by Tennis Elbow Status") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Chi-square test
+chi_str_last <- chisq.test(str_last_table)
+cat(sprintf("\nChi-square test:\n"))
+cat(sprintf("  χ² = %.4f\n", chi_str_last$statistic))
+cat(sprintf("  df = %d\n", chi_str_last$parameter))
+cat(sprintf("  P-value = %.4f\n", chi_str_last$p.value))
+
+# Proportions
+prop_str_last <- tennis_data %>%
+  group_by(Str_last_Label) %>%
+  summarise(
+    N = n(),
+    N_Cases = sum(Num_epis >= 1),
+    Pct_Cases = round(100 * mean(Num_epis >= 1), 1)
+  )
+
+cat("\n")
+kable(prop_str_last,
+      caption = "Tennis Elbow Proportions by Last String Type") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+---
+
+# Risk Factor 7: Current Racquet Type
+
+```{r racquet-type-curr}
+cat("=== CURRENT RACQUET TYPE vs. TENNIS ELBOW ===\n\n")
+
+# Remove missing values
+tennis_curr_clean <- tennis_data %>%
+  filter(Typ_curr != 9)
+
+# Contingency table
+typ_curr_table <- table(tennis_curr_clean$Typ_curr_Label, tennis_curr_clean$TE_Binary)
+
+kable(addmargins(typ_curr_table),
+      caption = "Current Racquet Type by Tennis Elbow Status") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Chi-square test
+chi_typ_curr <- chisq.test(typ_curr_table)
+cat(sprintf("\nChi-square test:\n"))
+cat(sprintf("  χ² = %.4f\n", chi_typ_curr$statistic))
+cat(sprintf("  df = %d\n", chi_typ_curr$parameter))
+cat(sprintf("  P-value = %.4f\n", chi_typ_curr$p.value))
+
+# Proportions
+prop_typ_curr <- tennis_curr_clean %>%
+  group_by(Typ_curr_Label) %>%
+  summarise(
+    N = n(),
+    N_Cases = sum(Num_epis >= 1),
+    Pct_Cases = round(100 * mean(Num_epis >= 1), 1)
+  )
+
+cat("\n")
+kable(prop_typ_curr,
+      caption = "Tennis Elbow Proportions by Current Racquet Type") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+---
+
+# Risk Factor 8: Current Racquet Weight
+
+```{r racquet-weight-curr}
+cat("=== CURRENT RACQUET WEIGHT vs. TENNIS ELBOW ===\n\n")
+
+# Contingency table
+wgt_curr_table <- table(tennis_data$Wgt_curr_Label, tennis_data$TE_Binary)
+
+kable(addmargins(wgt_curr_table),
+      caption = "Current Racquet Weight by Tennis Elbow Status") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Chi-square test
+chi_wgt_curr <- chisq.test(wgt_curr_table)
+cat(sprintf("\nChi-square test:\n"))
+cat(sprintf("  χ² = %.4f\n", chi_wgt_curr$statistic))
+cat(sprintf("  df = %d\n", chi_wgt_curr$parameter))
+cat(sprintf("  P-value = %.4f\n", chi_wgt_curr$p.value))
+
+# Trend test
+trend_wgt_curr <- CochranArmitageTest(table(tennis_data$Wgt_curr, tennis_data$Num_epis >= 1))
+cat(sprintf("\nCochran-Armitage Trend Test:\n"))
+cat(sprintf("  Z = %.4f\n", trend_wgt_curr$statistic))
+cat(sprintf("  P-value = %.4f\n", trend_wgt_curr$p.value))
+
+# Proportions
+prop_wgt_curr <- tennis_data %>%
+  group_by(Wgt_curr_Label) %>%
+  summarise(
+    N = n(),
+    N_Cases = sum(Num_epis >= 1),
+    Pct_Cases = round(100 * mean(Num_epis >= 1), 1)
+  )
+
+cat("\n")
+kable(prop_wgt_curr,
+      caption = "Tennis Elbow Proportions by Current Racquet Weight") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+---
+
+# Risk Factor 9: Current Racquet Material
+
+```{r racquet-material-curr}
+cat("=== CURRENT RACQUET MATERIAL vs. TENNIS ELBOW ===\n\n")
+
+# Remove missing values
+tennis_mat_curr_clean <- tennis_data %>%
+  filter(Mat_curr != 7)
+
+# Contingency table
+mat_curr_table <- table(tennis_mat_curr_clean$Mat_curr_Label, tennis_mat_curr_clean$TE_Binary)
+
+kable(addmargins(mat_curr_table),
+      caption = "Current Racquet Material by Tennis Elbow Status") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Chi-square test
+chi_mat_curr <- chisq.test(mat_curr_table)
+cat(sprintf("\nChi-square test:\n"))
+cat(sprintf("  χ² = %.4f\n", chi_mat_curr$statistic))
+cat(sprintf("  df = %d\n", chi_mat_curr$parameter))
+cat(sprintf("  P-value = %.4f\n", chi_mat_curr$p.value))
+
+# Proportions
+prop_mat_curr <- tennis_mat_curr_clean %>%
+  group_by(Mat_curr_Label) %>%
+  summarise(
+    N = n(),
+    N_Cases = sum(Num_epis >= 1),
+    Pct_Cases = round(100 * mean(Num_epis >= 1), 1)
+  ) %>%
+  arrange(desc(Pct_Cases))
+
+cat("\n")
+kable(prop_mat_curr,
+      caption = "Tennis Elbow Proportions by Current Racquet Material") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+---
+
+# Risk Factor 10: Current String Type
+
+```{r string-type-curr}
+cat("=== CURRENT STRING TYPE vs. TENNIS ELBOW ===\n\n")
+
+# Contingency table
+str_curr_table <- table(tennis_data$Str_curr_Label, tennis_data$TE_Binary)
+
+kable(addmargins(str_curr_table),
+      caption = "Current String Type by Tennis Elbow Status") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Chi-square test
+chi_str_curr <- chisq.test(str_curr_table)
+cat(sprintf("\nChi-square test:\n"))
+cat(sprintf("  χ² = %.4f\n", chi_str_curr$statistic))
+cat(sprintf("  df = %d\n", chi_str_curr$parameter))
+cat(sprintf("  P-value = %.4f\n", chi_str_curr$p.value))
+
+# Proportions
+prop_str_curr <- tennis_data %>%
+  group_by(Str_curr_Label) %>%
+  summarise(
+    N = n(),
+    N_Cases = sum(Num_epis >= 1),
+    Pct_Cases = round(100 * mean(Num_epis >= 1), 1)
+  )
+
+cat("\n")
+kable(prop_str_curr,
+      caption = "Tennis Elbow Proportions by Current String Type") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+---
+
+# Summary of Results
+
+```{r summary-table}
+# Create comprehensive summary table
+summary_results <- data.frame(
+  Risk_Factor = c(
+    "Sex",
+    "Age (continuous)",
+    "Age Groups",
+    "Last Racquet Type",
+    "Last Racquet Weight",
+    "Last Racquet Material",
+    "Last String Type",
+    "Current Racquet Type",
+    "Current Racquet Weight",
+    "Current Racquet Material",
+    "Current String Type"
+  ),
+  Test_Statistic = c(
+    sprintf("χ² = %.3f", chi_sex$statistic),
+    sprintf("t = %.3f", t_test_age$statistic),
+    sprintf("χ² = %.3f", chi_age$statistic),
+    sprintf("χ² = %.3f", chi_typ_last$statistic),
+    sprintf("χ² = %.3f", chi_wgt_last$statistic),
+    sprintf("χ² = %.3f", chi_mat_last$statistic),
+    sprintf("χ² = %.3f", chi_str_last$statistic),
+    sprintf("χ² = %.3f", chi_typ_curr$statistic),
+    sprintf("χ² = %.3f", chi_wgt_curr$statistic),
+    sprintf("χ² = %.3f", chi_mat_curr$statistic),
+    sprintf("χ² = %.3f", chi_str_curr$statistic)
+  ),
+  P_Value = c(
+    sprintf("%.4f", chi_sex$p.value),
+    sprintf("%.4f", t_test_age$p.value),
+    sprintf("%.4f", chi_age$p.value),
+    sprintf("%.4f", chi_typ_last$p.value),
+    sprintf("%.4f", chi_wgt_last$p.value),
+    sprintf("%.4f", chi_mat_last$p.value),
+    sprintf("%.4f", chi_str_last$p.value),
+    sprintf("%.4f", chi_typ_curr$p.value),
+    sprintf("%.4f", chi_wgt_curr$p.value),
+    sprintf("%.4f", chi_mat_curr$p.value),
+    sprintf("%.4f", chi_str_curr$p.value)
+  ),
+  Significant = c(
+    ifelse(chi_sex$p.value < 0.05, "Yes*", "No"),
+    ifelse(t_test_age$p.value < 0.05, "Yes*", "No"),
+    ifelse(chi_age$p.value < 0.05, "Yes*", "No"),
+    ifelse(chi_typ_last$p.value < 0.05, "Yes*", "No"),
+    ifelse(chi_wgt_last$p.value < 0.05, "Yes*", "No"),
+    ifelse(chi_mat_last$p.value < 0.05, "Yes*", "No"),
+    ifelse(chi_str_last$p.value < 0.05, "Yes*", "No"),
+    ifelse(chi_typ_curr$p.value < 0.05, "Yes*", "No"),
+    ifelse(chi_wgt_curr$p.value < 0.05, "Yes*", "No"),
+    ifelse(chi_mat_curr$p.value < 0.05, "Yes*", "No"),
+    ifelse(chi_str_curr$p.value < 0.05, "Yes*", "No")
+  )
+)
+
+kable(summary_results,
+      caption = "Summary of All Risk Factor Analyses (α = 0.05)",
+      col.names = c("Risk Factor", "Test Statistic", "P-value", "Significant?")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  row_spec(which(summary_results$Significant == "Yes*"),
+           bold = TRUE, background = "#ffffcc")
+```
+
+# Key Findings
+
+## Significant Risk Factors (p < 0.05)
+
+Based on the analyses, the following risk factors show statistically significant associations with tennis elbow:
+
+```{r key-findings}
+# Extract significant findings
+sig_factors <- summary_results %>%
+  filter(Significant == "Yes*") %>%
+  select(Risk_Factor, P_Value)
+
+if(nrow(sig_factors) > 0) {
+  kable(sig_factors,
+        caption = "Statistically Significant Risk Factors",
+        col.names = c("Risk Factor", "P-value")) %>%
+    kable_styling(bootstrap_options = c("striped", "hover"),
+                  full_width = FALSE)
+} else {
+  cat("No statistically significant risk factors identified at α = 0.05 level.\n")
+}
+```
+
+## Important Considerations
+
+### Multiple Testing
+- We tested **11 risk factors** separately
+- With α = 0.05, we expect ~0.55 false positives by chance
+- Consider using **Bonferroni correction**: α_adj = 0.05/11 ≈ 0.0045
+- Or use **False Discovery Rate** methods
+
+### Limitations of This Analysis
+
+1. **No Causal Inference:** This is an observational study, not a randomized trial
+2. **Confounding:** Observed associations may be due to unmeasured confounders
+3. **Multiple Comparisons:** Testing many factors increases Type I error risk
+4. **Reverse Causation:** Tennis elbow may have led to racquet changes
+5. **Selection Bias:** Case-control design may introduce bias
+
+### Next Steps
+
+As mentioned in the problem description:
+- **Chapter 13: Logistic Regression** will allow us to study multiple risk factors simultaneously
+- This will help control for confounding
+- Can assess independent effects of each risk factor
+
+# Conclusions
+
+This "detective work" analysis has examined each risk factor separately to identify potential associations with tennis elbow. The findings provide important clues about tennis elbow etiology, though causal relationships cannot be established from this observational study.
+
+**Key Takeaways:**
+1. Multiple risk factors have been systematically examined
+2. Statistical significance identified for certain factors
+3. Results provide hypotheses for future research
+4. Multivariable analysis (Chapter 13) will provide more definitive answers
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
+
+---
+**End of Analysis**
