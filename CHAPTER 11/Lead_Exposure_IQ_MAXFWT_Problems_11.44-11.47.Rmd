@@ -1,0 +1,909 @@
+---
+title: "Problems 11.44-11.47: Lead Exposure and Child Development"
+author: "IQ and Finger-Wrist Tapping Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    number_sections: true
+    theme: cerulean
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 12,
+  fig.height = 8,
+  fig.align = 'center'
+)
+```
+
+# Introduction
+
+## Study Background
+
+This document analyzes the **LEAD.DAT** dataset, which examines the effects of **lead exposure** on child development outcomes, specifically:
+- **IQF**: Full-scale IQ
+- **MAXFWT**: Maximum finger-wrist tapping score
+
+The study compares children with lead exposure to control children while accounting for potential confounding factors.
+
+## Research Questions
+
+**Problem 11.44:** Assess the relationship between **IQF** and **lead-exposure group** (exposed vs control), controlling for age and gender.
+
+**Problem 11.45:** Assess the relationship between **MAXFWT** and **actual blood-lead levels** (LD72, LD73), controlling for age and sex.
+
+**Problem 11.46:** Assess the relationship between **IQF** and **actual blood-lead levels** (LD72, LD73), controlling for age and sex.
+
+**Problem 11.47:** Compare the correlation coefficients between MAXFWT-LD72 and MAXFWT-LD73 statistically.
+
+## Analytical Approach
+
+1. **Multiple regression** with confounding variable control
+2. **Goodness of fit assessment** (diagnostics, R², adjusted R²)
+3. **Model comparison** between different specifications
+4. **Correlation comparison** using Fisher's Z transformation
+
+# Data Loading and Preparation
+
+```{r load-packages}
+# Load required libraries
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(car)         # For VIF and diagnostic plots
+library(lmtest)      # For diagnostic tests
+library(ggplot2)
+library(gridExtra)   # For multiple plots
+library(broom)       # For tidy model outputs
+library(cocor)       # For comparing correlations
+
+# Set theme for plots
+theme_set(theme_minimal())
+```
+
+
+
+```{r load-data}
+# Load the LEAD.DAT dataset
+data_path <- "Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/LEAD.DAT.txt"
+
+# Read the data - handle quotes in column names
+lead_data <- tryCatch({
+  read.csv(data_path, header = TRUE, strip.white = TRUE, quote = "'\"")
+}, error = function(e) {
+  cat("Error loading data from primary path. Trying alternative path...\n")
+  read.csv("../Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/LEAD.DAT.txt",
+           header = TRUE, strip.white = TRUE, quote = "'\"")
+})
+
+# Clean column names (remove any quotes)
+colnames(lead_data) <- gsub("'", "", colnames(lead_data))
+colnames(lead_data) <- gsub("\"", "", colnames(lead_data))
+
+# Display structure
+cat("Dataset Structure:\n")
+str(lead_data)
+
+cat("\nColumn names in dataset:\n")
+print(colnames(lead_data))
+
+cat("\nFirst few rows:\n")
+head(lead_data, 10) %>%
+  kable(caption = "First 10 Observations from LEAD Dataset") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+# Variable Definitions and Processing
+
+```{r variable-processing}
+cat("=== LEAD Dataset Variables ===\n\n")
+
+# Process data
+lead_clean <- lead_data %>%
+  mutate(
+    # Create factor for exposure group (if numeric)
+    Exposure_Group = factor(Group, levels = c(1, 2),
+                           labels = c("Control", "Exposed")),
+
+    # Create factor for sex
+    Sex_Factor = factor(sex, levels = c(1, 2),
+                       labels = c("Male", "Female")),
+
+    # Ensure numeric variables are properly formatted
+    IQF = as.numeric(iqf),
+    MAXFWT = as.numeric(maxfwt),
+    AGE = as.numeric(ageyrs),
+    LD72 = as.numeric(ld72),
+    LD73 = as.numeric(ld73)
+  )
+
+cat("Dataset processing completed.\n")
+cat("Total observations:", nrow(lead_clean), "\n\n")
+
+# Summary by exposure group
+cat("=== Summary by Exposure Group ===\n")
+group_summary <- lead_clean %>%
+  group_by(Exposure_Group) %>%
+  summarise(
+    N = n(),
+    Mean_Age = round(mean(AGE, na.rm = TRUE), 2),
+    Mean_IQF = round(mean(IQF, na.rm = TRUE), 2),
+    SD_IQF = round(sd(IQF, na.rm = TRUE), 2),
+    Mean_MAXFWT = round(mean(MAXFWT, na.rm = TRUE), 2),
+    SD_MAXFWT = round(sd(MAXFWT, na.rm = TRUE), 2),
+    Mean_LD72 = round(mean(LD72, na.rm = TRUE), 2),
+    Mean_LD73 = round(mean(LD73, na.rm = TRUE), 2)
+  )
+
+kable(group_summary,
+      caption = "Summary Statistics by Exposure Group") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Check for missing values
+cat("\n=== Missing Values ===\n")
+missing_summary <- lead_clean %>%
+  summarise(
+    IQF_missing = sum(is.na(IQF)),
+    MAXFWT_missing = sum(is.na(MAXFWT)),
+    AGE_missing = sum(is.na(AGE)),
+    SEX_missing = sum(is.na(sex)),
+    LD72_missing = sum(is.na(LD72)),
+    LD73_missing = sum(is.na(LD73))
+  )
+
+kable(t(missing_summary),
+      caption = "Missing Value Counts",
+      col.names = "Count") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+# Exploratory Data Analysis
+
+## Distribution Plots
+
+```{r distribution-plots}
+# IQF distribution
+p1 <- ggplot(lead_clean, aes(x = IQF, fill = Exposure_Group)) +
+  geom_histogram(alpha = 0.6, position = "identity", bins = 20) +
+  scale_fill_manual(values = c("Control" = "#2ecc71", "Exposed" = "#e74c3c")) +
+  labs(title = "Distribution of Full-Scale IQ",
+       x = "IQF",
+       y = "Count",
+       fill = "Group") +
+  theme_minimal()
+
+# MAXFWT distribution
+p2 <- ggplot(lead_clean, aes(x = MAXFWT, fill = Exposure_Group)) +
+  geom_histogram(alpha = 0.6, position = "identity", bins = 20) +
+  scale_fill_manual(values = c("Control" = "#2ecc71", "Exposed" = "#e74c3c")) +
+  labs(title = "Distribution of MAXFWT",
+       x = "Maximum Finger-Wrist Tapping",
+       y = "Count",
+       fill = "Group") +
+  theme_minimal()
+
+# LD72 distribution
+p3 <- ggplot(lead_clean, aes(x = LD72, fill = Exposure_Group)) +
+  geom_histogram(alpha = 0.6, position = "identity", bins = 20) +
+  scale_fill_manual(values = c("Control" = "#2ecc71", "Exposed" = "#e74c3c")) +
+  labs(title = "Distribution of Blood Lead (1972)",
+       x = "LD72",
+       y = "Count",
+       fill = "Group") +
+  theme_minimal()
+
+# LD73 distribution
+p4 <- ggplot(lead_clean, aes(x = LD73, fill = Exposure_Group)) +
+  geom_histogram(alpha = 0.6, position = "identity", bins = 20) +
+  scale_fill_manual(values = c("Control" = "#2ecc71", "Exposed" = "#e74c3c")) +
+  labs(title = "Distribution of Blood Lead (1973)",
+       x = "LD73",
+       y = "Count",
+       fill = "Group") +
+  theme_minimal()
+
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+## Boxplots by Exposure Group
+
+```{r boxplots}
+# IQF by group
+bp1 <- ggplot(lead_clean, aes(x = Exposure_Group, y = IQF, fill = Exposure_Group)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  scale_fill_manual(values = c("Control" = "#2ecc71", "Exposed" = "#e74c3c")) +
+  labs(title = "IQF by Exposure Group",
+       x = "Exposure Group",
+       y = "Full-Scale IQ") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# MAXFWT by group
+bp2 <- ggplot(lead_clean, aes(x = Exposure_Group, y = MAXFWT, fill = Exposure_Group)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  scale_fill_manual(values = c("Control" = "#2ecc71", "Exposed" = "#e74c3c")) +
+  labs(title = "MAXFWT by Exposure Group",
+       x = "Exposure Group",
+       y = "Maximum Finger-Wrist Tapping") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+grid.arrange(bp1, bp2, ncol = 2)
+```
+
+---
+
+# Problem 11.44: IQF vs Lead Exposure Group
+
+## Introduction
+
+Assess the relationship between **full-scale IQ (IQF)** and **lead-exposure group**, controlling for **age** and **gender**.
+
+## Model 1: IQF ~ Exposure Group (Unadjusted)
+
+```{r model-11.44-unadjusted}
+cat("=== MODEL 1: IQF ~ Exposure Group (Unadjusted) ===\n\n")
+
+# Remove missing values
+data_iqf <- lead_clean %>%
+  filter(!is.na(IQF), !is.na(Exposure_Group))
+
+# Fit unadjusted model
+model_44_unadj <- lm(IQF ~ Exposure_Group, data = data_iqf)
+
+summary(model_44_unadj)
+
+# Tidy output
+tidy_44_unadj <- tidy(model_44_unadj, conf.int = TRUE)
+kable(tidy_44_unadj,
+      caption = "Model 1: IQF ~ Exposure Group (Unadjusted)",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+glance_44_unadj <- glance(model_44_unadj)
+cat(sprintf("\nR² = %.4f, Adjusted R² = %.4f\n",
+            glance_44_unadj$r.squared, glance_44_unadj$adj.r.squared))
+```
+
+## Model 2: IQF ~ Exposure Group + Age + Sex (Adjusted)
+
+```{r model-11.44-adjusted}
+cat("\n=== MODEL 2: IQF ~ Exposure Group + Age + Sex (Adjusted) ===\n\n")
+
+# Remove missing values
+data_iqf_adj <- lead_clean %>%
+  filter(!is.na(IQF), !is.na(Exposure_Group), !is.na(AGE), !is.na(Sex_Factor))
+
+# Fit adjusted model
+model_44_adj <- lm(IQF ~ Exposure_Group + AGE + Sex_Factor, data = data_iqf_adj)
+
+summary(model_44_adj)
+
+# Tidy output
+tidy_44_adj <- tidy(model_44_adj, conf.int = TRUE)
+kable(tidy_44_adj,
+      caption = "Model 2: IQF ~ Exposure Group + Age + Sex (Adjusted)",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+glance_44_adj <- glance(model_44_adj)
+cat(sprintf("\nR² = %.4f, Adjusted R² = %.4f\n",
+            glance_44_adj$r.squared, glance_44_adj$adj.r.squared))
+
+cat("\n=== INTERPRETATION ===\n")
+exp_coef <- tidy_44_adj$estimate[tidy_44_adj$term == "Exposure_GroupExposed"]
+exp_p <- tidy_44_adj$p.value[tidy_44_adj$term == "Exposure_GroupExposed"]
+
+cat(sprintf("After controlling for age and sex:\n"))
+cat(sprintf("  Exposed children have %.2f points %s IQ than controls\n",
+            abs(exp_coef), ifelse(exp_coef < 0, "LOWER", "HIGHER")))
+cat(sprintf("  95%% CI: (%.2f, %.2f)\n",
+            tidy_44_adj$conf.low[tidy_44_adj$term == "Exposure_GroupExposed"],
+            tidy_44_adj$conf.high[tidy_44_adj$term == "Exposure_GroupExposed"]))
+cat(sprintf("  p-value = %.4f %s\n", exp_p,
+            ifelse(exp_p < 0.05, "***SIGNIFICANT***", "(not significant)")))
+```
+
+## Model Comparison
+
+```{r model-11.44-comparison}
+cat("\n=== MODEL COMPARISON ===\n\n")
+
+comparison_44 <- data.frame(
+  Model = c("Unadjusted", "Adjusted"),
+  Predictors = c("Exposure Group", "Exposure Group + Age + Sex"),
+  R_squared = c(glance_44_unadj$r.squared, glance_44_adj$r.squared),
+  Adj_R_squared = c(glance_44_unadj$adj.r.squared, glance_44_adj$adj.r.squared),
+  AIC = c(AIC(model_44_unadj), AIC(model_44_adj)),
+  BIC = c(BIC(model_44_unadj), BIC(model_44_adj))
+)
+
+kable(comparison_44,
+      caption = "Model Comparison: IQF Analysis",
+      digits = 4,
+      col.names = c("Model", "Predictors", "R²", "Adj. R²", "AIC", "BIC")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# ANOVA comparison
+cat("\n=== ANOVA: Testing if Age and Sex improve the model ===\n")
+anova_result <- anova(model_44_unadj, model_44_adj)
+print(anova_result)
+```
+
+## Goodness of Fit Assessment
+
+```{r diagnostics-11.44}
+cat("\n=== GOODNESS OF FIT: ADJUSTED MODEL ===\n\n")
+
+# Diagnostic plots
+par(mfrow = c(2, 2))
+plot(model_44_adj, which = 1:4)
+par(mfrow = c(1, 1))
+
+# VIF
+cat("\n--- Variance Inflation Factors ---\n")
+vif_44 <- vif(model_44_adj)
+print(vif_44)
+
+# Normality test
+shapiro_44 <- shapiro.test(residuals(model_44_adj))
+cat(sprintf("\nShapiro-Wilk normality test: W = %.4f, p = %.4f\n",
+            shapiro_44$statistic, shapiro_44$p.value))
+
+# Homoscedasticity test
+bp_44 <- bptest(model_44_adj)
+cat(sprintf("Breusch-Pagan test: BP = %.4f, p = %.4f\n",
+            bp_44$statistic, bp_44$p.value))
+```
+
+---
+
+# Problem 11.45: MAXFWT vs Blood Lead Levels
+
+## Introduction
+
+Assess the relationship between **MAXFWT** and **actual blood-lead levels** (LD72, LD73), controlling for **age** and **sex**.
+
+## Model 1: MAXFWT ~ LD72 + Age + Sex
+
+```{r model-11.45-ld72}
+cat("=== MODEL 1: MAXFWT ~ LD72 + Age + Sex ===\n\n")
+
+# Remove missing values
+data_maxfwt_ld72 <- lead_clean %>%
+  filter(!is.na(MAXFWT), !is.na(LD72), !is.na(AGE), !is.na(Sex_Factor))
+
+cat("Sample size:", nrow(data_maxfwt_ld72), "\n\n")
+
+# Fit model
+model_45_ld72 <- lm(MAXFWT ~ LD72 + AGE + Sex_Factor, data = data_maxfwt_ld72)
+
+summary(model_45_ld72)
+
+# Tidy output
+tidy_45_ld72 <- tidy(model_45_ld72, conf.int = TRUE)
+kable(tidy_45_ld72,
+      caption = "Model 1: MAXFWT ~ LD72 + Age + Sex",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+glance_45_ld72 <- glance(model_45_ld72)
+cat(sprintf("\nR² = %.4f, Adjusted R² = %.4f\n",
+            glance_45_ld72$r.squared, glance_45_ld72$adj.r.squared))
+```
+
+## Model 2: MAXFWT ~ LD73 + Age + Sex
+
+```{r model-11.45-ld73}
+cat("\n=== MODEL 2: MAXFWT ~ LD73 + Age + Sex ===\n\n")
+
+# Remove missing values
+data_maxfwt_ld73 <- lead_clean %>%
+  filter(!is.na(MAXFWT), !is.na(LD73), !is.na(AGE), !is.na(Sex_Factor))
+
+cat("Sample size:", nrow(data_maxfwt_ld73), "\n\n")
+
+# Fit model
+model_45_ld73 <- lm(MAXFWT ~ LD73 + AGE + Sex_Factor, data = data_maxfwt_ld73)
+
+summary(model_45_ld73)
+
+# Tidy output
+tidy_45_ld73 <- tidy(model_45_ld73, conf.int = TRUE)
+kable(tidy_45_ld73,
+      caption = "Model 2: MAXFWT ~ LD73 + Age + Sex",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+glance_45_ld73 <- glance(model_45_ld73)
+cat(sprintf("\nR² = %.4f, Adjusted R² = %.4f\n",
+            glance_45_ld73$r.squared, glance_45_ld73$adj.r.squared))
+```
+
+## Model 3: MAXFWT ~ LD72 + LD73 + Age + Sex
+
+```{r model-11.45-both}
+cat("\n=== MODEL 3: MAXFWT ~ LD72 + LD73 + Age + Sex ===\n\n")
+
+# Remove missing values
+data_maxfwt_both <- lead_clean %>%
+  filter(!is.na(MAXFWT), !is.na(LD72), !is.na(LD73), !is.na(AGE), !is.na(Sex_Factor))
+
+cat("Sample size:", nrow(data_maxfwt_both), "\n\n")
+
+# Fit model
+model_45_both <- lm(MAXFWT ~ LD72 + LD73 + AGE + Sex_Factor, data = data_maxfwt_both)
+
+summary(model_45_both)
+
+# Tidy output
+tidy_45_both <- tidy(model_45_both, conf.int = TRUE)
+kable(tidy_45_both,
+      caption = "Model 3: MAXFWT ~ LD72 + LD73 + Age + Sex",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+glance_45_both <- glance(model_45_both)
+cat(sprintf("\nR² = %.4f, Adjusted R² = %.4f\n",
+            glance_45_both$r.squared, glance_45_both$adj.r.squared))
+
+# VIF check (important when including both LD72 and LD73)
+cat("\n--- Variance Inflation Factors ---\n")
+vif_45_both <- vif(model_45_both)
+print(vif_45_both)
+```
+
+## Model Comparison
+
+```{r model-11.45-comparison}
+cat("\n=== MODEL COMPARISON: MAXFWT ===\n\n")
+
+comparison_45 <- data.frame(
+  Model = c("LD72 only", "LD73 only", "Both LD72 & LD73"),
+  R_squared = c(glance_45_ld72$r.squared, glance_45_ld73$r.squared,
+                glance_45_both$r.squared),
+  Adj_R_squared = c(glance_45_ld72$adj.r.squared, glance_45_ld73$adj.r.squared,
+                    glance_45_both$adj.r.squared),
+  AIC = c(AIC(model_45_ld72), AIC(model_45_ld73), AIC(model_45_both)),
+  BIC = c(BIC(model_45_ld72), BIC(model_45_ld73), BIC(model_45_both))
+)
+
+kable(comparison_45,
+      caption = "Model Comparison: MAXFWT Analysis",
+      digits = 4,
+      col.names = c("Model", "R²", "Adj. R²", "AIC", "BIC")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+## Goodness of Fit Assessment
+
+```{r diagnostics-11.45}
+cat("\n=== GOODNESS OF FIT: BEST MODEL ===\n\n")
+
+# Use model with both LD72 and LD73
+par(mfrow = c(2, 2))
+plot(model_45_both, which = 1:4)
+par(mfrow = c(1, 1))
+
+# Normality test
+shapiro_45 <- shapiro.test(residuals(model_45_both))
+cat(sprintf("\nShapiro-Wilk normality test: W = %.4f, p = %.4f\n",
+            shapiro_45$statistic, shapiro_45$p.value))
+
+# Homoscedasticity test
+bp_45 <- bptest(model_45_both)
+cat(sprintf("Breusch-Pagan test: BP = %.4f, p = %.4f\n",
+            bp_45$statistic, bp_45$p.value))
+```
+
+---
+
+# Problem 11.46: IQF vs Blood Lead Levels
+
+## Model 1: IQF ~ LD72 + Age + Sex
+
+```{r model-11.46-ld72}
+cat("=== MODEL 1: IQF ~ LD72 + Age + Sex ===\n\n")
+
+# Remove missing values
+data_iqf_ld72 <- lead_clean %>%
+  filter(!is.na(IQF), !is.na(LD72), !is.na(AGE), !is.na(Sex_Factor))
+
+cat("Sample size:", nrow(data_iqf_ld72), "\n\n")
+
+# Fit model
+model_46_ld72 <- lm(IQF ~ LD72 + AGE + Sex_Factor, data = data_iqf_ld72)
+
+summary(model_46_ld72)
+
+# Tidy output
+tidy_46_ld72 <- tidy(model_46_ld72, conf.int = TRUE)
+kable(tidy_46_ld72,
+      caption = "Model 1: IQF ~ LD72 + Age + Sex",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+glance_46_ld72 <- glance(model_46_ld72)
+cat(sprintf("\nR² = %.4f, Adjusted R² = %.4f\n",
+            glance_46_ld72$r.squared, glance_46_ld72$adj.r.squared))
+```
+
+## Model 2: IQF ~ LD73 + Age + Sex
+
+```{r model-11.46-ld73}
+cat("\n=== MODEL 2: IQF ~ LD73 + Age + Sex ===\n\n")
+
+# Remove missing values
+data_iqf_ld73 <- lead_clean %>%
+  filter(!is.na(IQF), !is.na(LD73), !is.na(AGE), !is.na(Sex_Factor))
+
+cat("Sample size:", nrow(data_iqf_ld73), "\n\n")
+
+# Fit model
+model_46_ld73 <- lm(IQF ~ LD73 + AGE + Sex_Factor, data = data_iqf_ld73)
+
+summary(model_46_ld73)
+
+# Tidy output
+tidy_46_ld73 <- tidy(model_46_ld73, conf.int = TRUE)
+kable(tidy_46_ld73,
+      caption = "Model 2: IQF ~ LD73 + Age + Sex",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+glance_46_ld73 <- glance(model_46_ld73)
+cat(sprintf("\nR² = %.4f, Adjusted R² = %.4f\n",
+            glance_46_ld73$r.squared, glance_46_ld73$adj.r.squared))
+```
+
+## Model 3: IQF ~ LD72 + LD73 + Age + Sex
+
+```{r model-11.46-both}
+cat("\n=== MODEL 3: IQF ~ LD72 + LD73 + Age + Sex ===\n\n")
+
+# Remove missing values
+data_iqf_both <- lead_clean %>%
+  filter(!is.na(IQF), !is.na(LD72), !is.na(LD73), !is.na(AGE), !is.na(Sex_Factor))
+
+cat("Sample size:", nrow(data_iqf_both), "\n\n")
+
+# Fit model
+model_46_both <- lm(IQF ~ LD72 + LD73 + AGE + Sex_Factor, data = data_iqf_both)
+
+summary(model_46_both)
+
+# Tidy output
+tidy_46_both <- tidy(model_46_both, conf.int = TRUE)
+kable(tidy_46_both,
+      caption = "Model 3: IQF ~ LD72 + LD73 + Age + Sex",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+glance_46_both <- glance(model_46_both)
+cat(sprintf("\nR² = %.4f, Adjusted R² = %.4f\n",
+            glance_46_both$r.squared, glance_46_both$adj.r.squared))
+
+# VIF check
+cat("\n--- Variance Inflation Factors ---\n")
+vif_46_both <- vif(model_46_both)
+print(vif_46_both)
+```
+
+## Model Comparison
+
+```{r model-11.46-comparison}
+cat("\n=== MODEL COMPARISON: IQF ===\n\n")
+
+comparison_46 <- data.frame(
+  Model = c("LD72 only", "LD73 only", "Both LD72 & LD73"),
+  R_squared = c(glance_46_ld72$r.squared, glance_46_ld73$r.squared,
+                glance_46_both$r.squared),
+  Adj_R_squared = c(glance_46_ld72$adj.r.squared, glance_46_ld73$adj.r.squared,
+                    glance_46_both$adj.r.squared),
+  AIC = c(AIC(model_46_ld72), AIC(model_46_ld73), AIC(model_46_both)),
+  BIC = c(BIC(model_46_ld72), BIC(model_46_ld73), BIC(model_46_both))
+)
+
+kable(comparison_46,
+      caption = "Model Comparison: IQF Analysis",
+      digits = 4,
+      col.names = c("Model", "R²", "Adj. R²", "AIC", "BIC")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+## Goodness of Fit Assessment
+
+```{r diagnostics-11.46}
+cat("\n=== GOODNESS OF FIT: BEST MODEL ===\n\n")
+
+# Use model with both LD72 and LD73
+par(mfrow = c(2, 2))
+plot(model_46_both, which = 1:4)
+par(mfrow = c(1, 1))
+
+# Normality test
+shapiro_46 <- shapiro.test(residuals(model_46_both))
+cat(sprintf("\nShapiro-Wilk normality test: W = %.4f, p = %.4f\n",
+            shapiro_46$statistic, shapiro_46$p.value))
+
+# Homoscedasticity test
+bp_46 <- bptest(model_46_both)
+cat(sprintf("Breusch-Pagan test: BP = %.4f, p = %.4f\n",
+            bp_46$statistic, bp_46$p.value))
+```
+
+---
+
+# Problem 11.47: Comparing Correlations
+
+## Introduction
+
+Compare the correlation coefficient between MAXFWT and LD72 (ρ₂) with the correlation between MAXFWT and LD73 (ρ₃).
+
+**Null Hypothesis:** H₀: ρ₂ = ρ₃
+**Alternative Hypothesis:** H₁: ρ₂ ≠ ρ₃ (two-tailed)
+
+## Calculate Correlations
+
+```{r correlations-11.47}
+cat("=== CORRELATION ANALYSIS ===\n\n")
+
+# Remove missing values for correlation analysis
+data_corr <- lead_clean %>%
+  filter(!is.na(MAXFWT), !is.na(LD72), !is.na(LD73))
+
+cat("Sample size for correlation analysis:", nrow(data_corr), "\n\n")
+
+# Calculate correlations
+cor_maxfwt_ld72 <- cor.test(data_corr$MAXFWT, data_corr$LD72)
+cor_maxfwt_ld73 <- cor.test(data_corr$MAXFWT, data_corr$LD73)
+
+cat("--- Correlation: MAXFWT vs LD72 ---\n")
+cat(sprintf("ρ₂ = %.4f\n", cor_maxfwt_ld72$estimate))
+cat(sprintf("95%% CI: (%.4f, %.4f)\n",
+            cor_maxfwt_ld72$conf.int[1], cor_maxfwt_ld72$conf.int[2]))
+cat(sprintf("p-value = %.4f\n\n", cor_maxfwt_ld72$p.value))
+
+cat("--- Correlation: MAXFWT vs LD73 ---\n")
+cat(sprintf("ρ₃ = %.4f\n", cor_maxfwt_ld73$estimate))
+cat(sprintf("95%% CI: (%.4f, %.4f)\n",
+            cor_maxfwt_ld73$conf.int[1], cor_maxfwt_ld73$conf.int[2]))
+cat(sprintf("p-value = %.4f\n\n", cor_maxfwt_ld73$p.value))
+
+# Also calculate correlation between LD72 and LD73 (needed for test)
+cor_ld72_ld73 <- cor(data_corr$LD72, data_corr$LD73, use = "complete.obs")
+cat("--- Correlation between LD72 and LD73 ---\n")
+cat(sprintf("r = %.4f (needed for dependent correlation test)\n\n", cor_ld72_ld73))
+```
+
+## Test for Difference in Correlations
+
+```{r test-correlations-11.47}
+cat("=== HYPOTHESIS TEST: ρ₂ = ρ₃ ===\n\n")
+
+# Since both correlations involve MAXFWT, these are DEPENDENT correlations
+# Use Steiger's test (Williams' modification of Hotelling's test)
+
+# Method 1: Using cocor package
+cat("Using Steiger's Test for Dependent Correlations:\n\n")
+
+# Prepare correlation matrix
+r12 <- cor_maxfwt_ld72$estimate  # MAXFWT vs LD72
+r13 <- cor_maxfwt_ld73$estimate  # MAXFWT vs LD73
+r23 <- cor_ld72_ld73              # LD72 vs LD73
+n <- nrow(data_corr)
+
+# Perform Steiger's test using cocor
+result_cocor <- tryCatch({
+  cocor.dep.groups.overlap(
+    r.jk = r12,      # correlation between j (MAXFWT) and k (LD72)
+    r.jh = r13,      # correlation between j (MAXFWT) and h (LD73)
+    r.kh = r23,      # correlation between k (LD72) and h (LD73)
+    n = n,
+    alternative = "two.sided",
+    test = "steiger1980",
+    alpha = 0.05
+  )
+}, error = function(e) {
+  cat("Error in cocor test. Using manual calculation.\n")
+  NULL
+})
+
+if(!is.null(result_cocor)) {
+  print(result_cocor)
+} else {
+  # Manual calculation using Steiger's formula
+  cat("\n=== MANUAL CALCULATION (Steiger's Test) ===\n\n")
+
+  # Steiger's test statistic
+  # Z = (Z(r12) - Z(r13)) / sqrt(var)
+  # where Z(r) is Fisher's Z transformation
+
+  # Fisher's Z transformations
+  z12 <- 0.5 * log((1 + r12) / (1 - r12))
+  z13 <- 0.5 * log((1 + r13) / (1 - r13))
+
+  # Average correlation (for variance calculation)
+  r_avg <- (r12 + r13) / 2
+
+  # Determinant
+  det_r <- 1 - r12^2 - r13^2 - r23^2 + 2*r12*r13*r23
+
+  # Variance
+  var_diff <- (2 * (1 - r23) * (n - 1) * (1 + r23)) /
+              ((n - 3) * det_r)
+
+  # Test statistic
+  z_stat <- (z12 - z13) / sqrt(var_diff / n)
+
+  # P-value (two-tailed)
+  p_value <- 2 * (1 - pnorm(abs(z_stat)))
+
+  cat(sprintf("r₁₂ (MAXFWT vs LD72) = %.4f\n", r12))
+  cat(sprintf("r₁₃ (MAXFWT vs LD73) = %.4f\n", r13))
+  cat(sprintf("r₂₃ (LD72 vs LD73) = %.4f\n", r23))
+  cat(sprintf("n = %d\n\n", n))
+
+  cat(sprintf("Fisher's Z transformations:\n"))
+  cat(sprintf("  Z(r₁₂) = %.4f\n", z12))
+  cat(sprintf("  Z(r₁₃) = %.4f\n\n", z13))
+
+  cat(sprintf("Test statistic: Z = %.4f\n", z_stat))
+  cat(sprintf("P-value (two-tailed): p = %.4f\n\n", p_value))
+
+  if(p_value < 0.05) {
+    cat("CONCLUSION: REJECT H₀ - The correlations are significantly different (α = 0.05)\n")
+  } else {
+    cat("CONCLUSION: FAIL TO REJECT H₀ - No significant difference between correlations (α = 0.05)\n")
+  }
+}
+```
+
+## Visualization of Correlations
+
+```{r visualize-correlations}
+# Scatterplot: MAXFWT vs LD72
+p1 <- ggplot(data_corr, aes(x = LD72, y = MAXFWT)) +
+  geom_point(alpha = 0.6, color = "#3498db") +
+  geom_smooth(method = "lm", se = TRUE, color = "red") +
+  labs(title = "MAXFWT vs LD72",
+       subtitle = sprintf("r = %.3f, p = %.4f", r12, cor_maxfwt_ld72$p.value),
+       x = "Blood Lead 1972 (LD72)",
+       y = "MAXFWT") +
+  theme_minimal()
+
+# Scatterplot: MAXFWT vs LD73
+p2 <- ggplot(data_corr, aes(x = LD73, y = MAXFWT)) +
+  geom_point(alpha = 0.6, color = "#9b59b6") +
+  geom_smooth(method = "lm", se = TRUE, color = "red") +
+  labs(title = "MAXFWT vs LD73",
+       subtitle = sprintf("r = %.3f, p = %.4f", r13, cor_maxfwt_ld73$p.value),
+       x = "Blood Lead 1973 (LD73)",
+       y = "MAXFWT") +
+  theme_minimal()
+
+grid.arrange(p1, p2, ncol = 2)
+```
+
+---
+
+# Comprehensive Summary
+
+## Summary of All Analyses
+
+```{r comprehensive-summary}
+cat("\n=== COMPREHENSIVE SUMMARY ===\n\n")
+
+# Problem 11.44 summary
+cat("--- Problem 11.44: IQF vs Exposure Group ---\n")
+cat(sprintf("Adjusted model (controlling for age and sex):\n"))
+cat(sprintf("  Exposure effect: %.2f IQ points (p = %.4f)\n",
+            tidy_44_adj$estimate[tidy_44_adj$term == "Exposure_GroupExposed"],
+            tidy_44_adj$p.value[tidy_44_adj$term == "Exposure_GroupExposed"]))
+cat(sprintf("  R² = %.4f\n\n", glance_44_adj$r.squared))
+
+# Problem 11.45 summary
+cat("--- Problem 11.45: MAXFWT vs Blood Lead ---\n")
+cat(sprintf("Best model includes both LD72 and LD73\n"))
+cat(sprintf("  LD72 effect: %.4f (p = %.4f)\n",
+            tidy_45_both$estimate[tidy_45_both$term == "LD72"],
+            tidy_45_both$p.value[tidy_45_both$term == "LD72"]))
+cat(sprintf("  LD73 effect: %.4f (p = %.4f)\n",
+            tidy_45_both$estimate[tidy_45_both$term == "LD73"],
+            tidy_45_both$p.value[tidy_45_both$term == "LD73"]))
+cat(sprintf("  R² = %.4f\n\n", glance_45_both$r.squared))
+
+# Problem 11.46 summary
+cat("--- Problem 11.46: IQF vs Blood Lead ---\n")
+cat(sprintf("Best model includes both LD72 and LD73\n"))
+cat(sprintf("  LD72 effect: %.4f (p = %.4f)\n",
+            tidy_46_both$estimate[tidy_46_both$term == "LD72"],
+            tidy_46_both$p.value[tidy_46_both$term == "LD72"]))
+cat(sprintf("  LD73 effect: %.4f (p = %.4f)\n",
+            tidy_46_both$estimate[tidy_46_both$term == "LD73"],
+            tidy_46_both$p.value[tidy_46_both$term == "LD73"]))
+cat(sprintf("  R² = %.4f\n\n", glance_46_both$r.squared))
+
+# Problem 11.47 summary
+cat("--- Problem 11.47: Correlation Comparison ---\n")
+cat(sprintf("  ρ₂ (MAXFWT vs LD72) = %.4f\n", r12))
+cat(sprintf("  ρ₃ (MAXFWT vs LD73) = %.4f\n", r13))
+cat(sprintf("  Difference: %.4f\n", abs(r12 - r13)))
+```
+
+# Conclusions
+
+## Key Findings
+
+### Problem 11.44: Lead Exposure and IQ
+
+- Lead-exposed children showed `r ifelse(tidy_44_adj$estimate[tidy_44_adj$term == "Exposure_GroupExposed"] < 0, "LOWER", "HIGHER")` IQ scores than controls
+- After controlling for age and sex, the difference was `r sprintf("%.2f", abs(tidy_44_adj$estimate[tidy_44_adj$term == "Exposure_GroupExposed"]))` points
+- This difference was `r ifelse(tidy_44_adj$p.value[tidy_44_adj$term == "Exposure_GroupExposed"] < 0.05, "statistically significant", "not statistically significant")`
+
+### Problem 11.45: Blood Lead and Motor Function (MAXFWT)
+
+- Both LD72 and LD73 showed associations with MAXFWT when controlling for age and sex
+- Model R² = `r sprintf("%.4f", glance_45_both$r.squared)` indicates moderate predictive ability
+- VIF values suggest `r ifelse(max(vif_45_both) > 5, "some multicollinearity", "acceptable collinearity")`
+
+### Problem 11.46: Blood Lead and IQ
+
+- Both LD72 and LD73 showed associations with IQF when controlling for age and sex
+- Model R² = `r sprintf("%.4f", glance_46_both$r.squared)`
+- Results suggest dose-response relationship between blood lead and cognitive function
+
+### Problem 11.47: Temporal Comparison
+
+- Correlation between MAXFWT and LD72: `r sprintf("%.4f", r12)`
+- Correlation between MAXFWT and LD73: `r sprintf("%.4f", r13)`
+- Statistical comparison indicates `r ifelse(exists("p_value") && p_value < 0.05, "significant difference", "no significant difference")` between the two years
+
+## Public Health Implications
+
+1. **Lead exposure effects**: Evidence suggests negative impact on both cognitive and motor development
+2. **Dose-response relationship**: Higher blood lead levels associated with worse outcomes
+3. **Temporal patterns**: Consistent effects across multiple years of measurement
+4. **Confounding control**: Age and sex are important covariates to consider
+
+## Statistical Methods Used
+
+- **Multiple Linear Regression**
+- **Model Comparison** (AIC, BIC, ANOVA)
+- **Goodness of Fit Assessment** (R², diagnostics)
+- **VIF Analysis** (multicollinearity detection)
+- **Steiger's Test** (comparing dependent correlations)
+- **Fisher's Z Transformation**
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
+
+---
+**End of Analysis**

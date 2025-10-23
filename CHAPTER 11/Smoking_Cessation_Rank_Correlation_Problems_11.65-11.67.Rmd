@@ -1,0 +1,871 @@
+---
+title: "Chapter 11: Health Promotion - Smoking Cessation Rank Correlation Analysis (Problems 11.65-11.67)"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Background: Smoking Cessation Study
+
+## Study Overview
+
+This study examines **risk factors associated with successful smoking cessation**. Participants enrolled in a smoking cessation program are followed to determine how long they remain abstinent from smoking.
+
+### Study Variables
+
+**Outcome Variable:**
+- **Day_abs:** Number of days abstinent from smoking (primary outcome)
+
+**Predictor Variables:**
+- **Age:** Age in years
+- **Cig_day:** Average number of cigarettes smoked per day (before cessation)
+- **LogCOadj:** Adjusted carbon monoxide level (log-transformed)
+
+### Research Questions (Problems 11.65-11.67)
+
+**Problem 11.65:** Use **rank-correlation methods** to test whether the number of days abstinent from smoking is related to **age**. Compare results with Problem 9.29.
+
+**Problem 11.66:** Use **rank-correlation methods** to test whether the **amount previously smoked** is related to the number of days abstinent from smoking. Compare results with Problem 9.30.
+
+**Problem 11.67:** Use **rank-correlation methods** to test whether the **adjusted CO level** is related to the number of days abstinent from smoking. Provide a **95% confidence interval** for the underlying rank correlation. Compare results with Problem 9.31.
+
+### Rank Correlation vs. Mann-Whitney Tests
+
+**Problems 9.29-9.31** (Chapter 9):
+- Used **Mann-Whitney U tests** (Wilcoxon rank-sum tests)
+- Dichotomized continuous predictors at the median
+- Tested for differences in days abstinent between two groups
+- Nonparametric alternative to two-sample t-test
+
+**Problems 11.65-11.67** (Chapter 11):
+- Use **Spearman's rank correlation** (ρ)
+- Keep continuous predictors as continuous
+- Test for monotonic relationship between variables
+- More powerful when relationship is truly continuous
+- Provides correlation coefficient and confidence interval
+
+**Key Difference:** Rank correlation uses the **full information** in the continuous predictor rather than dichotomizing, potentially providing more power and richer interpretation.
+
+---
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)   # Data manipulation and visualization
+library(knitr)       # For kable tables
+library(kableExtra)  # For enhanced table formatting
+library(ggplot2)     # Plotting
+library(gridExtra)   # Multiple plots
+library(broom)       # Tidy model outputs
+```
+
+---
+
+# Data Import and Processing
+
+```{r data-import}
+# Load the SMOKE.DAT dataset
+data_path <- "Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/SMOKE.DAT.txt"
+
+# Read the data - handle quotes in column names
+smoke_data <- tryCatch({
+  read.csv(data_path, header = TRUE, strip.white = TRUE,
+           na.strings = c("", "NA", ".", "99", "999"))
+}, error = function(e) {
+  cat("Error loading data from primary path. Trying alternative path...\n")
+  read.csv("../CHAPTER 9/Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/SMOKE.DAT.txt",
+           header = TRUE, strip.white = TRUE,
+           na.strings = c("", "NA", ".", "99", "999"))
+})
+
+# Clean column names (remove any quotes)
+colnames(smoke_data) <- gsub("'", "", colnames(smoke_data))
+colnames(smoke_data) <- gsub("\"", "", colnames(smoke_data))
+
+# Display structure
+cat("Dataset Structure:\n")
+str(smoke_data)
+
+cat("\nColumn names in dataset:\n")
+print(colnames(smoke_data))
+
+cat("\nFirst few rows:\n")
+head(smoke_data, 10) %>%
+  kable(caption = "First 10 Observations from SMOKE Dataset") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+# Variable Definitions and Processing
+
+```{r variable-processing}
+cat("=== SMOKE Dataset Variables ===\n\n")
+
+# Process data
+smoke_clean <- smoke_data %>%
+  mutate(
+    # Ensure numeric variables are properly formatted
+    Id = as.numeric(Id),
+    Age = as.numeric(Age),
+    Gender = as.numeric(Gender),
+    Cig_day = as.numeric(Cig_day),
+    CO = as.numeric(CO),
+    Min_last = as.numeric(Min_last),
+    LogCOadj = as.numeric(LogCOadj),
+    Day_abs = as.numeric(Day_abs),
+
+    # Create factor for gender
+    Gender_Factor = factor(Gender, levels = c(1, 2),
+                          labels = c("Male", "Female"))
+  )
+
+cat("Dataset processing completed.\n")
+cat("Total observations:", nrow(smoke_clean), "\n\n")
+
+# Summary statistics
+cat("=== Summary Statistics ===\n")
+summary_stats <- smoke_clean %>%
+  summarise(
+    N = n(),
+    Mean_Age = round(mean(Age, na.rm = TRUE), 2),
+    SD_Age = round(sd(Age, na.rm = TRUE), 2),
+    Mean_Cig_day = round(mean(Cig_day, na.rm = TRUE), 2),
+    SD_Cig_day = round(sd(Cig_day, na.rm = TRUE), 2),
+    Mean_LogCOadj = round(mean(LogCOadj, na.rm = TRUE), 2),
+    SD_LogCOadj = round(sd(LogCOadj, na.rm = TRUE), 2),
+    Mean_Day_abs = round(mean(Day_abs, na.rm = TRUE), 2),
+    SD_Day_abs = round(sd(Day_abs, na.rm = TRUE), 2),
+    Median_Day_abs = round(median(Day_abs, na.rm = TRUE), 2)
+  )
+
+kable(t(summary_stats),
+      caption = "Overall Summary Statistics",
+      col.names = "Value") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Check for missing values
+cat("\n=== Missing Values ===\n")
+missing_summary <- smoke_clean %>%
+  summarise(
+    Age_missing = sum(is.na(Age)),
+    Cig_day_missing = sum(is.na(Cig_day)),
+    LogCOadj_missing = sum(is.na(LogCOadj)),
+    Day_abs_missing = sum(is.na(Day_abs))
+  )
+
+kable(t(missing_summary),
+      caption = "Missing Value Counts",
+      col.names = "Count") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+---
+
+# Problem 11.65: Days Abstinent vs. Age (Rank Correlation)
+
+## Research Question
+
+Use **rank-correlation methods** to test whether the number of days abstinent from smoking is related to age.
+
+### Hypothesis
+
+- **H₀:** ρ = 0 (No monotonic relationship between age and days abstinent)
+- **H₁:** ρ ≠ 0 (Monotonic relationship exists)
+
+where ρ is Spearman's rank correlation coefficient.
+
+```{r problem-11.65}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 11.65: SPEARMAN RANK CORRELATION - DAYS ABSTINENT vs. AGE\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Remove missing values
+data_age <- smoke_clean %>%
+  filter(!is.na(Day_abs), !is.na(Age))
+
+cat("Sample size (complete cases):", nrow(data_age), "\n\n")
+
+# Spearman rank correlation test
+spearman_age <- cor.test(data_age$Age, data_age$Day_abs,
+                         method = "spearman",
+                         exact = FALSE)
+
+cat("=== SPEARMAN RANK CORRELATION TEST ===\n\n")
+cat("Variables:\n")
+cat("  X: Age (years)\n")
+cat("  Y: Days Abstinent from Smoking\n\n")
+
+cat("Results:\n")
+cat(sprintf("  Spearman's rho (ρ): %.4f\n", spearman_age$estimate))
+cat(sprintf("  S statistic: %.2f\n", spearman_age$statistic))
+cat(sprintf("  p-value: %.4f\n", spearman_age$p.value))
+cat(sprintf("  Significance level: α = 0.05\n\n"))
+
+# Interpretation
+if (spearman_age$p.value < 0.05) {
+  cat("CONCLUSION:\n")
+  cat(sprintf("  There is a statistically significant monotonic relationship\n"))
+  cat(sprintf("  between age and days abstinent (p = %.4f < 0.05).\n",
+              spearman_age$p.value))
+  if (spearman_age$estimate > 0) {
+    cat("  Direction: Positive (older participants tend to stay abstinent longer)\n")
+  } else {
+    cat("  Direction: Negative (younger participants tend to stay abstinent longer)\n")
+  }
+} else {
+  cat("CONCLUSION:\n")
+  cat(sprintf("  There is no statistically significant monotonic relationship\n"))
+  cat(sprintf("  between age and days abstinent (p = %.4f ≥ 0.05).\n",
+              spearman_age$p.value))
+}
+
+# Effect size interpretation
+cat("\nEffect Size Interpretation:\n")
+rho_val <- abs(spearman_age$estimate)
+if (rho_val < 0.1) {
+  cat("  Negligible correlation (|ρ| < 0.1)\n")
+} else if (rho_val < 0.3) {
+  cat("  Small correlation (0.1 ≤ |ρ| < 0.3)\n")
+} else if (rho_val < 0.5) {
+  cat("  Moderate correlation (0.3 ≤ |ρ| < 0.5)\n")
+} else {
+  cat("  Large correlation (|ρ| ≥ 0.5)\n")
+}
+
+# Also compute Pearson for comparison
+pearson_age <- cor.test(data_age$Age, data_age$Day_abs, method = "pearson")
+
+cat("\n=== PEARSON CORRELATION (for comparison) ===\n")
+cat(sprintf("  Pearson's r: %.4f\n", pearson_age$estimate))
+cat(sprintf("  p-value: %.4f\n", pearson_age$p.value))
+
+cat("\n=== COMPARISON: Spearman vs. Pearson ===\n")
+if (abs(spearman_age$estimate) > abs(pearson_age$estimate)) {
+  cat("  Spearman's |ρ| > Pearson's |r|, suggesting potential:\n")
+  cat("    - Nonlinear monotonic relationship, or\n")
+  cat("    - Outliers affecting Pearson more than Spearman\n")
+} else if (abs(spearman_age$estimate) < abs(pearson_age$estimate)) {
+  cat("  Pearson's |r| > Spearman's |ρ|, suggesting:\n")
+  cat("    - Relationship may be closer to linear\n")
+} else {
+  cat("  Similar values suggest linear relationship\n")
+}
+```
+
+### Comparison with Problem 9.29
+
+```{r compare-9.29}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("COMPARISON WITH PROBLEM 9.29 (Mann-Whitney U Test)\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+cat("PROBLEM 9.29 APPROACH:\n")
+cat("  - Dichotomized age at median\n")
+cat("  - Mann-Whitney U test (Wilcoxon rank-sum test)\n")
+cat("  - Tests: Do two groups differ in days abstinent?\n\n")
+
+# Replicate Problem 9.29 approach
+median_age <- median(data_age$Age, na.rm = TRUE)
+data_age <- data_age %>%
+  mutate(age_group = ifelse(Age < median_age, "Below Median", "Above Median"))
+
+mann_whitney_age <- wilcox.test(Day_abs ~ age_group, data = data_age)
+
+cat(sprintf("  Median age: %.1f years\n", median_age))
+cat(sprintf("  Mann-Whitney p-value: %.4f\n\n", mann_whitney_age$p.value))
+
+cat("PROBLEM 11.65 APPROACH:\n")
+cat("  - Age as continuous variable\n")
+cat("  - Spearman rank correlation\n")
+cat("  - Tests: Is there a monotonic relationship?\n")
+cat(sprintf("  Spearman's rho: %.4f\n", spearman_age$estimate))
+cat(sprintf("  Spearman p-value: %.4f\n\n", spearman_age$p.value))
+
+cat("COMPARISON:\n")
+cat("  Both tests are nonparametric and based on ranks\n")
+both_sig <- (mann_whitney_age$p.value < 0.05) && (spearman_age$p.value < 0.05)
+both_nonsig <- (mann_whitney_age$p.value >= 0.05) && (spearman_age$p.value >= 0.05)
+
+if (both_sig) {
+  cat("  Both tests: SIGNIFICANT (agreement)\n")
+  cat("  Interpretation: Age is related to days abstinent\n")
+} else if (both_nonsig) {
+  cat("  Both tests: NOT SIGNIFICANT (agreement)\n")
+  cat("  Interpretation: No evidence of age effect\n")
+} else {
+  cat("  Tests DISAGREE in significance\n")
+  cat("  Possible reasons:\n")
+  cat("    - Rank correlation preserves continuous information\n")
+  cat("    - Mann-Whitney only uses median dichotomy\n")
+  cat("    - Different statistical power\n")
+}
+
+cat("\nADVANTAGES OF RANK CORRELATION:\n")
+cat("  ✓ Uses full continuous information\n")
+cat("  ✓ More powerful when relationship is truly continuous\n")
+cat("  ✓ Provides measure of association strength (ρ)\n")
+cat("  ✓ No arbitrary cutpoint needed\n")
+```
+
+---
+
+# Problem 11.66: Days Abstinent vs. Amount Previously Smoked (Rank Correlation)
+
+## Research Question
+
+Use **rank-correlation methods** to test whether the amount previously smoked is related to the number of days abstinent from smoking.
+
+### Hypothesis
+
+- **H₀:** ρ = 0 (No monotonic relationship between cigarettes/day and days abstinent)
+- **H₁:** ρ ≠ 0 (Monotonic relationship exists)
+
+```{r problem-11.66}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 11.66: SPEARMAN RANK CORRELATION - DAYS ABSTINENT vs. CIGARETTES/DAY\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Remove missing values
+data_cig <- smoke_clean %>%
+  filter(!is.na(Day_abs), !is.na(Cig_day))
+
+cat("Sample size (complete cases):", nrow(data_cig), "\n\n")
+
+# Spearman rank correlation test
+spearman_cig <- cor.test(data_cig$Cig_day, data_cig$Day_abs,
+                         method = "spearman",
+                         exact = FALSE)
+
+cat("=== SPEARMAN RANK CORRELATION TEST ===\n\n")
+cat("Variables:\n")
+cat("  X: Cigarettes per Day (before cessation)\n")
+cat("  Y: Days Abstinent from Smoking\n\n")
+
+cat("Results:\n")
+cat(sprintf("  Spearman's rho (ρ): %.4f\n", spearman_cig$estimate))
+cat(sprintf("  S statistic: %.2f\n", spearman_cig$statistic))
+cat(sprintf("  p-value: %.4f\n", spearman_cig$p.value))
+cat(sprintf("  Significance level: α = 0.05\n\n"))
+
+# Interpretation
+if (spearman_cig$p.value < 0.05) {
+  cat("CONCLUSION:\n")
+  cat(sprintf("  There is a statistically significant monotonic relationship\n"))
+  cat(sprintf("  between cigarettes/day and days abstinent (p = %.4f < 0.05).\n",
+              spearman_cig$p.value))
+  if (spearman_cig$estimate > 0) {
+    cat("  Direction: Positive (heavier smokers stay abstinent longer)\n")
+  } else {
+    cat("  Direction: Negative (lighter smokers stay abstinent longer)\n")
+  }
+} else {
+  cat("CONCLUSION:\n")
+  cat(sprintf("  There is no statistically significant monotonic relationship\n"))
+  cat(sprintf("  between cigarettes/day and days abstinent (p = %.4f ≥ 0.05).\n",
+              spearman_cig$p.value))
+}
+
+# Effect size interpretation
+cat("\nEffect Size Interpretation:\n")
+rho_val <- abs(spearman_cig$estimate)
+if (rho_val < 0.1) {
+  cat("  Negligible correlation (|ρ| < 0.1)\n")
+} else if (rho_val < 0.3) {
+  cat("  Small correlation (0.1 ≤ |ρ| < 0.3)\n")
+} else if (rho_val < 0.5) {
+  cat("  Moderate correlation (0.3 ≤ |ρ| < 0.5)\n")
+} else {
+  cat("  Large correlation (|ρ| ≥ 0.5)\n")
+}
+
+# Also compute Pearson for comparison
+pearson_cig <- cor.test(data_cig$Cig_day, data_cig$Day_abs, method = "pearson")
+
+cat("\n=== PEARSON CORRELATION (for comparison) ===\n")
+cat(sprintf("  Pearson's r: %.4f\n", pearson_cig$estimate))
+cat(sprintf("  p-value: %.4f\n", pearson_cig$p.value))
+```
+
+### Comparison with Problem 9.30
+
+```{r compare-9.30}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("COMPARISON WITH PROBLEM 9.30 (Mann-Whitney U Test)\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+cat("PROBLEM 9.30 APPROACH:\n")
+cat("  - Dichotomized cigarettes/day at median\n")
+cat("  - Mann-Whitney U test\n")
+cat("  - Tests: Light vs. Heavy smokers\n\n")
+
+# Replicate Problem 9.30 approach
+median_cig <- median(data_cig$Cig_day, na.rm = TRUE)
+data_cig <- data_cig %>%
+  mutate(smoking_group = ifelse(Cig_day < median_cig, "Light Smoker", "Heavy Smoker"))
+
+mann_whitney_cig <- wilcox.test(Day_abs ~ smoking_group, data = data_cig)
+
+cat(sprintf("  Median cigarettes/day: %.1f\n", median_cig))
+cat(sprintf("  Mann-Whitney p-value: %.4f\n\n", mann_whitney_cig$p.value))
+
+cat("PROBLEM 11.66 APPROACH:\n")
+cat("  - Cigarettes/day as continuous variable\n")
+cat("  - Spearman rank correlation\n")
+cat(sprintf("  Spearman's rho: %.4f\n", spearman_cig$estimate))
+cat(sprintf("  Spearman p-value: %.4f\n\n", spearman_cig$p.value))
+
+cat("COMPARISON:\n")
+both_sig <- (mann_whitney_cig$p.value < 0.05) && (spearman_cig$p.value < 0.05)
+both_nonsig <- (mann_whitney_cig$p.value >= 0.05) && (spearman_cig$p.value >= 0.05)
+
+if (both_sig) {
+  cat("  Both tests: SIGNIFICANT (agreement)\n")
+  cat("  Interpretation: Amount smoked is related to abstinence duration\n")
+} else if (both_nonsig) {
+  cat("  Both tests: NOT SIGNIFICANT (agreement)\n")
+  cat("  Interpretation: No evidence of smoking amount effect\n")
+} else {
+  cat("  Tests DISAGREE in significance\n")
+  cat("  Spearman correlation may detect dose-response relationship\n")
+  cat("  that dichotomization obscures\n")
+}
+```
+
+---
+
+# Problem 11.67: Days Abstinent vs. Adjusted CO Level (Rank Correlation with CI)
+
+## Research Question
+
+Use **rank-correlation methods** to test whether the adjusted CO level is related to the number of days abstinent from smoking. Provide a **95% confidence interval** for the underlying rank correlation.
+
+### Hypothesis
+
+- **H₀:** ρ = 0 (No monotonic relationship between LogCOadj and days abstinent)
+- **H₁:** ρ ≠ 0 (Monotonic relationship exists)
+
+```{r problem-11.67}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 11.67: SPEARMAN RANK CORRELATION - DAYS ABSTINENT vs. ADJUSTED CO\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Remove missing values
+data_co <- smoke_clean %>%
+  filter(!is.na(Day_abs), !is.na(LogCOadj))
+
+cat("Sample size (complete cases):", nrow(data_co), "\n\n")
+
+# Spearman rank correlation test
+spearman_co <- cor.test(data_co$LogCOadj, data_co$Day_abs,
+                        method = "spearman",
+                        exact = FALSE)
+
+cat("=== SPEARMAN RANK CORRELATION TEST ===\n\n")
+cat("Variables:\n")
+cat("  X: Adjusted CO Level (log scale)\n")
+cat("  Y: Days Abstinent from Smoking\n\n")
+
+cat("Results:\n")
+cat(sprintf("  Spearman's rho (ρ): %.4f\n", spearman_co$estimate))
+cat(sprintf("  S statistic: %.2f\n", spearman_co$statistic))
+cat(sprintf("  p-value: %.4f\n", spearman_co$p.value))
+cat(sprintf("  Significance level: α = 0.05\n\n"))
+
+# Interpretation
+if (spearman_co$p.value < 0.05) {
+  cat("CONCLUSION:\n")
+  cat(sprintf("  There is a statistically significant monotonic relationship\n"))
+  cat(sprintf("  between adjusted CO level and days abstinent (p = %.4f < 0.05).\n",
+              spearman_co$p.value))
+  if (spearman_co$estimate > 0) {
+    cat("  Direction: Positive (higher CO associated with longer abstinence)\n")
+  } else {
+    cat("  Direction: Negative (lower CO associated with longer abstinence)\n")
+  }
+} else {
+  cat("CONCLUSION:\n")
+  cat(sprintf("  There is no statistically significant monotonic relationship\n"))
+  cat(sprintf("  between adjusted CO level and days abstinent (p = %.4f ≥ 0.05).\n",
+              spearman_co$p.value))
+}
+
+# Effect size interpretation
+cat("\nEffect Size Interpretation:\n")
+rho_val <- abs(spearman_co$estimate)
+if (rho_val < 0.1) {
+  cat("  Negligible correlation (|ρ| < 0.1)\n")
+} else if (rho_val < 0.3) {
+  cat("  Small correlation (0.1 ≤ |ρ| < 0.3)\n")
+} else if (rho_val < 0.5) {
+  cat("  Moderate correlation (0.3 ≤ |ρ| < 0.5)\n")
+} else {
+  cat("  Large correlation (|ρ| ≥ 0.5)\n")
+}
+
+# Also compute Pearson for comparison
+pearson_co <- cor.test(data_co$LogCOadj, data_co$Day_abs, method = "pearson")
+
+cat("\n=== PEARSON CORRELATION (for comparison) ===\n")
+cat(sprintf("  Pearson's r: %.4f\n", pearson_co$estimate))
+cat(sprintf("  p-value: %.4f\n", pearson_co$p.value))
+```
+
+## 95% Confidence Interval for Spearman's Rho
+
+```{r ci-spearman}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("95% CONFIDENCE INTERVAL FOR SPEARMAN'S RHO\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Method 1: Bootstrap confidence interval
+set.seed(123)
+n_bootstrap <- 10000
+
+cat("Using BOOTSTRAP method (", n_bootstrap, "resamples):\n\n", sep="")
+
+# Bootstrap resampling
+bootstrap_rho <- replicate(n_bootstrap, {
+  indices <- sample(1:nrow(data_co), replace = TRUE)
+  boot_data <- data_co[indices, ]
+  cor(boot_data$LogCOadj, boot_data$Day_abs, method = "spearman")
+})
+
+# Calculate percentile-based CI
+ci_lower_boot <- quantile(bootstrap_rho, 0.025)
+ci_upper_boot <- quantile(bootstrap_rho, 0.975)
+
+cat(sprintf("  Point estimate (ρ): %.4f\n", spearman_co$estimate))
+cat(sprintf("  95%% CI (Bootstrap): [%.4f, %.4f]\n\n", ci_lower_boot, ci_upper_boot))
+
+# Method 2: Fisher's Z-transformation (approximation for Spearman)
+cat("Using FISHER'S Z-TRANSFORMATION (asymptotic approximation):\n\n")
+
+n <- nrow(data_co)
+rho <- spearman_co$estimate
+
+# Fisher Z transformation
+z_rho <- 0.5 * log((1 + rho) / (1 - rho))
+se_z <- 1 / sqrt(n - 3)
+
+# CI on Z scale
+z_ci_lower <- z_rho - 1.96 * se_z
+z_ci_upper <- z_rho + 1.96 * se_z
+
+# Transform back to rho scale
+ci_lower_fisher <- (exp(2 * z_ci_lower) - 1) / (exp(2 * z_ci_lower) + 1)
+ci_upper_fisher <- (exp(2 * z_ci_upper) - 1) / (exp(2 * z_ci_upper) + 1)
+
+cat(sprintf("  Point estimate (ρ): %.4f\n", rho))
+cat(sprintf("  Fisher's Z: %.4f\n", z_rho))
+cat(sprintf("  SE(Z): %.4f\n", se_z))
+cat(sprintf("  95%% CI (Fisher Z): [%.4f, %.4f]\n\n", ci_lower_fisher, ci_upper_fisher))
+
+# Interpretation
+cat("INTERPRETATION:\n")
+cat("  We are 95% confident that the true population Spearman correlation\n")
+cat("  between adjusted CO level and days abstinent lies between\n")
+cat(sprintf("  %.4f and %.4f (bootstrap method).\n\n", ci_lower_boot, ci_upper_boot))
+
+if (ci_lower_boot * ci_upper_boot > 0) {
+  cat("  Since the CI does NOT include 0, we conclude there is a\n")
+  cat("  statistically significant monotonic relationship (consistent with p-value).\n")
+} else {
+  cat("  Since the CI INCLUDES 0, we cannot rule out zero correlation\n")
+  cat("  (consistent with non-significant p-value).\n")
+}
+
+# Create comparison table
+ci_comparison <- data.frame(
+  Method = c("Bootstrap", "Fisher Z"),
+  Lower_CI = c(ci_lower_boot, ci_lower_fisher),
+  Point_Estimate = c(spearman_co$estimate, spearman_co$estimate),
+  Upper_CI = c(ci_upper_boot, ci_upper_fisher),
+  Width = c(ci_upper_boot - ci_lower_boot, ci_upper_fisher - ci_lower_fisher)
+)
+
+cat("\n=== CI COMPARISON ===\n")
+kable(ci_comparison, digits = 4,
+      caption = "Comparison of 95% CI Methods for Spearman's Rho") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+### Comparison with Problem 9.31
+
+```{r compare-9.31}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("COMPARISON WITH PROBLEM 9.31 (Mann-Whitney U Test)\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+cat("PROBLEM 9.31 APPROACH:\n")
+cat("  - Dichotomized LogCOadj at median\n")
+cat("  - Mann-Whitney U test\n")
+cat("  - Tests: Low vs. High CO groups\n\n")
+
+# Replicate Problem 9.31 approach
+median_co <- median(data_co$LogCOadj, na.rm = TRUE)
+data_co <- data_co %>%
+  mutate(co_group = ifelse(LogCOadj < median_co, "Low CO", "High CO"))
+
+mann_whitney_co <- wilcox.test(Day_abs ~ co_group, data = data_co)
+
+cat(sprintf("  Median adjusted CO: %.1f\n", median_co))
+cat(sprintf("  Mann-Whitney p-value: %.4f\n\n", mann_whitney_co$p.value))
+
+cat("PROBLEM 11.67 APPROACH:\n")
+cat("  - LogCOadj as continuous variable\n")
+cat("  - Spearman rank correlation with 95% CI\n")
+cat(sprintf("  Spearman's rho: %.4f\n", spearman_co$estimate))
+cat(sprintf("  95%% CI: [%.4f, %.4f]\n", ci_lower_boot, ci_upper_boot))
+cat(sprintf("  Spearman p-value: %.4f\n\n", spearman_co$p.value))
+
+cat("COMPARISON:\n")
+both_sig <- (mann_whitney_co$p.value < 0.05) && (spearman_co$p.value < 0.05)
+both_nonsig <- (mann_whitney_co$p.value >= 0.05) && (spearman_co$p.value >= 0.05)
+
+if (both_sig) {
+  cat("  Both tests: SIGNIFICANT (agreement)\n")
+  cat("  Interpretation: Adjusted CO level is related to abstinence duration\n")
+} else if (both_nonsig) {
+  cat("  Both tests: NOT SIGNIFICANT (agreement)\n")
+  cat("  Interpretation: No evidence of CO level effect\n")
+} else {
+  cat("  Tests DISAGREE in significance\n")
+}
+
+cat("\nADVANTAGE OF PROBLEM 11.67 APPROACH:\n")
+cat("  ✓ Confidence interval quantifies uncertainty\n")
+cat("  ✓ Provides effect size estimate (ρ)\n")
+cat("  ✓ More informative than dichotomous comparison\n")
+```
+
+---
+
+# Visualization
+
+## Scatterplots with Rank Correlation
+
+```{r viz-scatterplots, fig.height=12}
+# Create scatterplots for each relationship
+
+# Problem 11.65: Age vs Days Abstinent
+p1 <- ggplot(data_age, aes(x = Age, y = Day_abs)) +
+  geom_point(alpha = 0.6, size = 3, color = "#2E86AB") +
+  geom_smooth(method = "loess", se = TRUE, color = "#A23B72", fill = "#F18F01", alpha = 0.2) +
+  labs(title = "Problem 11.65: Days Abstinent vs. Age",
+       subtitle = sprintf("Spearman's ρ = %.4f, p = %.4f",
+                         spearman_age$estimate, spearman_age$p.value),
+       x = "Age (years)",
+       y = "Days Abstinent from Smoking") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 14),
+        plot.subtitle = element_text(size = 11))
+
+# Problem 11.66: Cigarettes/day vs Days Abstinent
+p2 <- ggplot(data_cig, aes(x = Cig_day, y = Day_abs)) +
+  geom_point(alpha = 0.6, size = 3, color = "#A23B72") +
+  geom_smooth(method = "loess", se = TRUE, color = "#2E86AB", fill = "#F18F01", alpha = 0.2) +
+  labs(title = "Problem 11.66: Days Abstinent vs. Cigarettes per Day",
+       subtitle = sprintf("Spearman's ρ = %.4f, p = %.4f",
+                         spearman_cig$estimate, spearman_cig$p.value),
+       x = "Cigarettes per Day (before cessation)",
+       y = "Days Abstinent from Smoking") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 14),
+        plot.subtitle = element_text(size = 11))
+
+# Problem 11.67: Adjusted CO vs Days Abstinent
+p3 <- ggplot(data_co, aes(x = LogCOadj, y = Day_abs)) +
+  geom_point(alpha = 0.6, size = 3, color = "#F18F01") +
+  geom_smooth(method = "loess", se = TRUE, color = "#2E86AB", fill = "#A23B72", alpha = 0.2) +
+  labs(title = "Problem 11.67: Days Abstinent vs. Adjusted CO Level",
+       subtitle = sprintf("Spearman's ρ = %.4f, 95%% CI: [%.4f, %.4f], p = %.4f",
+                         spearman_co$estimate, ci_lower_boot, ci_upper_boot,
+                         spearman_co$p.value),
+       x = "Adjusted CO Level (log scale)",
+       y = "Days Abstinent from Smoking") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 14),
+        plot.subtitle = element_text(size = 11))
+
+# Arrange plots
+grid.arrange(p1, p2, p3, ncol = 1)
+```
+
+## Bootstrap Distribution of Spearman's Rho (Problem 11.67)
+
+```{r viz-bootstrap, fig.height=6}
+# Visualize bootstrap distribution
+bootstrap_df <- data.frame(rho = bootstrap_rho)
+
+ggplot(bootstrap_df, aes(x = rho)) +
+  geom_histogram(aes(y = ..density..), bins = 50, fill = "#2E86AB", alpha = 0.7) +
+  geom_density(color = "#A23B72", linewidth = 1.2) +
+  geom_vline(xintercept = spearman_co$estimate, color = "red",
+             linetype = "dashed", linewidth = 1) +
+  geom_vline(xintercept = ci_lower_boot, color = "darkgreen",
+             linetype = "dashed", linewidth = 0.8) +
+  geom_vline(xintercept = ci_upper_boot, color = "darkgreen",
+             linetype = "dashed", linewidth = 0.8) +
+  annotate("text", x = spearman_co$estimate, y = Inf,
+           label = sprintf("ρ = %.4f", spearman_co$estimate),
+           vjust = 2, color = "red", fontface = "bold") +
+  annotate("text", x = ci_lower_boot, y = Inf,
+           label = sprintf("%.4f", ci_lower_boot),
+           vjust = 2, hjust = 1.1, color = "darkgreen", fontface = "bold") +
+  annotate("text", x = ci_upper_boot, y = Inf,
+           label = sprintf("%.4f", ci_upper_boot),
+           vjust = 2, hjust = -0.1, color = "darkgreen", fontface = "bold") +
+  labs(title = "Bootstrap Distribution of Spearman's Rho",
+       subtitle = sprintf("Problem 11.67: Adjusted CO vs. Days Abstinent (%d resamples)",
+                         n_bootstrap),
+       x = "Spearman's Rho (ρ)",
+       y = "Density") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 14))
+```
+
+---
+
+# Summary of Results
+
+```{r summary-table}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("SUMMARY OF ALL THREE PROBLEMS\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Create summary table
+summary_results <- data.frame(
+  Problem = c("11.65", "11.66", "11.67"),
+  Predictor = c("Age", "Cigarettes/Day", "Adjusted CO (log)"),
+  Outcome = rep("Days Abstinent", 3),
+  N = c(nrow(data_age), nrow(data_cig), nrow(data_co)),
+  Spearman_rho = c(spearman_age$estimate,
+                   spearman_cig$estimate,
+                   spearman_co$estimate),
+  P_value = c(spearman_age$p.value,
+              spearman_cig$p.value,
+              spearman_co$p.value),
+  Significant = c(
+    ifelse(spearman_age$p.value < 0.05, "Yes", "No"),
+    ifelse(spearman_cig$p.value < 0.05, "Yes", "No"),
+    ifelse(spearman_co$p.value < 0.05, "Yes", "No")
+  ),
+  Direction = c(
+    ifelse(spearman_age$estimate > 0, "Positive", "Negative"),
+    ifelse(spearman_cig$estimate > 0, "Positive", "Negative"),
+    ifelse(spearman_co$estimate > 0, "Positive", "Negative")
+  )
+)
+
+kable(summary_results, digits = 4,
+      caption = "Summary of Spearman Rank Correlation Analyses") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Add 95% CI for Problem 11.67
+cat("\n95% Confidence Interval (Problem 11.67 only):\n")
+ci_table <- data.frame(
+  Problem = "11.67",
+  Point_Estimate = spearman_co$estimate,
+  CI_Lower = ci_lower_boot,
+  CI_Upper = ci_upper_boot
+)
+
+kable(ci_table, digits = 4,
+      caption = "95% CI for Spearman's Rho (Adjusted CO vs. Days Abstinent)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+## Comparison with Chapter 9 Results
+
+```{r final-comparison}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("COMPARISON: CHAPTER 9 vs. CHAPTER 11 METHODS\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+comparison_table <- data.frame(
+  Problem_Ch9 = c("9.29", "9.30", "9.31"),
+  Problem_Ch11 = c("11.65", "11.66", "11.67"),
+  Predictor = c("Age", "Cig/Day", "Adj CO"),
+  Ch9_Method = rep("Mann-Whitney U", 3),
+  Ch9_P_value = c(mann_whitney_age$p.value,
+                  mann_whitney_cig$p.value,
+                  mann_whitney_co$p.value),
+  Ch11_Method = rep("Spearman ρ", 3),
+  Ch11_P_value = c(spearman_age$p.value,
+                   spearman_cig$p.value,
+                   spearman_co$p.value),
+  Agreement = c(
+    ifelse((mann_whitney_age$p.value < 0.05) == (spearman_age$p.value < 0.05),
+           "Yes", "No"),
+    ifelse((mann_whitney_cig$p.value < 0.05) == (spearman_cig$p.value < 0.05),
+           "Yes", "No"),
+    ifelse((mann_whitney_co$p.value < 0.05) == (spearman_co$p.value < 0.05),
+           "Yes", "No")
+  )
+)
+
+kable(comparison_table, digits = 4,
+      caption = "Comparison of Nonparametric Methods: Mann-Whitney vs. Spearman") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+cat("\nKEY INSIGHTS:\n\n")
+cat("1. METHODOLOGICAL DIFFERENCES:\n")
+cat("   • Mann-Whitney: Dichotomizes predictor, tests group differences\n")
+cat("   • Spearman: Preserves continuous predictor, tests monotonic association\n\n")
+
+cat("2. INFORMATION PRESERVATION:\n")
+cat("   • Rank correlation uses full continuous data\n")
+cat("   • More powerful when relationship is truly continuous\n")
+cat("   • Provides correlation coefficient (effect size)\n\n")
+
+cat("3. CONFIDENCE INTERVALS:\n")
+cat("   • Spearman allows CI construction (Problem 11.67)\n")
+cat("   • Quantifies uncertainty in correlation estimate\n")
+cat("   • Mann-Whitney provides only p-value\n\n")
+
+cat("4. PRACTICAL RECOMMENDATION:\n")
+cat("   • Use rank correlation when predictor is continuous\n")
+cat("   • Use Mann-Whitney when comparing defined groups\n")
+cat("   • Both are valid nonparametric approaches\n")
+```
+
+---
+
+# Conclusions
+
+## Problem 11.65 (Age)
+- **Spearman's ρ:** `r sprintf("%.4f", spearman_age$estimate)`
+- **P-value:** `r sprintf("%.4f", spearman_age$p.value)`
+- **Conclusion:** `r ifelse(spearman_age$p.value < 0.05, "Significant monotonic relationship between age and days abstinent.", "No significant monotonic relationship between age and days abstinent.")`
+
+## Problem 11.66 (Cigarettes per Day)
+- **Spearman's ρ:** `r sprintf("%.4f", spearman_cig$estimate)`
+- **P-value:** `r sprintf("%.4f", spearman_cig$p.value)`
+- **Conclusion:** `r ifelse(spearman_cig$p.value < 0.05, "Significant monotonic relationship between amount smoked and days abstinent.", "No significant monotonic relationship between amount smoked and days abstinent.")`
+
+## Problem 11.67 (Adjusted CO Level)
+- **Spearman's ρ:** `r sprintf("%.4f", spearman_co$estimate)`
+- **95% CI:** `r sprintf("[%.4f, %.4f]", ci_lower_boot, ci_upper_boot)`
+- **P-value:** `r sprintf("%.4f", spearman_co$p.value)`
+- **Conclusion:** `r ifelse(spearman_co$p.value < 0.05, "Significant monotonic relationship between adjusted CO level and days abstinent. The 95% CI does not include zero, confirming the relationship.", "No significant monotonic relationship between adjusted CO level and days abstinent. The 95% CI includes zero.")`
+
+---
+
+**END OF ANALYSIS**

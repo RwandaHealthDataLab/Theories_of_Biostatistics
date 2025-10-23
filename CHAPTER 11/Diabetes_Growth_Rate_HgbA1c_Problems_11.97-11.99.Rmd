@@ -1,0 +1,838 @@
+---
+title: "Chapter 11: Diabetes - Growth Rates and HgbA1c Association (Problems 11.97-11.99)"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Background: Diabetes Longitudinal Growth Study
+
+## Study Overview
+
+This is a **longitudinal study** of boys with diabetes, examining the relationship between **glycemic control** (HgbA1c) and **growth** (weight, height, BMI).
+
+### Study Design
+
+**Key Innovation:** Two-stage analysis approach
+
+**Stage 1 (Within-Individual):**
+For each boy, use linear regression to estimate:
+- **b** = slope = **rate of growth** over time
+
+**Stage 2 (Between-Individual):**
+Relate individual growth rates (b) to:
+- **h** = **mean HgbA1c** across all visits
+
+### Why This Approach?
+
+**Advantages:**
+1. **Accounts for repeated measures:** Each boy has multiple visits
+2. **Summarizes longitudinal trajectories:** Growth rate captures individual pattern
+3. **Reduces to cross-sectional comparison:** One value per subject
+4. **Controls for baseline differences:** Focus on rate of change, not absolute levels
+
+### Study Variables
+
+**Longitudinal Measurements** (multiple per subject):
+- **ID:** Subject identifier
+- **age_yrs:** Age at visit (years)
+- **gly_a1c:** HgbA1c level (glycemic control marker)
+- **ht_cm:** Height (cm)
+- **wt_kg:** Weight (kg)
+
+**Derived Variables** (one per subject):
+- **b_weight:** Rate of weight gain (kg/year)
+- **b_height:** Rate of height gain (cm/year)
+- **b_bmi:** Rate of BMI change (kg/m²/year)
+- **mean_hgba1c:** Average HgbA1c across visits
+
+### Research Questions (Problems 11.97-11.99)
+
+**Problem 11.97:** Is there a significant association between **weight growth rate** and **mean HgbA1c**?
+
+**Problem 11.98:** Is there a significant association between **height growth rate** and **mean HgbA1c**?
+
+**Problem 11.99:** Is there a significant association between **BMI growth rate** and **mean HgbA1c**?
+
+### Clinical Context
+
+**HgbA1c (Hemoglobin A1c):**
+- Measure of average blood glucose over ~3 months
+- Higher values indicate poorer glycemic control
+- Target: <7% for most patients
+
+**Expected Relationship:**
+Poor glycemic control (high HgbA1c) may affect growth patterns in children with diabetes.
+
+---
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)   # Data manipulation and visualization
+library(knitr)       # For kable tables
+library(kableExtra)  # For enhanced table formatting
+library(ggplot2)     # Plotting
+library(gridExtra)   # Multiple plots
+library(broom)       # Tidy model outputs
+library(lmtest)      # For model testing
+library(car)         # For diagnostic tests
+```
+
+---
+
+# Data Import and Processing
+
+```{r data-import}
+# Load the DIABETES.DAT dataset
+data_path <- "Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/DIABETES.DAT.txt"
+
+# Read the data - handle quotes in column names
+diabetes_data <- tryCatch({
+  read.csv(data_path, header = TRUE, strip.white = TRUE, quote = "'\"",
+           na.strings = c("", "NA", ".", "99", "999"))
+}, error = function(e) {
+  cat("Error loading data from primary path. Trying alternative path...\n")
+  read.csv("../CHAPTER 10/Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/DIABETES.DAT.txt",
+           header = TRUE, strip.white = TRUE, quote = "'\"",
+           na.strings = c("", "NA", ".", "99", "999"))
+})
+
+# Clean column names (remove any quotes)
+colnames(diabetes_data) <- gsub("'", "", colnames(diabetes_data))
+colnames(diabetes_data) <- gsub("\"", "", colnames(diabetes_data))
+
+cat("Cleaned column names:\n")
+print(colnames(diabetes_data))
+
+# Display structure
+cat("\nDataset Structure:\n")
+str(diabetes_data)
+
+cat("\nFirst few rows (showing longitudinal structure):\n")
+head(diabetes_data, 15) %>%
+  kable(caption = "First 15 Observations from DIABETES Dataset", digits = 2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE, font_size = 10)
+```
+
+# Data Processing: Calculate BMI and Visit Counts
+
+```{r variable-processing}
+cat("=== DIABETES LONGITUDINAL DATA PROCESSING ===\n\n")
+
+# Process data
+diabetes_clean <- diabetes_data %>%
+  mutate(
+    # Ensure all variables are numeric
+    ID = as.character(ID),
+    age_yrs = as.numeric(age_yrs),
+    gly_a1c = as.numeric(gly_a1c),
+    ht_cm = as.numeric(ht_cm),
+    wt_kg = as.numeric(wt_kg),
+
+    # Calculate BMI = weight (kg) / [height (m)]^2
+    ht_m = ht_cm / 100,
+    bmi = wt_kg / (ht_m^2)
+  )
+
+cat("Dataset processing completed.\n")
+cat("Total observations (visits):", nrow(diabetes_clean), "\n")
+cat("Total unique subjects:", length(unique(diabetes_clean$ID)), "\n\n")
+
+# Count visits per subject
+visit_counts <- diabetes_clean %>%
+  group_by(ID) %>%
+  summarise(n_visits = n()) %>%
+  ungroup()
+
+cat("=== VISITS PER SUBJECT ===\n")
+summary(visit_counts$n_visits) %>%
+  print()
+
+cat("\nDistribution of number of visits:\n")
+table(visit_counts$n_visits) %>%
+  kable(caption = "Number of Subjects by Visit Count",
+        col.names = c("Number of Visits", "Number of Subjects")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Check for missing values
+cat("\n=== MISSING VALUES ===\n")
+missing_summary <- diabetes_clean %>%
+  summarise(
+    age_missing = sum(is.na(age_yrs)),
+    hgba1c_missing = sum(is.na(gly_a1c)),
+    height_missing = sum(is.na(ht_cm)),
+    weight_missing = sum(is.na(wt_kg)),
+    bmi_missing = sum(is.na(bmi))
+  )
+
+kable(t(missing_summary),
+      caption = "Missing Value Counts",
+      col.names = "Count") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+---
+
+# Stage 1: Calculate Individual Growth Rates
+
+## Method: Within-Subject Linear Regression
+
+For each subject, fit: **Outcome ~ Age**
+
+Extract slope **b** = rate of change per year
+
+```{r stage1-growth-rates}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("STAGE 1: CALCULATING INDIVIDUAL GROWTH RATES\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Function to calculate growth rate for one subject
+calculate_growth_rate <- function(data, outcome_var) {
+  # Need at least 2 observations
+  if (nrow(data) < 2) {
+    return(data.frame(
+      slope = NA,
+      intercept = NA,
+      r_squared = NA,
+      n_obs = nrow(data)
+    ))
+  }
+
+  # Fit linear regression: outcome ~ age
+  formula_str <- paste0(outcome_var, " ~ age_yrs")
+  model <- lm(as.formula(formula_str), data = data)
+
+  # Extract coefficients and fit statistics
+  data.frame(
+    slope = coef(model)[2],
+    intercept = coef(model)[1],
+    r_squared = summary(model)$r.squared,
+    n_obs = nrow(data)
+  )
+}
+
+# Calculate growth rates for all subjects
+cat("Calculating individual growth rates...\n\n")
+
+growth_rates <- diabetes_clean %>%
+  group_by(ID) %>%
+  summarise(
+    # Weight growth rate
+    weight_results = list(calculate_growth_rate(cur_data(), "wt_kg")),
+
+    # Height growth rate
+    height_results = list(calculate_growth_rate(cur_data(), "ht_cm")),
+
+    # BMI growth rate
+    bmi_results = list(calculate_growth_rate(cur_data(), "bmi")),
+
+    # Mean HgbA1c
+    mean_hgba1c = mean(gly_a1c, na.rm = TRUE),
+
+    # Number of visits
+    n_visits = n(),
+
+    # Age range
+    min_age = min(age_yrs, na.rm = TRUE),
+    max_age = max(age_yrs, na.rm = TRUE),
+    age_span = max_age - min_age,
+
+    .groups = "drop"
+  )
+
+# Unnest growth rate results
+growth_rates <- growth_rates %>%
+  mutate(
+    # Weight
+    b_weight = map_dbl(weight_results, ~.x$slope),
+    weight_r2 = map_dbl(weight_results, ~.x$r_squared),
+
+    # Height
+    b_height = map_dbl(height_results, ~.x$slope),
+    height_r2 = map_dbl(height_results, ~.x$r_squared),
+
+    # BMI
+    b_bmi = map_dbl(bmi_results, ~.x$slope),
+    bmi_r2 = map_dbl(bmi_results, ~.x$r_squared)
+  ) %>%
+  dplyr::select(-weight_results, -height_results, -bmi_results)
+
+cat("Growth rates calculated for", nrow(growth_rates), "subjects\n\n")
+
+# Summary statistics
+cat("=== SUMMARY OF INDIVIDUAL GROWTH RATES ===\n\n")
+
+summary_stats <- growth_rates %>%
+  summarise(
+    N_subjects = n(),
+
+    # Weight growth rate
+    Mean_b_weight = mean(b_weight, na.rm = TRUE),
+    SD_b_weight = sd(b_weight, na.rm = TRUE),
+    Median_b_weight = median(b_weight, na.rm = TRUE),
+
+    # Height growth rate
+    Mean_b_height = mean(b_height, na.rm = TRUE),
+    SD_b_height = sd(b_height, na.rm = TRUE),
+    Median_b_height = median(b_height, na.rm = TRUE),
+
+    # BMI growth rate
+    Mean_b_bmi = mean(b_bmi, na.rm = TRUE),
+    SD_b_bmi = sd(b_bmi, na.rm = TRUE),
+    Median_b_bmi = median(b_bmi, na.rm = TRUE),
+
+    # Mean HgbA1c
+    Mean_HgbA1c = mean(mean_hgba1c, na.rm = TRUE),
+    SD_HgbA1c = sd(mean_hgba1c, na.rm = TRUE)
+  )
+
+kable(t(summary_stats), digits = 3,
+      caption = "Summary Statistics of Individual-Level Variables",
+      col.names = "Value") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Show first few subjects
+cat("\nFirst 10 Subjects (Individual Growth Rates):\n")
+growth_rates %>%
+  dplyr::select(ID, n_visits, age_span, b_weight, b_height, b_bmi, mean_hgba1c) %>%
+  head(10) %>%
+  kable(digits = 3, caption = "Sample of Individual Growth Rates") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE, font_size = 10)
+
+# Check quality of individual fits
+cat("\n=== QUALITY OF INDIVIDUAL REGRESSIONS ===\n\n")
+
+fit_quality <- growth_rates %>%
+  summarise(
+    Weight_Mean_R2 = mean(weight_r2, na.rm = TRUE),
+    Height_Mean_R2 = mean(height_r2, na.rm = TRUE),
+    BMI_Mean_R2 = mean(bmi_r2, na.rm = TRUE),
+
+    Weight_Median_R2 = median(weight_r2, na.rm = TRUE),
+    Height_Median_R2 = median(height_r2, na.rm = TRUE),
+    BMI_Median_R2 = median(bmi_r2, na.rm = TRUE)
+  )
+
+kable(t(fit_quality), digits = 3,
+      caption = "Mean and Median R² for Individual Regressions",
+      col.names = "Value") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+cat("\nNote: High R² values indicate linear growth trajectories fit well.\n")
+```
+
+---
+
+# Problem 11.97: Weight Growth Rate vs. Mean HgbA1c
+
+## Research Question
+
+Is there a significant association between the **rate of weight growth** (b) and **mean HgbA1c** (h)?
+
+### Hypothesis
+
+- **H₀:** β₁ = 0 (No association between weight growth rate and HgbA1c)
+- **H₁:** β₁ ≠ 0 (Association exists)
+
+**Expected:** Higher HgbA1c (poorer control) might slow growth
+
+```{r problem-11.97}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 11.97: WEIGHT GROWTH RATE vs. MEAN HgbA1c\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Remove subjects with missing data
+data_weight <- growth_rates %>%
+  filter(!is.na(b_weight), !is.na(mean_hgba1c), n_visits >= 2)
+
+cat("Sample size (subjects with ≥2 visits):", nrow(data_weight), "\n\n")
+
+# Fit regression model
+model_weight <- lm(b_weight ~ mean_hgba1c, data = data_weight)
+
+cat("=== REGRESSION MODEL ===\n")
+cat("Outcome: Weight Growth Rate (kg/year)\n")
+cat("Predictor: Mean HgbA1c (%)\n\n")
+
+summary(model_weight)
+
+# Tidy output
+cat("\n=== MODEL COEFFICIENTS ===\n")
+tidy(model_weight, conf.int = TRUE) %>%
+  kable(digits = 5, caption = "Regression Coefficients with 95% CI") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Model fit statistics
+cat("\n=== MODEL FIT STATISTICS ===\n")
+glance(model_weight) %>%
+  dplyr::select(r.squared, adj.r.squared, sigma, statistic, p.value, df, df.residual) %>%
+  kable(digits = 5, caption = "Model Fit Statistics") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Interpretation
+cat("\n=== INTERPRETATION ===\n")
+beta0 <- coef(model_weight)[1]
+beta1 <- coef(model_weight)[2]
+pval <- summary(model_weight)$coefficients[2, 4]
+rsq <- summary(model_weight)$r.squared
+
+cat(sprintf("Intercept (β₀): %.5f kg/year\n", beta0))
+cat(sprintf("Slope (β₁): %.5f kg/year per 1%% HgbA1c\n\n", beta1))
+
+cat("INTERPRETATION OF SLOPE:\n")
+cat(sprintf("  For each 1%% increase in mean HgbA1c,\n"))
+cat(sprintf("  weight growth rate changes by %.5f kg/year\n\n", beta1))
+
+if (pval < 0.05) {
+  cat(sprintf("STATISTICAL SIGNIFICANCE: p = %.4f < 0.05\n", pval))
+  cat("  The association is statistically SIGNIFICANT.\n\n")
+  if (beta1 < 0) {
+    cat("DIRECTION: NEGATIVE association\n")
+    cat("  Higher HgbA1c (poorer control) → SLOWER weight gain\n")
+    cat("  Poor glycemic control may impair growth\n")
+  } else {
+    cat("DIRECTION: POSITIVE association\n")
+    cat("  Higher HgbA1c (poorer control) → FASTER weight gain\n")
+  }
+} else {
+  cat(sprintf("STATISTICAL SIGNIFICANCE: p = %.4f ≥ 0.05\n", pval))
+  cat("  The association is NOT statistically significant.\n")
+  cat("  No evidence that HgbA1c affects weight growth rate.\n")
+}
+
+cat(sprintf("\nR²: %.4f (%.1f%% of variance explained)\n", rsq, rsq * 100))
+
+# Goodness of fit
+cat("\n=== GOODNESS OF FIT DIAGNOSTICS ===\n\n")
+
+shapiro_weight <- shapiro.test(residuals(model_weight))
+cat("Normality of residuals (Shapiro-Wilk):\n")
+cat(sprintf("  W = %.4f, p = %.4f\n", shapiro_weight$statistic, shapiro_weight$p.value))
+if (shapiro_weight$p.value >= 0.05) {
+  cat("  ✓ Residuals are approximately normal\n")
+} else {
+  cat("  ⚠ Residuals may not be normal\n")
+}
+
+bp_weight <- bptest(model_weight)
+cat("\nHomoscedasticity (Breusch-Pagan):\n")
+cat(sprintf("  BP = %.4f, p = %.4f\n", bp_weight$statistic, bp_weight$p.value))
+if (bp_weight$p.value >= 0.05) {
+  cat("  ✓ Constant variance assumption met\n")
+} else {
+  cat("  ⚠ Heteroscedasticity detected\n")
+}
+```
+
+---
+
+# Problem 11.98: Height Growth Rate vs. Mean HgbA1c
+
+## Research Question
+
+Is there a significant association between the **rate of height growth** (b) and **mean HgbA1c** (h)?
+
+```{r problem-11.98}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 11.98: HEIGHT GROWTH RATE vs. MEAN HgbA1c\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Remove subjects with missing data
+data_height <- growth_rates %>%
+  filter(!is.na(b_height), !is.na(mean_hgba1c), n_visits >= 2)
+
+cat("Sample size (subjects with ≥2 visits):", nrow(data_height), "\n\n")
+
+# Fit regression model
+model_height <- lm(b_height ~ mean_hgba1c, data = data_height)
+
+cat("=== REGRESSION MODEL ===\n")
+cat("Outcome: Height Growth Rate (cm/year)\n")
+cat("Predictor: Mean HgbA1c (%)\n\n")
+
+summary(model_height)
+
+# Tidy output
+cat("\n=== MODEL COEFFICIENTS ===\n")
+tidy(model_height, conf.int = TRUE) %>%
+  kable(digits = 5, caption = "Regression Coefficients with 95% CI") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Interpretation
+beta1_height <- coef(model_height)[2]
+pval_height <- summary(model_height)$coefficients[2, 4]
+rsq_height <- summary(model_height)$r.squared
+
+cat("\n=== INTERPRETATION ===\n")
+cat(sprintf("Slope (β₁): %.5f cm/year per 1%% HgbA1c\n\n", beta1_height))
+
+if (pval_height < 0.05) {
+  cat(sprintf("STATISTICAL SIGNIFICANCE: p = %.4f < 0.05\n", pval_height))
+  cat("  The association is statistically SIGNIFICANT.\n\n")
+  if (beta1_height < 0) {
+    cat("DIRECTION: NEGATIVE association\n")
+    cat("  Higher HgbA1c → SLOWER height growth\n")
+    cat("  Poor glycemic control may stunt linear growth\n")
+  } else {
+    cat("DIRECTION: POSITIVE association\n")
+    cat("  Higher HgbA1c → FASTER height growth\n")
+  }
+} else {
+  cat(sprintf("STATISTICAL SIGNIFICANCE: p = %.4f ≥ 0.05\n", pval_height))
+  cat("  The association is NOT statistically significant.\n")
+  cat("  No evidence that HgbA1c affects height growth rate.\n")
+}
+
+cat(sprintf("\nR²: %.4f (%.1f%% of variance explained)\n", rsq_height, rsq_height * 100))
+
+# Goodness of fit
+cat("\n=== GOODNESS OF FIT DIAGNOSTICS ===\n\n")
+
+shapiro_height <- shapiro.test(residuals(model_height))
+bp_height <- bptest(model_height)
+
+cat(sprintf("Shapiro-Wilk: W = %.4f, p = %.4f\n", shapiro_height$statistic, shapiro_height$p.value))
+cat(sprintf("Breusch-Pagan: BP = %.4f, p = %.4f\n", bp_height$statistic, bp_height$p.value))
+```
+
+---
+
+# Problem 11.99: BMI Growth Rate vs. Mean HgbA1c
+
+## Research Question
+
+Is there a significant association between the **rate of BMI change** (b) and **mean HgbA1c** (h)?
+
+```{r problem-11.99}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 11.99: BMI GROWTH RATE vs. MEAN HgbA1c\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Remove subjects with missing data
+data_bmi <- growth_rates %>%
+  filter(!is.na(b_bmi), !is.na(mean_hgba1c), n_visits >= 2)
+
+cat("Sample size (subjects with ≥2 visits):", nrow(data_bmi), "\n\n")
+
+# Fit regression model
+model_bmi <- lm(b_bmi ~ mean_hgba1c, data = data_bmi)
+
+cat("=== REGRESSION MODEL ===\n")
+cat("Outcome: BMI Growth Rate (kg/m²/year)\n")
+cat("Predictor: Mean HgbA1c (%)\n\n")
+
+summary(model_bmi)
+
+# Tidy output
+cat("\n=== MODEL COEFFICIENTS ===\n")
+tidy(model_bmi, conf.int = TRUE) %>%
+  kable(digits = 5, caption = "Regression Coefficients with 95% CI") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Interpretation
+beta1_bmi <- coef(model_bmi)[2]
+pval_bmi <- summary(model_bmi)$coefficients[2, 4]
+rsq_bmi <- summary(model_bmi)$r.squared
+
+cat("\n=== INTERPRETATION ===\n")
+cat(sprintf("Slope (β₁): %.5f kg/m²/year per 1%% HgbA1c\n\n", beta1_bmi))
+
+if (pval_bmi < 0.05) {
+  cat(sprintf("STATISTICAL SIGNIFICANCE: p = %.4f < 0.05\n", pval_bmi))
+  cat("  The association is statistically SIGNIFICANT.\n\n")
+  if (beta1_bmi < 0) {
+    cat("DIRECTION: NEGATIVE association\n")
+    cat("  Higher HgbA1c → SLOWER BMI increase\n")
+    cat("  Poor control may affect body composition\n")
+  } else {
+    cat("DIRECTION: POSITIVE association\n")
+    cat("  Higher HgbA1c → FASTER BMI increase\n")
+  }
+} else {
+  cat(sprintf("STATISTICAL SIGNIFICANCE: p = %.4f ≥ 0.05\n", pval_bmi))
+  cat("  The association is NOT statistically significant.\n")
+  cat("  No evidence that HgbA1c affects BMI growth rate.\n")
+}
+
+cat(sprintf("\nR²: %.4f (%.1f%% of variance explained)\n", rsq_bmi, rsq_bmi * 100))
+
+# Goodness of fit
+cat("\n=== GOODNESS OF FIT DIAGNOSTICS ===\n\n")
+
+shapiro_bmi <- shapiro.test(residuals(model_bmi))
+bp_bmi <- bptest(model_bmi)
+
+cat(sprintf("Shapiro-Wilk: W = %.4f, p = %.4f\n", shapiro_bmi$statistic, shapiro_bmi$p.value))
+cat(sprintf("Breusch-Pagan: BP = %.4f, p = %.4f\n", bp_bmi$statistic, bp_bmi$p.value))
+```
+
+---
+
+# Diagnostic Plots
+
+```{r diagnostic-plots, fig.height=12}
+cat("\n=== DIAGNOSTIC PLOTS FOR ALL THREE MODELS ===\n\n")
+
+par(mfrow = c(3, 4), mar = c(4, 4, 3, 1))
+
+# Weight model
+plot(model_weight, which = 1, main = "Weight: Residuals vs Fitted")
+plot(model_weight, which = 2, main = "Weight: Q-Q Plot")
+plot(model_weight, which = 3, main = "Weight: Scale-Location")
+plot(model_weight, which = 5, main = "Weight: Residuals vs Leverage")
+
+# Height model
+plot(model_height, which = 1, main = "Height: Residuals vs Fitted")
+plot(model_height, which = 2, main = "Height: Q-Q Plot")
+plot(model_height, which = 3, main = "Height: Scale-Location")
+plot(model_height, which = 5, main = "Height: Residuals vs Leverage")
+
+# BMI model
+plot(model_bmi, which = 1, main = "BMI: Residuals vs Fitted")
+plot(model_bmi, which = 2, main = "BMI: Q-Q Plot")
+plot(model_bmi, which = 3, main = "BMI: Scale-Location")
+plot(model_bmi, which = 5, main = "BMI: Residuals vs Leverage")
+```
+
+---
+
+# Visualization: Growth Rates vs. HgbA1c
+
+```{r scatterplots, fig.height=10}
+# Scatterplots for all three outcomes
+
+p1 <- ggplot(data_weight, aes(x = mean_hgba1c, y = b_weight)) +
+  geom_point(alpha = 0.6, size = 3, color = "#2E86AB") +
+  geom_smooth(method = "lm", se = TRUE, color = "#A23B72", fill = "#F18F01", alpha = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  labs(title = "Problem 11.97: Weight Growth Rate vs. Mean HgbA1c",
+       subtitle = sprintf("β = %.5f, p = %.4f, R² = %.3f",
+                         coef(model_weight)[2],
+                         summary(model_weight)$coefficients[2, 4],
+                         summary(model_weight)$r.squared),
+       x = "Mean HgbA1c (%)",
+       y = "Weight Growth Rate (kg/year)") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 12))
+
+p2 <- ggplot(data_height, aes(x = mean_hgba1c, y = b_height)) +
+  geom_point(alpha = 0.6, size = 3, color = "#A23B72") +
+  geom_smooth(method = "lm", se = TRUE, color = "#2E86AB", fill = "#F18F01", alpha = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  labs(title = "Problem 11.98: Height Growth Rate vs. Mean HgbA1c",
+       subtitle = sprintf("β = %.5f, p = %.4f, R² = %.3f",
+                         coef(model_height)[2],
+                         summary(model_height)$coefficients[2, 4],
+                         summary(model_height)$r.squared),
+       x = "Mean HgbA1c (%)",
+       y = "Height Growth Rate (cm/year)") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 12))
+
+p3 <- ggplot(data_bmi, aes(x = mean_hgba1c, y = b_bmi)) +
+  geom_point(alpha = 0.6, size = 3, color = "#F18F01") +
+  geom_smooth(method = "lm", se = TRUE, color = "#2E86AB", fill = "#A23B72", alpha = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  labs(title = "Problem 11.99: BMI Growth Rate vs. Mean HgbA1c",
+       subtitle = sprintf("β = %.5f, p = %.4f, R² = %.3f",
+                         coef(model_bmi)[2],
+                         summary(model_bmi)$coefficients[2, 4],
+                         summary(model_bmi)$r.squared),
+       x = "Mean HgbA1c (%)",
+       y = "BMI Growth Rate (kg/m²/year)") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 12))
+
+grid.arrange(p1, p2, p3, ncol = 1)
+```
+
+Note: Dashed horizontal line at y = 0 represents no growth
+
+---
+
+# Example Growth Trajectories
+
+```{r example-trajectories, fig.height=10}
+# Show example growth trajectories for a few subjects
+
+# Select 6 subjects with different HgbA1c levels
+example_ids <- growth_rates %>%
+  arrange(mean_hgba1c) %>%
+  slice(c(1, 10, 20, 30, 40, nrow(.))) %>%
+  pull(ID)
+
+example_data <- diabetes_clean %>%
+  filter(ID %in% example_ids) %>%
+  left_join(growth_rates %>% dplyr::select(ID, mean_hgba1c, b_weight, b_height, b_bmi),
+            by = "ID") %>%
+  mutate(ID_label = paste0("ID ", ID, " (HgbA1c=", round(mean_hgba1c, 1), "%)"))
+
+# Weight trajectories
+p1 <- ggplot(example_data, aes(x = age_yrs, y = wt_kg, color = ID_label, group = ID)) +
+  geom_point(size = 2) +
+  geom_line(linewidth = 1) +
+  labs(title = "Example Weight Growth Trajectories",
+       x = "Age (years)",
+       y = "Weight (kg)",
+       color = "Subject") +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+# Height trajectories
+p2 <- ggplot(example_data, aes(x = age_yrs, y = ht_cm, color = ID_label, group = ID)) +
+  geom_point(size = 2) +
+  geom_line(linewidth = 1) +
+  labs(title = "Example Height Growth Trajectories",
+       x = "Age (years)",
+       y = "Height (cm)",
+       color = "Subject") +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+# BMI trajectories
+p3 <- ggplot(example_data, aes(x = age_yrs, y = bmi, color = ID_label, group = ID)) +
+  geom_point(size = 2) +
+  geom_line(linewidth = 1) +
+  labs(title = "Example BMI Trajectories",
+       x = "Age (years)",
+       y = "BMI (kg/m²)",
+       color = "Subject") +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+grid.arrange(p1, p2, p3, ncol = 1)
+```
+
+---
+
+# Summary of Results
+
+```{r summary-table}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("SUMMARY OF ALL THREE ANALYSES\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Create comprehensive summary table
+summary_results <- data.frame(
+  Problem = c("11.97", "11.98", "11.99"),
+  Outcome = c("Weight Growth Rate (kg/yr)",
+              "Height Growth Rate (cm/yr)",
+              "BMI Growth Rate (kg/m²/yr)"),
+  N = c(nrow(data_weight), nrow(data_height), nrow(data_bmi)),
+  Slope_Beta1 = c(coef(model_weight)[2],
+                  coef(model_height)[2],
+                  coef(model_bmi)[2]),
+  SE = c(summary(model_weight)$coefficients[2, 2],
+         summary(model_height)$coefficients[2, 2],
+         summary(model_bmi)$coefficients[2, 2]),
+  P_value = c(summary(model_weight)$coefficients[2, 4],
+              summary(model_height)$coefficients[2, 4],
+              summary(model_bmi)$coefficients[2, 4]),
+  R_squared = c(summary(model_weight)$r.squared,
+                summary(model_height)$r.squared,
+                summary(model_bmi)$r.squared),
+  Significant = c(
+    ifelse(summary(model_weight)$coefficients[2, 4] < 0.05, "Yes", "No"),
+    ifelse(summary(model_height)$coefficients[2, 4] < 0.05, "Yes", "No"),
+    ifelse(summary(model_bmi)$coefficients[2, 4] < 0.05, "Yes", "No")
+  ),
+  Direction = c(
+    ifelse(coef(model_weight)[2] > 0, "Positive", "Negative"),
+    ifelse(coef(model_height)[2] > 0, "Positive", "Negative"),
+    ifelse(coef(model_bmi)[2] > 0, "Positive", "Negative")
+  )
+)
+
+kable(summary_results, digits = 5,
+      caption = "Summary of Growth Rate - HgbA1c Associations") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+cat("\n=== OVERALL CONCLUSIONS ===\n\n")
+
+n_sig <- sum(summary_results$Significant == "Yes")
+n_neg <- sum(summary_results$Direction == "Negative" & summary_results$Significant == "Yes")
+
+cat("SUMMARY OF FINDINGS:\n")
+cat(sprintf("  • %d out of 3 outcomes show significant associations\n", n_sig))
+
+if (n_sig > 0) {
+  cat("\nSIGNIFICANT ASSOCIATIONS:\n")
+  sig_results <- summary_results %>% filter(Significant == "Yes")
+  for (i in 1:nrow(sig_results)) {
+    cat(sprintf("  • %s: β = %.5f (p = %.4f)\n",
+                sig_results$Outcome[i],
+                sig_results$Slope_Beta1[i],
+                sig_results$P_value[i]))
+  }
+}
+
+if (n_neg > 0) {
+  cat("\nCLINICAL INTERPRETATION:\n")
+  cat("  ⚠ NEGATIVE associations suggest:\n")
+  cat("    - Higher HgbA1c (poorer glycemic control) →\n")
+  cat("    - SLOWER growth rates\n")
+  cat("    - Poor diabetes control may IMPAIR growth in children\n")
+}
+
+cat("\nMETHODOLOGICAL STRENGTHS:\n")
+cat("  ✓ Two-stage approach accounts for repeated measures\n")
+cat("  ✓ Individual growth rates capture longitudinal patterns\n")
+cat("  ✓ Mean HgbA1c represents average glycemic control\n")
+cat("  ✓ Reduces complex longitudinal data to interpretable summary\n")
+
+cat("\nLIMITATIONS:\n")
+cat("  • Assumes linear growth trajectories\n")
+cat("  • Requires ≥2 observations per subject\n")
+cat("  • Does not account for variability in growth rate estimates\n")
+cat("  • Ignores time-varying confounders\n")
+```
+
+---
+
+# Conclusions
+
+## Problem 11.97 (Weight Growth Rate)
+- **Slope (β₁):** `r sprintf("%.5f", coef(model_weight)[2])` kg/year per 1% HgbA1c
+- **P-value:** `r sprintf("%.4f", summary(model_weight)$coefficients[2, 4])`
+- **Significant:** `r ifelse(summary(model_weight)$coefficients[2, 4] < 0.05, "Yes", "No")`
+- **Interpretation:** `r ifelse(summary(model_weight)$coefficients[2, 4] < 0.05, ifelse(coef(model_weight)[2] < 0, "Higher HgbA1c associated with SLOWER weight gain", "Higher HgbA1c associated with FASTER weight gain"), "No significant association between HgbA1c and weight growth rate")`
+
+## Problem 11.98 (Height Growth Rate)
+- **Slope (β₁):** `r sprintf("%.5f", coef(model_height)[2])` cm/year per 1% HgbA1c
+- **P-value:** `r sprintf("%.4f", summary(model_height)$coefficients[2, 4])`
+- **Significant:** `r ifelse(summary(model_height)$coefficients[2, 4] < 0.05, "Yes", "No")`
+- **Interpretation:** `r ifelse(summary(model_height)$coefficients[2, 4] < 0.05, ifelse(coef(model_height)[2] < 0, "Higher HgbA1c associated with SLOWER height growth", "Higher HgbA1c associated with FASTER height growth"), "No significant association between HgbA1c and height growth rate")`
+
+## Problem 11.99 (BMI Growth Rate)
+- **Slope (β₁):** `r sprintf("%.5f", coef(model_bmi)[2])` kg/m²/year per 1% HgbA1c
+- **P-value:** `r sprintf("%.4f", summary(model_bmi)$coefficients[2, 4])`
+- **Significant:** `r ifelse(summary(model_bmi)$coefficients[2, 4] < 0.05, "Yes", "No")`
+- **Interpretation:** `r ifelse(summary(model_bmi)$coefficients[2, 4] < 0.05, ifelse(coef(model_bmi)[2] < 0, "Higher HgbA1c associated with SLOWER BMI increase", "Higher HgbA1c associated with FASTER BMI increase"), "No significant association between HgbA1c and BMI growth rate")`
+
+---
+
+**END OF ANALYSIS**

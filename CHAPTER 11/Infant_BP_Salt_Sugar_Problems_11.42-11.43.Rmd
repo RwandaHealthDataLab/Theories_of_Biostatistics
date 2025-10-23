@@ -1,0 +1,881 @@
+---
+title: "Problems 11.42-11.43: Infant Blood Pressure and Salt/Sugar Responsiveness"
+author: "Linear Regression Analysis with Transformations"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    number_sections: true
+    theme: cerulean
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 12,
+  fig.height = 8,
+  fig.align = 'center'
+)
+```
+
+# Introduction
+
+## Study Background
+
+This document analyzes the relationship between **infant blood pressure** and **responsiveness to salt and sugar** using the **INFANTBP.DAT** dataset from Rosner's Fundamentals of Biostatistics.
+
+### Research Context
+
+The study investigates whether infant responsiveness to:
+- **Salt (sodium)**
+- **Sugar (sucrose)**
+
+is associated with blood pressure levels, which may have implications for understanding early cardiovascular development.
+
+## Research Questions
+
+**Problem 11.42:** Use linear regression to relate **salt index** and **sugar index** to **systolic blood pressure (SBP)**. Assess goodness of fit and use data transformations if necessary.
+
+**Problem 11.43:** Use linear regression to relate **salt index** and **sugar index** to **diastolic blood pressure (DBP)**. Assess goodness of fit and use data transformations if necessary.
+
+## Analytical Approach
+
+For each outcome (SBP and DBP) and each predictor (salt index and sugar index):
+
+1. **Exploratory Data Analysis**
+   - Distributions and summary statistics
+   - Scatterplots to assess linearity
+
+2. **Initial Linear Regression**
+   - Fit untransformed model
+   - Assess assumptions
+
+3. **Transformation Assessment**
+   - Check for non-linearity
+   - Test log, square root, and other transformations
+   - Compare model fits
+
+4. **Final Model Selection**
+   - Choose best-fitting model
+   - Comprehensive diagnostics
+   - Interpretation
+
+# Data Loading and Preparation
+
+```{r load-packages}
+# Load required libraries
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(car)         # For VIF, Box-Cox, and diagnostic plots
+library(lmtest)      # For diagnostic tests
+library(ggplot2)
+library(gridExtra)   # For multiple plots
+library(broom)       # For tidy model outputs
+library(MASS)        # For Box-Cox transformation
+
+# Set theme for plots
+theme_set(theme_minimal())
+```
+
+
+```{r load-data}
+# Load the INFANTBP.DAT dataset
+data_path <- "Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/INFANTBP.DAT.txt"
+
+# Read the data - handle quotes in column names
+infantbp_data <- tryCatch({
+  read.csv(data_path, header = TRUE, strip.white = TRUE, quote = "'\"")
+}, error = function(e) {
+  cat("Error loading data from primary path. Trying alternative path...\n")
+  read.csv("../Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/INFANTBP.DAT.txt",
+           header = TRUE, strip.white = TRUE, quote = "'\"")
+})
+
+# Clean column names (remove any quotes)
+colnames(infantbp_data) <- gsub("'", "", colnames(infantbp_data))
+colnames(infantbp_data) <- gsub("\"", "", colnames(infantbp_data))
+
+# Display structure
+cat("Dataset Structure:\n")
+str(infantbp_data)
+
+cat("\nColumn names in dataset:\n")
+print(colnames(infantbp_data))
+
+cat("\nFirst few rows:\n")
+head(infantbp_data, 10) %>%
+  kable(caption = "First 10 Observations from INFANTBP Dataset") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+# Variable Definitions
+
+```{r variable-definitions}
+cat("=== INFANTBP Dataset Variables ===\n\n")
+
+# Create variable definitions table
+var_defs <- data.frame(
+  Variable = c("Id", "Mn_sbp", "Mn_dbp", "MSB1slt-MSB10slt", "MSB1sug-MSB5sug"),
+  Description = c(
+    "Infant identification number",
+    "Mean systolic blood pressure (mmHg)",
+    "Mean diastolic blood pressure (mmHg)",
+    "Salt responsiveness measurements (10 measurements)",
+    "Sugar responsiveness measurements (5 measurements)"
+  ),
+  Type = c("ID", "Continuous (Outcome)", "Continuous (Outcome)",
+           "Continuous", "Continuous")
+)
+
+kable(var_defs,
+      caption = "Original INFANTBP Dataset Variables") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+cat("\n\nAll variables in dataset:\n")
+for(i in 1:length(colnames(infantbp_data))) {
+  cat(sprintf("%2d. %s\n", i, colnames(infantbp_data)[i]))
+}
+
+cat("\n\n=== Derived Variables ===\n")
+cat("We will create the following indices:\n")
+cat("  - Salt_Index: Mean of MSB1slt through MSB10slt\n")
+cat("  - Sugar_Index: Mean of MSB1sug through MSB5sug\n")
+cat("  - SBP: Rename of Mn_sbp for convenience\n")
+cat("  - DBP: Rename of Mn_dbp for convenience\n")
+```
+
+# Data Processing
+
+```{r data-processing}
+# Remove any rows with missing values in key variables
+# First identify which columns to use
+
+# Typical INFANTBP variables (adjust based on actual data):
+# SBP, DBP, Salt Index, Sugar Index
+
+cat("Checking for missing values...\n")
+missing_summary <- infantbp_data %>%
+  summarise(across(everything(), ~sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "Missing_Count") %>%
+  filter(Missing_Count > 0)
+
+if(nrow(missing_summary) > 0) {
+  kable(missing_summary,
+        caption = "Variables with Missing Values") %>%
+    kable_styling(bootstrap_options = c("striped", "hover"),
+                  full_width = FALSE)
+} else {
+  cat("No missing values detected.\n")
+}
+
+# Create clean dataset (no filtering needed if no missing values)
+infantbp_clean <- infantbp_data
+
+# Create Salt and Sugar Indices
+# Salt Index: Average or sum of MSB1slt through MSB10slt
+# Sugar Index: Average or sum of MSB1sug through MSB5sug
+
+cat("\nCreating Salt and Sugar Indices...\n")
+
+# Identify salt columns
+salt_cols <- grep("^MSB.*slt$", colnames(infantbp_clean), value = TRUE)
+cat("Salt measurement columns:", paste(salt_cols, collapse = ", "), "\n")
+
+# Identify sugar columns
+sugar_cols <- grep("^MSB.*sug$", colnames(infantbp_clean), value = TRUE)
+cat("Sugar measurement columns:", paste(sugar_cols, collapse = ", "), "\n")
+
+# Create indices (using mean of available measurements)
+infantbp_clean <- infantbp_clean %>%
+  mutate(
+    # Salt Index: mean of all salt measurements
+    Salt_Index = rowMeans(dplyr::select(., all_of(salt_cols)), na.rm = TRUE),
+
+    # Sugar Index: mean of all sugar measurements
+    Sugar_Index = rowMeans(dplyr::select(., all_of(sugar_cols)), na.rm = TRUE),
+
+    # Rename BP variables for easier access
+    SBP = Mn_sbp,
+    DBP = Mn_dbp
+  )
+
+cat("\nIndices created successfully!\n")
+cat("  Salt Index: Mean of", length(salt_cols), "measurements\n")
+cat("  Sugar Index: Mean of", length(sugar_cols), "measurements\n\n")
+
+# Summary of created indices
+cat("Summary of created indices:\n")
+index_summary <- infantbp_clean %>%
+  summarise(
+    N = n(),
+    Salt_Mean = mean(Salt_Index, na.rm = TRUE),
+    Salt_SD = sd(Salt_Index, na.rm = TRUE),
+    Sugar_Mean = mean(Sugar_Index, na.rm = TRUE),
+    Sugar_SD = sd(Sugar_Index, na.rm = TRUE),
+    SBP_Mean = mean(SBP, na.rm = TRUE),
+    SBP_SD = sd(SBP, na.rm = TRUE),
+    DBP_Mean = mean(DBP, na.rm = TRUE),
+    DBP_SD = sd(DBP, na.rm = TRUE)
+  )
+
+kable(t(index_summary),
+      caption = "Summary of Salt/Sugar Indices and Blood Pressure",
+      digits = 2,
+      col.names = "Value") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+cat("\nDataset summary:\n")
+cat("  Total observations:", nrow(infantbp_clean), "\n")
+```
+
+# Exploratory Data Analysis
+
+## Summary Statistics
+
+```{r summary-statistics}
+# Generate summary statistics for all numeric variables
+summary_stats <- infantbp_clean %>%
+  summarise(across(where(is.numeric),
+                  list(
+                    N = ~sum(!is.na(.)),
+                    Mean = ~mean(., na.rm = TRUE),
+                    SD = ~sd(., na.rm = TRUE),
+                    Median = ~median(., na.rm = TRUE),
+                    Min = ~min(., na.rm = TRUE),
+                    Max = ~max(., na.rm = TRUE)
+                  )))
+
+# Reshape for better display
+summary_long <- summary_stats %>%
+  pivot_longer(everything(),
+               names_to = c("Variable", "Statistic"),
+               names_pattern = "(.+)_(.+)") %>%
+  pivot_wider(names_from = Statistic, values_from = value)
+
+kable(summary_long,
+      caption = "Summary Statistics for Numeric Variables",
+      digits = 2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+## Distribution Plots
+
+```{r distribution-plots}
+# Create histograms for key variables
+numeric_vars <- names(infantbp_clean)[sapply(infantbp_clean, is.numeric)]
+
+if(length(numeric_vars) > 0) {
+  # Create plots for first few numeric variables
+  n_plots <- min(length(numeric_vars), 6)
+
+  plot_list <- list()
+  for(i in 1:n_plots) {
+    var_name <- numeric_vars[i]
+    p <- ggplot(infantbp_clean, aes(x = .data[[var_name]])) +
+      geom_histogram(bins = 20, fill = "#3498db", alpha = 0.7, color = "black") +
+      geom_density(aes(y = after_stat(count)), color = "red", size = 1) +
+      labs(title = paste("Distribution of", var_name),
+           x = var_name,
+           y = "Count") +
+      theme_minimal()
+    plot_list[[i]] <- p
+  }
+
+  # Arrange plots
+  do.call(grid.arrange, c(plot_list, ncol = 2))
+}
+```
+
+# Analysis Framework
+
+```{r analysis-framework}
+# Function to perform comprehensive regression analysis with transformations
+analyze_bp_relationship <- function(data, predictor_var, outcome_var,
+                                   predictor_label, outcome_label) {
+
+  cat("\n", strrep("=", 80), "\n", sep = "")
+  cat("ANALYSIS:", outcome_label, "~", predictor_label, "\n")
+  cat(strrep("=", 80), "\n\n")
+
+  # Create analysis dataset
+  analysis_data <- data %>%
+    dplyr::select(Predictor = all_of(predictor_var),
+                  Outcome = all_of(outcome_var)) %>%
+    filter(!is.na(Predictor), !is.na(Outcome))
+
+  n_obs <- nrow(analysis_data)
+  cat("Sample size:", n_obs, "\n\n")
+
+  if(n_obs < 3) {
+    cat("ERROR: Insufficient data for analysis\n")
+    return(NULL)
+  }
+
+  # === PART 1: EXPLORATORY SCATTERPLOT ===
+  cat("=== EXPLORATORY ANALYSIS ===\n\n")
+
+  p_scatter <- ggplot(analysis_data, aes(x = Predictor, y = Outcome)) +
+    geom_point(alpha = 0.6, color = "#3498db", size = 2) +
+    geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink") +
+    geom_smooth(method = "loess", se = FALSE, color = "green", linetype = "dashed") +
+    labs(title = paste(outcome_label, "vs", predictor_label),
+         subtitle = "Red = Linear fit, Green = LOESS (non-parametric)",
+         x = predictor_label,
+         y = outcome_label) +
+    theme_minimal()
+
+  print(p_scatter)
+
+  # === PART 2: UNTRANSFORMED MODEL ===
+  cat("\n=== MODEL 1: UNTRANSFORMED (Original Scale) ===\n\n")
+
+  model_original <- lm(Outcome ~ Predictor, data = analysis_data)
+
+  cat("--- Regression Results ---\n")
+  print(summary(model_original))
+
+  # Tidy output
+  tidy_original <- tidy(model_original, conf.int = TRUE)
+  cat("\n")
+  print(kable(tidy_original,
+              caption = "Model 1: Untransformed",
+              digits = 4) %>%
+        kable_styling(bootstrap_options = c("striped", "hover"),
+                      full_width = FALSE))
+
+  glance_original <- glance(model_original)
+  cat(sprintf("\nR² = %.4f, Adjusted R² = %.4f, RMSE = %.4f\n",
+              glance_original$r.squared, glance_original$adj.r.squared,
+              glance_original$sigma))
+
+  # Diagnostic plots for untransformed model
+  cat("\n--- Diagnostic Plots (Untransformed) ---\n")
+  par(mfrow = c(2, 2))
+  plot(model_original, which = 1:4)
+  par(mfrow = c(1, 1))
+
+  # Shapiro-Wilk test
+  shapiro_original <- shapiro.test(residuals(model_original))
+  cat(sprintf("\nShapiro-Wilk normality test: W = %.4f, p = %.4f\n",
+              shapiro_original$statistic, shapiro_original$p.value))
+
+  # Breusch-Pagan test
+  bp_original <- bptest(model_original)
+  cat(sprintf("Breusch-Pagan homoscedasticity test: BP = %.4f, p = %.4f\n",
+              bp_original$statistic, bp_original$p.value))
+
+  # === PART 3: BOX-COX TRANSFORMATION ===
+  cat("\n\n=== BOX-COX TRANSFORMATION ANALYSIS ===\n\n")
+
+  # Box-Cox requires positive values
+  if(min(analysis_data$Outcome) > 0) {
+    cat("Performing Box-Cox analysis on outcome variable...\n")
+
+    bc <- tryCatch({
+      boxcox(model_original, plotit = TRUE)
+    }, error = function(e) {
+      cat("Error in Box-Cox analysis:", e$message, "\n")
+      NULL
+    })
+
+    if(!is.null(bc)) {
+      lambda_optimal <- bc$x[which.max(bc$y)]
+      cat(sprintf("\nOptimal λ = %.3f\n", lambda_optimal))
+
+      # Interpret lambda
+      if(abs(lambda_optimal - 1) < 0.1) {
+        cat("Interpretation: λ ≈ 1 suggests NO transformation needed\n")
+        recommended_transform <- "none"
+      } else if(abs(lambda_optimal - 0.5) < 0.1) {
+        cat("Interpretation: λ ≈ 0.5 suggests SQUARE ROOT transformation\n")
+        recommended_transform <- "sqrt"
+      } else if(abs(lambda_optimal) < 0.1) {
+        cat("Interpretation: λ ≈ 0 suggests LOG transformation\n")
+        recommended_transform <- "log"
+      } else if(abs(lambda_optimal - (-1)) < 0.1) {
+        cat("Interpretation: λ ≈ -1 suggests RECIPROCAL transformation\n")
+        recommended_transform <- "reciprocal"
+      } else {
+        cat("Interpretation: λ =", lambda_optimal, "suggests custom power transformation\n")
+        recommended_transform <- "custom"
+      }
+    } else {
+      recommended_transform <- "none"
+    }
+  } else {
+    cat("Cannot perform Box-Cox: Outcome contains non-positive values\n")
+    cat("Will test log(Outcome + constant) and sqrt transformations\n")
+    recommended_transform <- "sqrt"
+  }
+
+  # === PART 4: TEST COMMON TRANSFORMATIONS ===
+  cat("\n\n=== COMPARING TRANSFORMATION OPTIONS ===\n\n")
+
+  models_list <- list()
+  models_list[["Original"]] <- model_original
+
+  # Log transformation (if feasible)
+  if(min(analysis_data$Outcome) > 0) {
+    cat("--- MODEL 2: Log Transformation ---\n")
+    analysis_data$Outcome_log <- log(analysis_data$Outcome)
+    model_log <- lm(Outcome_log ~ Predictor, data = analysis_data)
+    models_list[["Log"]] <- model_log
+
+    tidy_log <- tidy(model_log, conf.int = TRUE)
+    print(kable(tidy_log, caption = "Model 2: log(Outcome)", digits = 4) %>%
+          kable_styling(bootstrap_options = c("striped", "hover"),
+                        full_width = FALSE))
+
+    glance_log <- glance(model_log)
+    cat(sprintf("R² = %.4f, Adjusted R² = %.4f, RMSE = %.4f\n\n",
+                glance_log$r.squared, glance_log$adj.r.squared, glance_log$sigma))
+  }
+
+  # Square root transformation
+  cat("--- MODEL 3: Square Root Transformation ---\n")
+  if(min(analysis_data$Outcome) >= 0) {
+    analysis_data$Outcome_sqrt <- sqrt(analysis_data$Outcome)
+  } else {
+    # Shift if needed
+    shift <- abs(min(analysis_data$Outcome)) + 1
+    analysis_data$Outcome_sqrt <- sqrt(analysis_data$Outcome + shift)
+    cat(sprintf("Note: Added shift of %.2f to make values positive\n", shift))
+  }
+
+  model_sqrt <- lm(Outcome_sqrt ~ Predictor, data = analysis_data)
+  models_list[["Sqrt"]] <- model_sqrt
+
+  tidy_sqrt <- tidy(model_sqrt, conf.int = TRUE)
+  print(kable(tidy_sqrt, caption = "Model 3: sqrt(Outcome)", digits = 4) %>%
+        kable_styling(bootstrap_options = c("striped", "hover"),
+                      full_width = FALSE))
+
+  glance_sqrt <- glance(model_sqrt)
+  cat(sprintf("R² = %.4f, Adjusted R² = %.4f, RMSE = %.4f\n\n",
+              glance_sqrt$r.squared, glance_sqrt$adj.r.squared, glance_sqrt$sigma))
+
+  # Log(Predictor) transformation
+  if(min(analysis_data$Predictor) > 0) {
+    cat("--- MODEL 4: Log(Predictor) Transformation ---\n")
+    analysis_data$Predictor_log <- log(analysis_data$Predictor)
+    model_log_pred <- lm(Outcome ~ Predictor_log, data = analysis_data)
+    models_list[["Log_Predictor"]] <- model_log_pred
+
+    tidy_log_pred <- tidy(model_log_pred, conf.int = TRUE)
+    print(kable(tidy_log_pred, caption = "Model 4: Outcome ~ log(Predictor)", digits = 4) %>%
+          kable_styling(bootstrap_options = c("striped", "hover"),
+                        full_width = FALSE))
+
+    glance_log_pred <- glance(model_log_pred)
+    cat(sprintf("R² = %.4f, Adjusted R² = %.4f, RMSE = %.4f\n\n",
+                glance_log_pred$r.squared, glance_log_pred$adj.r.squared,
+                glance_log_pred$sigma))
+  }
+
+  # === PART 5: MODEL COMPARISON ===
+  cat("\n=== MODEL COMPARISON SUMMARY ===\n\n")
+
+  comparison_df <- data.frame(
+    Model = character(),
+    R_squared = numeric(),
+    Adj_R_squared = numeric(),
+    AIC = numeric(),
+    BIC = numeric(),
+    RMSE = numeric(),
+    Shapiro_p = numeric(),
+    BP_p = numeric(),
+    stringsAsFactors = FALSE
+  )
+
+  for(model_name in names(models_list)) {
+    model <- models_list[[model_name]]
+    glance_model <- glance(model)
+    shapiro_model <- shapiro.test(residuals(model))
+    bp_model <- bptest(model)
+
+    comparison_df <- rbind(comparison_df, data.frame(
+      Model = model_name,
+      R_squared = glance_model$r.squared,
+      Adj_R_squared = glance_model$adj.r.squared,
+      AIC = AIC(model),
+      BIC = BIC(model),
+      RMSE = glance_model$sigma,
+      Shapiro_p = shapiro_model$p.value,
+      BP_p = bp_model$p.value
+    ))
+  }
+
+  print(kable(comparison_df,
+              caption = "Model Comparison: All Transformations",
+              digits = 4,
+              col.names = c("Model", "R²", "Adj. R²", "AIC", "BIC", "RMSE",
+                          "Shapiro p", "BP p")) %>%
+        kable_styling(bootstrap_options = c("striped", "hover"),
+                      full_width = FALSE))
+
+  # Identify best model
+  cat("\n--- Model Selection ---\n")
+  best_aic_idx <- which.min(comparison_df$AIC)
+  best_r2_idx <- which.max(comparison_df$R_squared)
+
+  cat(sprintf("Best model by AIC: %s (AIC = %.2f)\n",
+              comparison_df$Model[best_aic_idx], comparison_df$AIC[best_aic_idx]))
+  cat(sprintf("Best model by R²: %s (R² = %.4f)\n",
+              comparison_df$Model[best_r2_idx], comparison_df$R_squared[best_r2_idx]))
+
+  # === PART 6: FINAL MODEL DIAGNOSTICS ===
+  cat("\n\n=== FINAL MODEL: COMPREHENSIVE DIAGNOSTICS ===\n\n")
+
+  final_model <- models_list[[comparison_df$Model[best_aic_idx]]]
+  cat("Selected model:", comparison_df$Model[best_aic_idx], "\n\n")
+
+  par(mfrow = c(2, 2))
+  plot(final_model, which = 1:4)
+  par(mfrow = c(1, 1))
+
+  # Additional diagnostics
+  cat("\n--- Influential Points Analysis ---\n")
+  cooks_d <- cooks.distance(final_model)
+  influential <- which(cooks_d > 4/nrow(analysis_data))
+  cat(sprintf("Observations with Cook's D > 4/n: %d\n", length(influential)))
+  if(length(influential) > 0) {
+    cat("Influential observations:", paste(influential, collapse = ", "), "\n")
+  }
+
+  # Return results
+  return(list(
+    outcome = outcome_label,
+    predictor = predictor_label,
+    n = n_obs,
+    models = models_list,
+    comparison = comparison_df,
+    best_model = comparison_df$Model[best_aic_idx],
+    final_model = final_model
+  ))
+}
+```
+
+---
+
+# Problem 11.42: Systolic Blood Pressure (SBP)
+
+## Salt Index vs SBP
+
+```{r sbp-salt}
+# Use the created index variables
+result_sbp_salt <- analyze_bp_relationship(
+  data = infantbp_clean,
+  predictor_var = "Salt_Index",
+  outcome_var = "SBP",
+  predictor_label = "Salt Index",
+  outcome_label = "Systolic BP (SBP)"
+)
+```
+
+## Sugar Index vs SBP
+
+```{r sbp-sugar}
+# Use the created index variables
+result_sbp_sugar <- analyze_bp_relationship(
+  data = infantbp_clean,
+  predictor_var = "Sugar_Index",
+  outcome_var = "SBP",
+  predictor_label = "Sugar Index",
+  outcome_label = "Systolic BP (SBP)"
+)
+```
+
+---
+
+# Problem 11.43: Diastolic Blood Pressure (DBP)
+
+## Salt Index vs DBP
+
+```{r dbp-salt}
+# Use the created index variables
+result_dbp_salt <- analyze_bp_relationship(
+  data = infantbp_clean,
+  predictor_var = "Salt_Index",
+  outcome_var = "DBP",
+  predictor_label = "Salt Index",
+  outcome_label = "Diastolic BP (DBP)"
+)
+```
+
+## Sugar Index vs DBP
+
+```{r dbp-sugar}
+# Use the created index variables
+result_dbp_sugar <- analyze_bp_relationship(
+  data = infantbp_clean,
+  predictor_var = "Sugar_Index",
+  outcome_var = "DBP",
+  predictor_label = "Sugar Index",
+  outcome_label = "Diastolic BP (DBP)"
+)
+```
+
+---
+
+# Comprehensive Summary
+
+## Summary of All Analyses
+
+```{r comprehensive-summary}
+cat("\n=== COMPREHENSIVE SUMMARY: ALL ANALYSES ===\n\n")
+
+# Compile results
+all_results <- list(
+  "SBP ~ Salt" = result_sbp_salt,
+  "SBP ~ Sugar" = result_sbp_sugar,
+  "DBP ~ Salt" = result_dbp_salt,
+  "DBP ~ Sugar" = result_dbp_sugar
+)
+
+# Create summary table
+summary_table <- data.frame(
+  Analysis = character(),
+  N = integer(),
+  Best_Model = character(),
+  R_squared = numeric(),
+  Slope = numeric(),
+  P_value = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for(analysis_name in names(all_results)) {
+  result <- all_results[[analysis_name]]
+
+  if(!is.null(result)) {
+    final_model <- result$final_model
+    tidy_final <- tidy(final_model)
+    glance_final <- glance(final_model)
+
+    summary_table <- rbind(summary_table, data.frame(
+      Analysis = analysis_name,
+      N = result$n,
+      Best_Model = result$best_model,
+      R_squared = glance_final$r.squared,
+      Slope = tidy_final$estimate[2],
+      P_value = tidy_final$p.value[2]
+    ))
+  }
+}
+
+if(nrow(summary_table) > 0) {
+  kable(summary_table,
+        caption = "Summary of All Blood Pressure Analyses",
+        digits = 4,
+        col.names = c("Analysis", "N", "Best Model", "R²", "Slope", "P-value")) %>%
+    kable_styling(bootstrap_options = c("striped", "hover"),
+                  full_width = FALSE) %>%
+    row_spec(which(summary_table$P_value < 0.05),
+             bold = TRUE, background = "#ffffcc")
+} else {
+  cat("No results available for summary.\n")
+}
+```
+
+## Visual Comparison
+
+```{r visual-comparison}
+if(nrow(summary_table) > 0) {
+  # Bar plot of R-squared values
+  p1 <- ggplot(summary_table, aes(x = Analysis, y = R_squared, fill = Best_Model)) +
+    geom_bar(stat = "identity", alpha = 0.7) +
+    geom_text(aes(label = sprintf("%.3f", R_squared)), vjust = -0.5) +
+    labs(title = "Model Performance: R² Comparison",
+         x = "Analysis",
+         y = "R²",
+         fill = "Best Model") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+  print(p1)
+
+  # Slope comparison
+  summary_table$Significant <- ifelse(summary_table$P_value < 0.05, "Yes", "No")
+
+  p2 <- ggplot(summary_table, aes(x = Analysis, y = Slope, fill = Significant)) +
+    geom_bar(stat = "identity", alpha = 0.7) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+    geom_text(aes(label = sprintf("%.3f", Slope)), vjust = -0.5) +
+    scale_fill_manual(values = c("No" = "#95a5a6", "Yes" = "#2ecc71")) +
+    labs(title = "Regression Slopes by Analysis",
+         subtitle = "Green = Statistically Significant (p < 0.05)",
+         x = "Analysis",
+         y = "Slope Coefficient",
+         fill = "Significant") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+  print(p2)
+}
+```
+
+# Conclusions
+
+## Problem 11.42: Systolic Blood Pressure
+
+### Salt Index and SBP
+
+```{r conclusions-sbp-salt, echo=FALSE, results='asis'}
+if(!is.null(result_sbp_salt)) {
+  cat(sprintf("- **Sample size:** %d infants\n", result_sbp_salt$n))
+  cat(sprintf("- **Best model:** %s transformation\n", result_sbp_salt$best_model))
+
+  final_tidy <- tidy(result_sbp_salt$final_model)
+  final_glance <- glance(result_sbp_salt$final_model)
+
+  cat(sprintf("- **R² = %.4f** (%.1f%% of variance explained)\n",
+              final_glance$r.squared, 100 * final_glance$r.squared))
+  cat(sprintf("- **Slope = %.4f** (p = %.4f)\n",
+              final_tidy$estimate[2], final_tidy$p.value[2]))
+
+  if(final_tidy$p.value[2] < 0.05) {
+    cat("- **Conclusion:** SIGNIFICANT relationship between salt index and SBP\n")
+  } else {
+    cat("- **Conclusion:** No significant relationship between salt index and SBP\n")
+  }
+} else {
+  cat("Analysis not available.\n")
+}
+cat("\n")
+```
+
+### Sugar Index and SBP
+
+```{r conclusions-sbp-sugar, echo=FALSE, results='asis'}
+if(!is.null(result_sbp_sugar)) {
+  cat(sprintf("- **Sample size:** %d infants\n", result_sbp_sugar$n))
+  cat(sprintf("- **Best model:** %s transformation\n", result_sbp_sugar$best_model))
+
+  final_tidy <- tidy(result_sbp_sugar$final_model)
+  final_glance <- glance(result_sbp_sugar$final_model)
+
+  cat(sprintf("- **R² = %.4f** (%.1f%% of variance explained)\n",
+              final_glance$r.squared, 100 * final_glance$r.squared))
+  cat(sprintf("- **Slope = %.4f** (p = %.4f)\n",
+              final_tidy$estimate[2], final_tidy$p.value[2]))
+
+  if(final_tidy$p.value[2] < 0.05) {
+    cat("- **Conclusion:** SIGNIFICANT relationship between sugar index and SBP\n")
+  } else {
+    cat("- **Conclusion:** No significant relationship between sugar index and SBP\n")
+  }
+} else {
+  cat("Analysis not available.\n")
+}
+cat("\n")
+```
+
+## Problem 11.43: Diastolic Blood Pressure
+
+### Salt Index and DBP
+
+```{r conclusions-dbp-salt, echo=FALSE, results='asis'}
+if(!is.null(result_dbp_salt)) {
+  cat(sprintf("- **Sample size:** %d infants\n", result_dbp_salt$n))
+  cat(sprintf("- **Best model:** %s transformation\n", result_dbp_salt$best_model))
+
+  final_tidy <- tidy(result_dbp_salt$final_model)
+  final_glance <- glance(result_dbp_salt$final_model)
+
+  cat(sprintf("- **R² = %.4f** (%.1f%% of variance explained)\n",
+              final_glance$r.squared, 100 * final_glance$r.squared))
+  cat(sprintf("- **Slope = %.4f** (p = %.4f)\n",
+              final_tidy$estimate[2], final_tidy$p.value[2]))
+
+  if(final_tidy$p.value[2] < 0.05) {
+    cat("- **Conclusion:** SIGNIFICANT relationship between salt index and DBP\n")
+  } else {
+    cat("- **Conclusion:** No significant relationship between salt index and DBP\n")
+  }
+} else {
+  cat("Analysis not available.\n")
+}
+cat("\n")
+```
+
+### Sugar Index and DBP
+
+```{r conclusions-dbp-sugar, echo=FALSE, results='asis'}
+if(!is.null(result_dbp_sugar)) {
+  cat(sprintf("- **Sample size:** %d infants\n", result_dbp_sugar$n))
+  cat(sprintf("- **Best model:** %s transformation\n", result_dbp_sugar$best_model))
+
+  final_tidy <- tidy(result_dbp_sugar$final_model)
+  final_glance <- glance(result_dbp_sugar$final_model)
+
+  cat(sprintf("- **R² = %.4f** (%.1f%% of variance explained)\n",
+              final_glance$r.squared, 100 * final_glance$r.squared))
+  cat(sprintf("- **Slope = %.4f** (p = %.4f)\n",
+              final_tidy$estimate[2], final_tidy$p.value[2]))
+
+  if(final_tidy$p.value[2] < 0.05) {
+    cat("- **Conclusion:** SIGNIFICANT relationship between sugar index and DBP\n")
+  } else {
+    cat("- **Conclusion:** No significant relationship between sugar index and DBP\n")
+  }
+} else {
+  cat("Analysis not available.\n")
+}
+```
+
+## Overall Summary
+
+### Key Findings
+
+1. **Transformation Necessity:** Box-Cox analysis and model comparison determined the optimal scale for each relationship
+
+2. **Model Selection:** Models were compared using:
+   - R² and Adjusted R²
+   - AIC and BIC
+   - Residual diagnostics (Shapiro-Wilk, Breusch-Pagan)
+
+3. **Goodness of Fit:** Each final model was assessed for:
+   - Linearity (residual plots)
+   - Normality (Q-Q plots, Shapiro-Wilk test)
+   - Homoscedasticity (scale-location plot, Breusch-Pagan test)
+   - Influential points (Cook's distance, leverage)
+
+### Clinical Implications
+
+The relationships between infant responsiveness to salt/sugar and blood pressure may provide insights into:
+- Early cardiovascular risk factors
+- Dietary influences on infant blood pressure
+- Potential interventions for blood pressure regulation
+
+### Statistical Methods Used
+
+- **Linear Regression** (untransformed and transformed)
+- **Box-Cox Transformation** (optimal power transformation)
+- **Model Comparison** (AIC, BIC, R²)
+- **Diagnostic Tests:**
+  - Shapiro-Wilk (normality)
+  - Breusch-Pagan (homoscedasticity)
+  - Cook's Distance (influential points)
+- **Transformations Tested:**
+  - Log transformation
+  - Square root transformation
+  - Log(Predictor) transformation
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
+
+---
+**End of Analysis**

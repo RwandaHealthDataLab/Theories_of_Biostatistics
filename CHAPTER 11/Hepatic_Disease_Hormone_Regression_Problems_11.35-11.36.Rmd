@@ -1,0 +1,975 @@
+---
+title: "Problems 11.35-11.36: Hepatic Disease - Hormone Dose-Response Analysis"
+author: "Linear Regression Analysis of Biliary and Pancreatic Secretions"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    number_sections: true
+    theme: cerulean
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 12,
+  fig.height = 8,
+  fig.align = 'center'
+)
+```
+
+# Introduction
+
+## Study Background
+
+This document analyzes **dose-response relationships** for hepatic disease using the **HORMONE.DAT** dataset. The study examines how different hormone doses affect biliary and pancreatic function in hens.
+
+### Research Questions
+
+**Problem 11.35:** Use linear regression to assess dose-response relationships for:
+- **Biliary secretion levels**
+- **Pancreatic secretion levels**
+- Separate analyses for each of the four active hormones
+
+**Problem 11.36:** Use linear regression to assess dose-response relationships for:
+- **Biliary pH levels**
+- **Pancreatic pH levels**
+- Separate analyses for each of the four active hormones
+
+### Active Hormones Tested
+
+The four active hormones tested are:
+1. **Secretin**
+2. **Cholecystokinin (CCK)**
+3. **Gastrin**
+4. **Glucagon**
+
+# Data Loading and Preparation
+
+```{r load-packages}
+# Load required libraries
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(car)         # For VIF and diagnostic plots
+library(lmtest)      # For diagnostic tests
+library(ggplot2)
+library(gridExtra)   # For multiple plots
+library(broom)       # For tidy model outputs
+
+# Set theme for plots
+theme_set(theme_minimal())
+```
+
+
+
+```{r load-data}
+# Load the HORMONE.DAT dataset
+data_path <- "Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/HORMONE.DAT.txt"
+
+# Read the data - handle quotes in column names
+hormone_data <- tryCatch({
+  read.csv(data_path, header = TRUE, strip.white = TRUE, quote = "'\"")
+}, error = function(e) {
+  cat("Error loading data from primary path. Trying alternative path...\n")
+  read.csv("../Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/HORMONE.DAT.txt",
+           header = TRUE, strip.white = TRUE, quote = "'\"")
+})
+
+# Clean column names (remove any quotes)
+colnames(hormone_data) <- gsub("'", "", colnames(hormone_data))
+colnames(hormone_data) <- gsub("\"", "", colnames(hormone_data))
+
+# Display structure
+cat("Dataset Structure:\n")
+str(hormone_data)
+
+cat("\nColumn names in dataset:\n")
+print(colnames(hormone_data))
+
+cat("\nFirst few rows:\n")
+head(hormone_data) %>%
+  kable(caption = "First 6 Observations from HORMONE Dataset") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+# Variable Definitions
+
+```{r variable-definitions}
+# Create variable definitions table
+var_definitions <- data.frame(
+  Variable = c("ID", "Dose", "Hormone", "Bilsecpr", "Bilphpr", "Pansecpr", "Panphpr",
+               "Bilsecpt", "Bilphpt", "Pansecpt", "Panphpt"),
+  Description = c(
+    "Hen identification number",
+    "Dose level of hormone (μg/kg/hr)",
+    "Type of hormone administered (1=Secretin, 2=CCK, 3=Gastrin, 4=Glucagon)",
+    "Biliary secretion rate - pre-treatment (mL/hr)",
+    "Biliary pH - pre-treatment",
+    "Pancreatic secretion rate - pre-treatment (mL/hr)",
+    "Pancreatic pH - pre-treatment",
+    "Biliary secretion rate - post-treatment (mL/hr)",
+    "Biliary pH - post-treatment",
+    "Pancreatic secretion rate - post-treatment (mL/hr)",
+    "Pancreatic pH - post-treatment"
+  ),
+  Type = c("ID", "Continuous (Predictor)", "Categorical",
+           "Continuous", "Continuous", "Continuous", "Continuous",
+           "Continuous (Outcome)", "Continuous (Outcome)",
+           "Continuous (Outcome)", "Continuous (Outcome)")
+)
+
+kable(var_definitions,
+      caption = "Variable Definitions for HORMONE Dataset") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+# Data Processing
+
+```{r data-processing}
+# Check for required columns
+cat("Checking for required columns...\n")
+
+# Display available columns
+cat("\nAvailable columns:\n")
+print(colnames(hormone_data))
+
+# Process data
+hormone_clean <- hormone_data %>%
+  mutate(
+    # Create hormone factor with meaningful labels
+    Hormone_Label = factor(Hormone,
+                          levels = c(1, 2, 3, 4),
+                          labels = c("Secretin", "CCK", "Gastrin", "Glucagon")),
+
+    # Rename columns for easier access (use post-treatment values)
+    Biliary_Secretion = Bilsecpt,
+    Biliary_pH = Bilphpt,
+    Pancreatic_Secretion = Pansecpt,
+    Pancreatic_pH = Panphpt
+  )
+
+# Remove control group (Dose = 0) for dose-response analysis
+hormone_active <- hormone_clean %>%
+  filter(Dose > 0)
+
+cat("\nDataset summary:\n")
+cat("  Total observations:", nrow(hormone_data), "\n")
+cat("  Active hormone observations (Dose > 0):", nrow(hormone_active), "\n")
+cat("  Control observations (Dose = 0):", sum(hormone_data$Dose == 0), "\n\n")
+
+# Summary by hormone
+cat("Observations by Hormone Type:\n")
+hormone_summary <- hormone_active %>%
+  group_by(Hormone_Label) %>%
+  summarise(
+    N = n(),
+    Mean_Dose = round(mean(Dose, na.rm = TRUE), 2),
+    SD_Dose = round(sd(Dose, na.rm = TRUE), 2),
+    Min_Dose = round(min(Dose, na.rm = TRUE), 2),
+    Max_Dose = round(max(Dose, na.rm = TRUE), 2)
+  )
+
+kable(hormone_summary,
+      caption = "Summary Statistics by Hormone Type",
+      col.names = c("Hormone", "N", "Mean Dose", "SD Dose", "Min Dose", "Max Dose")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+cat("\nData processing completed successfully.\n")
+```
+
+# Exploratory Data Analysis
+
+## Outcome Variables Summary
+
+```{r outcome-summary}
+# Summary statistics for outcome variables
+outcome_summary <- hormone_active %>%
+  summarise(
+    N = n(),
+    Mean_Biliary_Secretion = round(mean(Biliary_Secretion, na.rm = TRUE), 2),
+    SD_Biliary_Secretion = round(sd(Biliary_Secretion, na.rm = TRUE), 2),
+    Mean_Pancreatic_Secretion = round(mean(Pancreatic_Secretion, na.rm = TRUE), 2),
+    SD_Pancreatic_Secretion = round(sd(Pancreatic_Secretion, na.rm = TRUE), 2),
+    Mean_Biliary_pH = round(mean(Biliary_pH, na.rm = TRUE), 2),
+    SD_Biliary_pH = round(sd(Biliary_pH, na.rm = TRUE), 2),
+    Mean_Pancreatic_pH = round(mean(Pancreatic_pH, na.rm = TRUE), 2),
+    SD_Pancreatic_pH = round(sd(Pancreatic_pH, na.rm = TRUE), 2)
+  )
+
+kable(t(outcome_summary),
+      caption = "Overall Summary Statistics for Outcome Variables",
+      col.names = "Value") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+## Summary by Hormone Type
+
+```{r summary-by-hormone}
+# Detailed summary by hormone
+hormone_outcomes <- hormone_active %>%
+  group_by(Hormone_Label) %>%
+  summarise(
+    N = n(),
+    Mean_Biliary_Sec = round(mean(Biliary_Secretion, na.rm = TRUE), 2),
+    SD_Biliary_Sec = round(sd(Biliary_Secretion, na.rm = TRUE), 2),
+    Mean_Pancreatic_Sec = round(mean(Pancreatic_Secretion, na.rm = TRUE), 2),
+    SD_Pancreatic_Sec = round(sd(Pancreatic_Secretion, na.rm = TRUE), 2),
+    Mean_Biliary_pH = round(mean(Biliary_pH, na.rm = TRUE), 2),
+    SD_Biliary_pH = round(sd(Biliary_pH, na.rm = TRUE), 2),
+    Mean_Pancreatic_pH = round(mean(Pancreatic_pH, na.rm = TRUE), 2),
+    SD_Pancreatic_pH = round(sd(Pancreatic_pH, na.rm = TRUE), 2)
+  )
+
+kable(hormone_outcomes,
+      caption = "Outcome Variables by Hormone Type",
+      digits = 2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE,
+                font_size = 11)
+```
+
+## Distribution Visualizations
+
+```{r distribution-plots}
+# Biliary secretion by hormone
+p1 <- ggplot(hormone_active, aes(x = Hormone_Label, y = Biliary_Secretion, fill = Hormone_Label)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Biliary Secretion by Hormone Type",
+       x = "Hormone",
+       y = "Biliary Secretion (mL/hr)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Pancreatic secretion by hormone
+p2 <- ggplot(hormone_active, aes(x = Hormone_Label, y = Pancreatic_Secretion, fill = Hormone_Label)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Pancreatic Secretion by Hormone Type",
+       x = "Hormone",
+       y = "Pancreatic Secretion (mL/hr)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Biliary pH by hormone
+p3 <- ggplot(hormone_active, aes(x = Hormone_Label, y = Biliary_pH, fill = Hormone_Label)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Biliary pH by Hormone Type",
+       x = "Hormone",
+       y = "Biliary pH") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Pancreatic pH by hormone
+p4 <- ggplot(hormone_active, aes(x = Hormone_Label, y = Pancreatic_pH, fill = Hormone_Label)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Pancreatic pH by Hormone Type",
+       x = "Hormone",
+       y = "Pancreatic pH") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+---
+
+# Problem 11.35: Dose-Response for Secretion Levels
+
+## Introduction
+
+Assess dose-response relationships between hormone dose and secretion levels using linear regression:
+- **Biliary secretion** = f(Dose)
+- **Pancreatic secretion** = f(Dose)
+
+Separate analyses for each of the four active hormones.
+
+## Biliary Secretion Analysis
+
+### Function to Perform Regression Analysis
+
+```{r regression-function}
+# Function to perform dose-response regression
+perform_dose_response <- function(data, hormone_name, outcome_var, outcome_label) {
+
+  cat("\n", strrep("=", 80), "\n", sep = "")
+  cat("HORMONE:", hormone_name, "\n")
+  cat("OUTCOME:", outcome_label, "\n")
+  cat(strrep("=", 80), "\n\n")
+
+  # Subset data for specific hormone
+  subset_data <- data %>%
+    filter(Hormone_Label == hormone_name)
+
+  cat("Sample size:", nrow(subset_data), "\n\n")
+
+  # Check if we have enough data
+  if(nrow(subset_data) < 3) {
+    cat("ERROR: Insufficient data for regression (n < 3)\n")
+    return(NULL)
+  }
+
+  # Create formula
+  formula_str <- paste(outcome_var, "~ Dose")
+
+  # Fit linear regression model
+  model <- lm(as.formula(formula_str), data = subset_data)
+
+  # Print summary
+  print(summary(model))
+
+  # Tidy output
+  tidy_results <- tidy(model, conf.int = TRUE)
+  cat("\n=== Regression Coefficients ===\n")
+  print(kable(tidy_results,
+              caption = paste(hormone_name, "-", outcome_label),
+              digits = 4) %>%
+        kable_styling(bootstrap_options = c("striped", "hover"),
+                      full_width = FALSE))
+
+  # Model fit statistics
+  glance_results <- glance(model)
+  cat("\n=== Model Fit Statistics ===\n")
+  cat(sprintf("  R² = %.4f\n", glance_results$r.squared))
+  cat(sprintf("  Adjusted R² = %.4f\n", glance_results$adj.r.squared))
+  cat(sprintf("  RMSE = %.4f\n", glance_results$sigma))
+  cat(sprintf("  F-statistic = %.4f (df = %d, %d)\n",
+              glance_results$statistic, 1, glance_results$df.residual))
+  cat(sprintf("  P-value = %.4e\n", glance_results$p.value))
+
+  # Interpretation
+  slope <- tidy_results$estimate[2]
+  slope_p <- tidy_results$p.value[2]
+
+  cat("\n=== Interpretation ===\n")
+  cat(sprintf("Slope: %.4f (95%% CI: %.4f to %.4f)\n",
+              slope, tidy_results$conf.low[2], tidy_results$conf.high[2]))
+
+  if(slope_p < 0.001) {
+    cat(sprintf("*** HIGHLY SIGNIFICANT dose-response relationship (p < 0.001) ***\n"))
+  } else if(slope_p < 0.01) {
+    cat(sprintf("** SIGNIFICANT dose-response relationship (p < 0.01) **\n"))
+  } else if(slope_p < 0.05) {
+    cat(sprintf("* SIGNIFICANT dose-response relationship (p < 0.05) *\n"))
+  } else {
+    cat(sprintf("No significant dose-response relationship (p = %.4f)\n", slope_p))
+  }
+
+  cat(sprintf("\nFor each 1 μg/kg/hr increase in %s dose:\n", hormone_name))
+  cat(sprintf("  %s %s by %.4f units on average\n",
+              outcome_label,
+              ifelse(slope > 0, "increases", "decreases"),
+              abs(slope)))
+
+  # Create scatterplot with regression line
+  p <- ggplot(subset_data, aes(x = Dose, y = .data[[outcome_var]])) +
+    geom_point(size = 3, alpha = 0.6, color = "#3498db") +
+    geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink") +
+    labs(title = paste("Dose-Response:", hormone_name, "-", outcome_label),
+         subtitle = sprintf("y = %.4f + %.4f*x, R² = %.4f, p = %.4e",
+                           tidy_results$estimate[1], slope,
+                           glance_results$r.squared, glance_results$p.value),
+         x = "Dose (μg/kg/hr)",
+         y = outcome_label) +
+    theme_minimal() +
+    theme(plot.title = element_text(face = "bold", size = 14))
+
+  print(p)
+
+  # Diagnostic plots
+  cat("\n=== Diagnostic Plots ===\n")
+  par(mfrow = c(2, 2))
+  plot(model, which = 1:4)
+  par(mfrow = c(1, 1))
+
+  # Return results
+  return(list(
+    hormone = hormone_name,
+    outcome = outcome_label,
+    model = model,
+    tidy = tidy_results,
+    glance = glance_results
+  ))
+}
+```
+
+### Secretin - Biliary Secretion
+
+```{r secretin-biliary-sec}
+result_sec_bil <- perform_dose_response(
+  hormone_active,
+  "Secretin",
+  "Biliary_Secretion",
+  "Biliary Secretion (mL/hr)"
+)
+```
+
+### CCK - Biliary Secretion
+
+```{r cck-biliary-sec}
+result_cck_bil <- perform_dose_response(
+  hormone_active,
+  "CCK",
+  "Biliary_Secretion",
+  "Biliary Secretion (mL/hr)"
+)
+```
+
+### Gastrin - Biliary Secretion
+
+```{r gastrin-biliary-sec}
+result_gas_bil <- perform_dose_response(
+  hormone_active,
+  "Gastrin",
+  "Biliary_Secretion",
+  "Biliary Secretion (mL/hr)"
+)
+```
+
+### Glucagon - Biliary Secretion
+
+```{r glucagon-biliary-sec}
+result_glu_bil <- perform_dose_response(
+  hormone_active,
+  "Glucagon",
+  "Biliary_Secretion",
+  "Biliary Secretion (mL/hr)"
+)
+```
+
+### Summary: Biliary Secretion Dose-Response
+
+```{r summary-biliary-secretion}
+cat("\n=== SUMMARY: BILIARY SECRETION DOSE-RESPONSE ===\n\n")
+
+# Compile results
+biliary_sec_summary <- data.frame(
+  Hormone = c("Secretin", "CCK", "Gastrin", "Glucagon"),
+  Slope = NA,
+  Slope_SE = NA,
+  CI_Lower = NA,
+  CI_Upper = NA,
+  P_value = NA,
+  R_squared = NA,
+  Significant = NA
+)
+
+results_list <- list(result_sec_bil, result_cck_bil, result_gas_bil, result_glu_bil)
+
+for(i in 1:4) {
+  if(!is.null(results_list[[i]])) {
+    biliary_sec_summary$Slope[i] <- results_list[[i]]$tidy$estimate[2]
+    biliary_sec_summary$Slope_SE[i] <- results_list[[i]]$tidy$std.error[2]
+    biliary_sec_summary$CI_Lower[i] <- results_list[[i]]$tidy$conf.low[2]
+    biliary_sec_summary$CI_Upper[i] <- results_list[[i]]$tidy$conf.high[2]
+    biliary_sec_summary$P_value[i] <- results_list[[i]]$tidy$p.value[2]
+    biliary_sec_summary$R_squared[i] <- results_list[[i]]$glance$r.squared
+    biliary_sec_summary$Significant[i] <- ifelse(results_list[[i]]$tidy$p.value[2] < 0.05, "Yes", "No")
+  }
+}
+
+kable(biliary_sec_summary,
+      caption = "Summary of Dose-Response Relationships: Biliary Secretion",
+      digits = 4,
+      col.names = c("Hormone", "Slope", "SE", "95% CI Lower", "95% CI Upper",
+                   "P-value", "R²", "Significant (α=0.05)")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  row_spec(which(biliary_sec_summary$Significant == "Yes"),
+           bold = TRUE, background = "#ffffcc")
+```
+
+## Pancreatic Secretion Analysis
+
+### Secretin - Pancreatic Secretion
+
+```{r secretin-pancreatic-sec}
+result_sec_pan <- perform_dose_response(
+  hormone_active,
+  "Secretin",
+  "Pancreatic_Secretion",
+  "Pancreatic Secretion (mL/hr)"
+)
+```
+
+### CCK - Pancreatic Secretion
+
+```{r cck-pancreatic-sec}
+result_cck_pan <- perform_dose_response(
+  hormone_active,
+  "CCK",
+  "Pancreatic_Secretion",
+  "Pancreatic Secretion (mL/hr)"
+)
+```
+
+### Gastrin - Pancreatic Secretion
+
+```{r gastrin-pancreatic-sec}
+result_gas_pan <- perform_dose_response(
+  hormone_active,
+  "Gastrin",
+  "Pancreatic_Secretion",
+  "Pancreatic Secretion (mL/hr)"
+)
+```
+
+### Glucagon - Pancreatic Secretion
+
+```{r glucagon-pancreatic-sec}
+result_glu_pan <- perform_dose_response(
+  hormone_active,
+  "Glucagon",
+  "Pancreatic_Secretion",
+  "Pancreatic Secretion (mL/hr)"
+)
+```
+
+### Summary: Pancreatic Secretion Dose-Response
+
+```{r summary-pancreatic-secretion}
+cat("\n=== SUMMARY: PANCREATIC SECRETION DOSE-RESPONSE ===\n\n")
+
+# Compile results
+pancreatic_sec_summary <- data.frame(
+  Hormone = c("Secretin", "CCK", "Gastrin", "Glucagon"),
+  Slope = NA,
+  Slope_SE = NA,
+  CI_Lower = NA,
+  CI_Upper = NA,
+  P_value = NA,
+  R_squared = NA,
+  Significant = NA
+)
+
+results_list <- list(result_sec_pan, result_cck_pan, result_gas_pan, result_glu_pan)
+
+for(i in 1:4) {
+  if(!is.null(results_list[[i]])) {
+    pancreatic_sec_summary$Slope[i] <- results_list[[i]]$tidy$estimate[2]
+    pancreatic_sec_summary$Slope_SE[i] <- results_list[[i]]$tidy$std.error[2]
+    pancreatic_sec_summary$CI_Lower[i] <- results_list[[i]]$tidy$conf.low[2]
+    pancreatic_sec_summary$CI_Upper[i] <- results_list[[i]]$tidy$conf.high[2]
+    pancreatic_sec_summary$P_value[i] <- results_list[[i]]$tidy$p.value[2]
+    pancreatic_sec_summary$R_squared[i] <- results_list[[i]]$glance$r.squared
+    pancreatic_sec_summary$Significant[i] <- ifelse(results_list[[i]]$tidy$p.value[2] < 0.05, "Yes", "No")
+  }
+}
+
+kable(pancreatic_sec_summary,
+      caption = "Summary of Dose-Response Relationships: Pancreatic Secretion",
+      digits = 4,
+      col.names = c("Hormone", "Slope", "SE", "95% CI Lower", "95% CI Upper",
+                   "P-value", "R²", "Significant (α=0.05)")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  row_spec(which(pancreatic_sec_summary$Significant == "Yes"),
+           bold = TRUE, background = "#ffffcc")
+```
+
+---
+
+# Problem 11.36: Dose-Response for pH Levels
+
+## Introduction
+
+Assess dose-response relationships between hormone dose and pH levels using linear regression:
+- **Biliary pH** = f(Dose)
+- **Pancreatic pH** = f(Dose)
+
+Separate analyses for each of the four active hormones.
+
+## Biliary pH Analysis
+
+### Secretin - Biliary pH
+
+```{r secretin-biliary-ph}
+result_sec_bil_ph <- perform_dose_response(
+  hormone_active,
+  "Secretin",
+  "Biliary_pH",
+  "Biliary pH"
+)
+```
+
+### CCK - Biliary pH
+
+```{r cck-biliary-ph}
+result_cck_bil_ph <- perform_dose_response(
+  hormone_active,
+  "CCK",
+  "Biliary_pH",
+  "Biliary pH"
+)
+```
+
+### Gastrin - Biliary pH
+
+```{r gastrin-biliary-ph}
+result_gas_bil_ph <- perform_dose_response(
+  hormone_active,
+  "Gastrin",
+  "Biliary_pH",
+  "Biliary pH"
+)
+```
+
+### Glucagon - Biliary pH
+
+```{r glucagon-biliary-ph}
+result_glu_bil_ph <- perform_dose_response(
+  hormone_active,
+  "Glucagon",
+  "Biliary_pH",
+  "Biliary pH"
+)
+```
+
+### Summary: Biliary pH Dose-Response
+
+```{r summary-biliary-ph}
+cat("\n=== SUMMARY: BILIARY pH DOSE-RESPONSE ===\n\n")
+
+# Compile results
+biliary_ph_summary <- data.frame(
+  Hormone = c("Secretin", "CCK", "Gastrin", "Glucagon"),
+  Slope = NA,
+  Slope_SE = NA,
+  CI_Lower = NA,
+  CI_Upper = NA,
+  P_value = NA,
+  R_squared = NA,
+  Significant = NA
+)
+
+results_list <- list(result_sec_bil_ph, result_cck_bil_ph, result_gas_bil_ph, result_glu_bil_ph)
+
+for(i in 1:4) {
+  if(!is.null(results_list[[i]])) {
+    biliary_ph_summary$Slope[i] <- results_list[[i]]$tidy$estimate[2]
+    biliary_ph_summary$Slope_SE[i] <- results_list[[i]]$tidy$std.error[2]
+    biliary_ph_summary$CI_Lower[i] <- results_list[[i]]$tidy$conf.low[2]
+    biliary_ph_summary$CI_Upper[i] <- results_list[[i]]$tidy$conf.high[2]
+    biliary_ph_summary$P_value[i] <- results_list[[i]]$tidy$p.value[2]
+    biliary_ph_summary$R_squared[i] <- results_list[[i]]$glance$r.squared
+    biliary_ph_summary$Significant[i] <- ifelse(results_list[[i]]$tidy$p.value[2] < 0.05, "Yes", "No")
+  }
+}
+
+kable(biliary_ph_summary,
+      caption = "Summary of Dose-Response Relationships: Biliary pH",
+      digits = 4,
+      col.names = c("Hormone", "Slope", "SE", "95% CI Lower", "95% CI Upper",
+                   "P-value", "R²", "Significant (α=0.05)")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  row_spec(which(biliary_ph_summary$Significant == "Yes"),
+           bold = TRUE, background = "#ffffcc")
+```
+
+## Pancreatic pH Analysis
+
+### Secretin - Pancreatic pH
+
+```{r secretin-pancreatic-ph}
+result_sec_pan_ph <- perform_dose_response(
+  hormone_active,
+  "Secretin",
+  "Pancreatic_pH",
+  "Pancreatic pH"
+)
+```
+
+### CCK - Pancreatic pH
+
+```{r cck-pancreatic-ph}
+result_cck_pan_ph <- perform_dose_response(
+  hormone_active,
+  "CCK",
+  "Pancreatic_pH",
+  "Pancreatic pH"
+)
+```
+
+### Gastrin - Pancreatic pH
+
+```{r gastrin-pancreatic-ph}
+result_gas_pan_ph <- perform_dose_response(
+  hormone_active,
+  "Gastrin",
+  "Pancreatic_pH",
+  "Pancreatic pH"
+)
+```
+
+### Glucagon - Pancreatic pH
+
+```{r glucagon-pancreatic-ph}
+result_glu_pan_ph <- perform_dose_response(
+  hormone_active,
+  "Glucagon",
+  "Pancreatic_pH",
+  "Pancreatic pH"
+)
+```
+
+### Summary: Pancreatic pH Dose-Response
+
+```{r summary-pancreatic-ph}
+cat("\n=== SUMMARY: PANCREATIC pH DOSE-RESPONSE ===\n\n")
+
+# Compile results
+pancreatic_ph_summary <- data.frame(
+  Hormone = c("Secretin", "CCK", "Gastrin", "Glucagon"),
+  Slope = NA,
+  Slope_SE = NA,
+  CI_Lower = NA,
+  CI_Upper = NA,
+  P_value = NA,
+  R_squared = NA,
+  Significant = NA
+)
+
+results_list <- list(result_sec_pan_ph, result_cck_pan_ph, result_gas_pan_ph, result_glu_pan_ph)
+
+for(i in 1:4) {
+  if(!is.null(results_list[[i]])) {
+    pancreatic_ph_summary$Slope[i] <- results_list[[i]]$tidy$estimate[2]
+    pancreatic_ph_summary$Slope_SE[i] <- results_list[[i]]$tidy$std.error[2]
+    pancreatic_ph_summary$CI_Lower[i] <- results_list[[i]]$tidy$conf.low[2]
+    pancreatic_ph_summary$CI_Upper[i] <- results_list[[i]]$tidy$conf.high[2]
+    pancreatic_ph_summary$P_value[i] <- results_list[[i]]$tidy$p.value[2]
+    pancreatic_ph_summary$R_squared[i] <- results_list[[i]]$glance$r.squared
+    pancreatic_ph_summary$Significant[i] <- ifelse(results_list[[i]]$tidy$p.value[2] < 0.05, "Yes", "No")
+  }
+}
+
+kable(pancreatic_ph_summary,
+      caption = "Summary of Dose-Response Relationships: Pancreatic pH",
+      digits = 4,
+      col.names = c("Hormone", "Slope", "SE", "95% CI Lower", "95% CI Upper",
+                   "P-value", "R²", "Significant (α=0.05)")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  row_spec(which(pancreatic_ph_summary$Significant == "Yes"),
+           bold = TRUE, background = "#ffffcc")
+```
+
+---
+
+# Comprehensive Summary
+
+## All Dose-Response Relationships
+
+```{r comprehensive-summary}
+cat("\n=== COMPREHENSIVE SUMMARY: ALL DOSE-RESPONSE RELATIONSHIPS ===\n\n")
+
+# Create comprehensive summary table
+comprehensive_summary <- data.frame(
+  Outcome = rep(c("Biliary Secretion", "Pancreatic Secretion", "Biliary pH", "Pancreatic pH"), each = 4),
+  Hormone = rep(c("Secretin", "CCK", "Gastrin", "Glucagon"), 4),
+  Slope = c(biliary_sec_summary$Slope, pancreatic_sec_summary$Slope,
+            biliary_ph_summary$Slope, pancreatic_ph_summary$Slope),
+  P_value = c(biliary_sec_summary$P_value, pancreatic_sec_summary$P_value,
+              biliary_ph_summary$P_value, pancreatic_ph_summary$P_value),
+  R_squared = c(biliary_sec_summary$R_squared, pancreatic_sec_summary$R_squared,
+                biliary_ph_summary$R_squared, pancreatic_ph_summary$R_squared),
+  Significant = c(biliary_sec_summary$Significant, pancreatic_sec_summary$Significant,
+                  biliary_ph_summary$Significant, pancreatic_ph_summary$Significant)
+)
+
+kable(comprehensive_summary,
+      caption = "Comprehensive Summary of All Dose-Response Relationships",
+      digits = 4,
+      col.names = c("Outcome Variable", "Hormone", "Slope", "P-value", "R²", "Significant")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE,
+                font_size = 11) %>%
+  row_spec(which(comprehensive_summary$Significant == "Yes"),
+           bold = TRUE, background = "#ffffcc") %>%
+  pack_rows("Problem 11.35: Secretion Levels", 1, 8) %>%
+  pack_rows("Problem 11.36: pH Levels", 9, 16)
+```
+
+## Visual Summary: Slope Comparisons
+
+```{r slope-comparison-plot}
+# Create visualization of slopes
+ggplot(comprehensive_summary, aes(x = Hormone, y = Slope, fill = Significant)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.7) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+  facet_wrap(~Outcome, scales = "free_y", ncol = 2) +
+  scale_fill_manual(values = c("No" = "#95a5a6", "Yes" = "#2ecc71")) +
+  labs(title = "Dose-Response Slopes by Hormone and Outcome",
+       subtitle = "Green = Statistically Significant (p < 0.05)",
+       x = "Hormone",
+       y = "Slope (Change per 1 μg/kg/hr dose increase)",
+       fill = "Significant") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(face = "bold", size = 14))
+```
+
+## Significant Relationships Summary
+
+```{r significant-summary}
+cat("\n=== STATISTICALLY SIGNIFICANT DOSE-RESPONSE RELATIONSHIPS (p < 0.05) ===\n\n")
+
+# Filter significant relationships
+significant_relationships <- comprehensive_summary %>%
+  filter(Significant == "Yes") %>%
+  arrange(P_value)
+
+if(nrow(significant_relationships) > 0) {
+  kable(significant_relationships,
+        caption = "Statistically Significant Dose-Response Relationships",
+        digits = 4,
+        row.names = FALSE,
+        col.names = c("Outcome Variable", "Hormone", "Slope", "P-value", "R²", "Significant")) %>%
+    kable_styling(bootstrap_options = c("striped", "hover"),
+                  full_width = FALSE)
+
+  cat("\n\nTotal significant relationships:", nrow(significant_relationships), "out of 16\n")
+} else {
+  cat("No statistically significant dose-response relationships detected at α = 0.05\n")
+}
+```
+
+# Conclusions
+
+## Problem 11.35: Secretion Levels
+
+### Key Findings
+
+**Biliary Secretion:**
+```{r conclusions-biliary-sec, echo=FALSE, results='asis'}
+for(i in 1:4) {
+  hormone <- biliary_sec_summary$Hormone[i]
+  sig <- biliary_sec_summary$Significant[i]
+  slope <- biliary_sec_summary$Slope[i]
+  pval <- biliary_sec_summary$P_value[i]
+
+  if(!is.na(sig)) {
+    if(sig == "Yes") {
+      cat(sprintf("- **%s**: SIGNIFICANT dose-response (slope = %.4f, p = %.4f)\n",
+                  hormone, slope, pval))
+    } else {
+      cat(sprintf("- **%s**: No significant dose-response (slope = %.4f, p = %.4f)\n",
+                  hormone, slope, pval))
+    }
+  }
+}
+```
+
+**Pancreatic Secretion:**
+```{r conclusions-pancreatic-sec, echo=FALSE, results='asis'}
+for(i in 1:4) {
+  hormone <- pancreatic_sec_summary$Hormone[i]
+  sig <- pancreatic_sec_summary$Significant[i]
+  slope <- pancreatic_sec_summary$Slope[i]
+  pval <- pancreatic_sec_summary$P_value[i]
+
+  if(!is.na(sig)) {
+    if(sig == "Yes") {
+      cat(sprintf("- **%s**: SIGNIFICANT dose-response (slope = %.4f, p = %.4f)\n",
+                  hormone, slope, pval))
+    } else {
+      cat(sprintf("- **%s**: No significant dose-response (slope = %.4f, p = %.4f)\n",
+                  hormone, slope, pval))
+    }
+  }
+}
+```
+
+## Problem 11.36: pH Levels
+
+### Key Findings
+
+**Biliary pH:**
+```{r conclusions-biliary-ph, echo=FALSE, results='asis'}
+for(i in 1:4) {
+  hormone <- biliary_ph_summary$Hormone[i]
+  sig <- biliary_ph_summary$Significant[i]
+  slope <- biliary_ph_summary$Slope[i]
+  pval <- biliary_ph_summary$P_value[i]
+
+  if(!is.na(sig)) {
+    if(sig == "Yes") {
+      cat(sprintf("- **%s**: SIGNIFICANT dose-response (slope = %.4f, p = %.4f)\n",
+                  hormone, slope, pval))
+    } else {
+      cat(sprintf("- **%s**: No significant dose-response (slope = %.4f, p = %.4f)\n",
+                  hormone, slope, pval))
+    }
+  }
+}
+```
+
+**Pancreatic pH:**
+```{r conclusions-pancreatic-ph, echo=FALSE, results='asis'}
+for(i in 1:4) {
+  hormone <- pancreatic_ph_summary$Hormone[i]
+  sig <- pancreatic_ph_summary$Significant[i]
+  slope <- pancreatic_ph_summary$Slope[i]
+  pval <- pancreatic_ph_summary$P_value[i]
+
+  if(!is.na(sig)) {
+    if(sig == "Yes") {
+      cat(sprintf("- **%s**: SIGNIFICANT dose-response (slope = %.4f, p = %.4f)\n",
+                  hormone, slope, pval))
+    } else {
+      cat(sprintf("- **%s**: No significant dose-response (slope = %.4f, p = %.4f)\n",
+                  hormone, slope, pval))
+    }
+  }
+}
+```
+
+## Biological Interpretation
+
+The dose-response analysis reveals important patterns in how different hormones affect biliary and pancreatic function:
+
+1. **Secretion Levels**: Hormones showing significant positive slopes indicate dose-dependent stimulation of secretion
+2. **pH Levels**: Significant slopes indicate dose-dependent changes in acidity/alkalinity
+3. **Hormone-Specific Effects**: Different hormones may have selective effects on different outcomes
+
+## Statistical Methods Used
+
+- **Simple Linear Regression** (Dose-Response models)
+- **Coefficient Estimation** with 95% confidence intervals
+- **Hypothesis Testing** for slope significance
+- **Model Fit Assessment** (R², Adjusted R², RMSE)
+- **Regression Diagnostics** (residual plots, assumption checking)
+
+## Limitations
+
+- Linear models assume constant dose-response relationship
+- May not capture non-linear effects at extreme doses
+- Sample size varies by hormone type
+- Results apply to this specific experimental design (hen model)
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
+
+---
+**End of Analysis**

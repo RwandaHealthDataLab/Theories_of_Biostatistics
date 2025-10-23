@@ -1,0 +1,1007 @@
+---
+title: "Chapter 11: Nutrition - Dietary Validation Study Using Rank Correlation (Problems 11.68-11.74)"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Background: Dietary Validation Study
+
+## Study Overview
+
+This is a **dietary validation study** comparing two methods of assessing dietary intake:
+
+1. **Diet Record (DR):** Detailed daily food diary (considered more accurate but burdensome)
+2. **Food Frequency Questionnaire (FFQ):** Recall-based questionnaire (less burdensome but potentially less accurate)
+
+### Purpose of Validation Studies
+
+The goal is to assess **agreement** between the two methods to determine if the simpler FFQ can be used as a valid substitute for the more detailed diet record.
+
+### Study Variables
+
+**Diet Record Variables** (suffix `_dr`):
+- **alco_dr:** Alcohol intake from diet record
+- **tfat_dr:** Total fat intake from diet record
+- **sfat_dr:** Saturated fat intake from diet record
+- **cal_dr:** Total caloric intake from diet record
+
+**Food Frequency Questionnaire Variables** (suffix `_ffq`):
+- **alco_ffq:** Alcohol intake from FFQ
+- **tfat_ffq:** Total fat intake from FFQ
+- **sfat_ffq:** Saturated fat intake from FFQ
+- **cal_ffq:** Total caloric intake from FFQ
+
+### Research Questions (Problems 11.68-11.74)
+
+**Problem 11.68:** Use **rank-correlation methods** to relate alcohol intake (DR vs. FFQ)
+
+**Problem 11.69:** Use rank-correlation for **total fat** intake
+
+**Problem 11.70:** Use rank-correlation for **saturated fat** intake
+
+**Problem 11.71:** Use rank-correlation for **total caloric** intake
+
+**Problem 11.72:** Are **parametric or nonparametric** methods better suited for this data?
+
+**Problem 11.73:** Given ρ = 0.45, n = 24, assess significance
+
+**Problem 11.74:** Given ρ = 0.75, n = 8, assess significance
+
+### Why Rank Correlation?
+
+**Advantages for Dietary Data:**
+- **Robust to outliers:** Dietary data often contains extreme values
+- **No normality assumption:** Dietary intakes are typically skewed
+- **Handles non-linear monotonic relationships**
+- **Common in nutritional epidemiology**
+
+---
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)   # Data manipulation and visualization
+library(knitr)       # For kable tables
+library(kableExtra)  # For enhanced table formatting
+library(ggplot2)     # Plotting
+library(gridExtra)   # Multiple plots
+library(broom)       # Tidy model outputs
+```
+
+---
+
+# Data Import and Processing
+
+```{r data-import}
+# Load the VALID.DAT dataset
+data_path <- "Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/VALID.DAT.txt"
+
+# Read the data - handle quotes in column names
+valid_data <- tryCatch({
+  read.csv(data_path, header = TRUE, strip.white = TRUE, quote = "'\"",
+           na.strings = c("", "NA", ".", "99", "999"))
+}, error = function(e) {
+  cat("Error loading data from primary path. Trying alternative path...\n")
+  read.csv("../CHAPTER 10/Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/VALID.DAT.txt",
+           header = TRUE, strip.white = TRUE, quote = "'\"",
+           na.strings = c("", "NA", ".", "99", "999"))
+})
+
+# Clean column names (remove any quotes)
+colnames(valid_data) <- gsub("'", "", colnames(valid_data))
+colnames(valid_data) <- gsub("\"", "", colnames(valid_data))
+
+cat("Cleaned column names:\n")
+print(colnames(valid_data))
+
+# Display structure
+cat("\nDataset Structure:\n")
+str(valid_data)
+
+cat("\nFirst few rows:\n")
+head(valid_data, 10) %>%
+  kable(caption = "First 10 Observations from VALID Dataset", digits = 2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+# Variable Processing
+
+```{r variable-processing}
+cat("=== DIETARY VALIDATION DATASET ===\n\n")
+
+# Process data
+valid_clean <- valid_data %>%
+  mutate(
+    # Ensure all variables are numeric
+    Id = as.numeric(Id),
+    sfat_dr = as.numeric(sfat_dr),
+    sfat_ffq = as.numeric(sfat_ffq),
+    tfat_dr = as.numeric(tfat_dr),
+    tfat_ffq = as.numeric(tfat_ffq),
+    alco_dr = as.numeric(alco_dr),
+    alco_ffq = as.numeric(alco_ffq),
+    cal_dr = as.numeric(cal_dr),
+    cal_ffq = as.numeric(cal_ffq)
+  )
+
+cat("Dataset processing completed.\n")
+cat("Total participants:", nrow(valid_clean), "\n\n")
+
+# Summary statistics
+cat("=== SUMMARY STATISTICS ===\n\n")
+
+cat("ALCOHOL INTAKE:\n")
+summary_alco <- valid_clean %>%
+  summarise(
+    N = sum(!is.na(alco_dr) & !is.na(alco_ffq)),
+    Mean_DR = mean(alco_dr, na.rm = TRUE),
+    SD_DR = sd(alco_dr, na.rm = TRUE),
+    Mean_FFQ = mean(alco_ffq, na.rm = TRUE),
+    SD_FFQ = sd(alco_ffq, na.rm = TRUE)
+  )
+kable(summary_alco, digits = 2, caption = "Alcohol Intake Summary") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+cat("\nTOTAL FAT INTAKE:\n")
+summary_tfat <- valid_clean %>%
+  summarise(
+    N = sum(!is.na(tfat_dr) & !is.na(tfat_ffq)),
+    Mean_DR = mean(tfat_dr, na.rm = TRUE),
+    SD_DR = sd(tfat_dr, na.rm = TRUE),
+    Mean_FFQ = mean(tfat_ffq, na.rm = TRUE),
+    SD_FFQ = sd(tfat_ffq, na.rm = TRUE)
+  )
+kable(summary_tfat, digits = 2, caption = "Total Fat Intake Summary") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+cat("\nSATURATED FAT INTAKE:\n")
+summary_sfat <- valid_clean %>%
+  summarise(
+    N = sum(!is.na(sfat_dr) & !is.na(sfat_ffq)),
+    Mean_DR = mean(sfat_dr, na.rm = TRUE),
+    SD_DR = sd(sfat_dr, na.rm = TRUE),
+    Mean_FFQ = mean(sfat_ffq, na.rm = TRUE),
+    SD_FFQ = sd(sfat_ffq, na.rm = TRUE)
+  )
+kable(summary_sfat, digits = 2, caption = "Saturated Fat Intake Summary") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+cat("\nTOTAL CALORIC INTAKE:\n")
+summary_cal <- valid_clean %>%
+  summarise(
+    N = sum(!is.na(cal_dr) & !is.na(cal_ffq)),
+    Mean_DR = mean(cal_dr, na.rm = TRUE),
+    SD_DR = sd(cal_dr, na.rm = TRUE),
+    Mean_FFQ = mean(cal_ffq, na.rm = TRUE),
+    SD_FFQ = sd(cal_ffq, na.rm = TRUE)
+  )
+kable(summary_cal, digits = 2, caption = "Total Caloric Intake Summary") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+# Check for missing values
+cat("\n=== MISSING VALUES ===\n")
+missing_summary <- valid_clean %>%
+  summarise(
+    alco_dr_missing = sum(is.na(alco_dr)),
+    alco_ffq_missing = sum(is.na(alco_ffq)),
+    tfat_dr_missing = sum(is.na(tfat_dr)),
+    tfat_ffq_missing = sum(is.na(tfat_ffq)),
+    sfat_dr_missing = sum(is.na(sfat_dr)),
+    sfat_ffq_missing = sum(is.na(sfat_ffq)),
+    cal_dr_missing = sum(is.na(cal_dr)),
+    cal_ffq_missing = sum(is.na(cal_ffq))
+  )
+
+kable(t(missing_summary),
+      caption = "Missing Value Counts",
+      col.names = "Count") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+---
+
+# Problem 11.68: Alcohol Intake (Diet Record vs. FFQ)
+
+## Research Question
+
+Use **rank-correlation methods** to relate alcohol intake as reported on the diet record with alcohol intake as reported on the food-frequency questionnaire.
+
+### Hypothesis
+
+- **H₀:** ρ = 0 (No monotonic relationship between DR and FFQ alcohol measurements)
+- **H₁:** ρ ≠ 0 (Monotonic relationship exists)
+
+**Expected:** Strong positive correlation if FFQ is a valid measure of alcohol intake
+
+```{r problem-11.68}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 11.68: ALCOHOL INTAKE - DIET RECORD vs. FFQ\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Remove missing values
+data_alco <- valid_clean %>%
+  filter(!is.na(alco_dr), !is.na(alco_ffq))
+
+cat("Sample size (complete cases):", nrow(data_alco), "\n\n")
+
+# Spearman rank correlation test
+spearman_alco <- cor.test(data_alco$alco_dr, data_alco$alco_ffq,
+                          method = "spearman",
+                          exact = FALSE)
+
+cat("=== SPEARMAN RANK CORRELATION TEST ===\n\n")
+cat("Variables:\n")
+cat("  X: Alcohol intake from Diet Record\n")
+cat("  Y: Alcohol intake from Food Frequency Questionnaire\n\n")
+
+cat("Results:\n")
+cat(sprintf("  Spearman's rho (ρ): %.4f\n", spearman_alco$estimate))
+cat(sprintf("  S statistic: %.2f\n", spearman_alco$statistic))
+cat(sprintf("  p-value: %.4f\n", spearman_alco$p.value))
+cat(sprintf("  Significance level: α = 0.05\n\n"))
+
+# Interpretation
+if (spearman_alco$p.value < 0.05) {
+  cat("CONCLUSION:\n")
+  cat(sprintf("  There is a statistically significant monotonic relationship\n"))
+  cat(sprintf("  between DR and FFQ alcohol measurements (p = %.4f < 0.05).\n",
+              spearman_alco$p.value))
+} else {
+  cat("CONCLUSION:\n")
+  cat(sprintf("  No statistically significant relationship (p = %.4f ≥ 0.05).\n",
+              spearman_alco$p.value))
+}
+
+# Effect size interpretation
+cat("\nVALIDITY INTERPRETATION:\n")
+rho_val <- spearman_alco$estimate
+if (rho_val >= 0.70) {
+  cat("  EXCELLENT validity (ρ ≥ 0.70)\n")
+  cat("  FFQ is a highly valid measure of alcohol intake\n")
+} else if (rho_val >= 0.50) {
+  cat("  GOOD validity (0.50 ≤ ρ < 0.70)\n")
+  cat("  FFQ is a reasonably valid measure of alcohol intake\n")
+} else if (rho_val >= 0.30) {
+  cat("  MODERATE validity (0.30 ≤ ρ < 0.50)\n")
+  cat("  FFQ has moderate agreement with diet record\n")
+} else {
+  cat("  POOR validity (ρ < 0.30)\n")
+  cat("  FFQ may not be a valid measure of alcohol intake\n")
+}
+
+# Also compute Pearson for comparison
+pearson_alco <- cor.test(data_alco$alco_dr, data_alco$alco_ffq, method = "pearson")
+
+cat("\n=== PEARSON CORRELATION (for comparison) ===\n")
+cat(sprintf("  Pearson's r: %.4f\n", pearson_alco$estimate))
+cat(sprintf("  p-value: %.4f\n", pearson_alco$p.value))
+
+cat("\n=== COMPARISON: Spearman vs. Pearson ===\n")
+cat(sprintf("  Difference: %.4f\n", abs(spearman_alco$estimate - pearson_alco$estimate)))
+if (abs(spearman_alco$estimate - pearson_alco$estimate) > 0.10) {
+  cat("  Large difference suggests:\n")
+  cat("    - Non-linear relationship, or\n")
+  cat("    - Outliers affecting Pearson\n")
+  cat("  → Spearman is more appropriate\n")
+} else {
+  cat("  Similar values suggest linear relationship\n")
+  cat("  → Either method is appropriate\n")
+}
+```
+
+---
+
+# Problem 11.69: Total Fat Intake (Diet Record vs. FFQ)
+
+```{r problem-11.69}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 11.69: TOTAL FAT INTAKE - DIET RECORD vs. FFQ\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+data_tfat <- valid_clean %>%
+  filter(!is.na(tfat_dr), !is.na(tfat_ffq))
+
+cat("Sample size (complete cases):", nrow(data_tfat), "\n\n")
+
+spearman_tfat <- cor.test(data_tfat$tfat_dr, data_tfat$tfat_ffq,
+                          method = "spearman",
+                          exact = FALSE)
+
+cat("=== SPEARMAN RANK CORRELATION TEST ===\n\n")
+cat(sprintf("  Spearman's rho (ρ): %.4f\n", spearman_tfat$estimate))
+cat(sprintf("  p-value: %.4f\n\n", spearman_tfat$p.value))
+
+if (spearman_tfat$p.value < 0.05) {
+  cat("CONCLUSION: SIGNIFICANT (p < 0.05)\n")
+} else {
+  cat("CONCLUSION: NOT SIGNIFICANT (p ≥ 0.05)\n")
+}
+
+cat("\nVALIDITY INTERPRETATION:\n")
+rho_val <- spearman_tfat$estimate
+if (rho_val >= 0.70) {
+  cat("  EXCELLENT validity (ρ ≥ 0.70)\n")
+} else if (rho_val >= 0.50) {
+  cat("  GOOD validity (0.50 ≤ ρ < 0.70)\n")
+} else if (rho_val >= 0.30) {
+  cat("  MODERATE validity (0.30 ≤ ρ < 0.50)\n")
+} else {
+  cat("  POOR validity (ρ < 0.30)\n")
+}
+
+# Pearson comparison
+pearson_tfat <- cor.test(data_tfat$tfat_dr, data_tfat$tfat_ffq, method = "pearson")
+cat(sprintf("\nPearson's r: %.4f (p = %.4f)\n", pearson_tfat$estimate, pearson_tfat$p.value))
+```
+
+---
+
+# Problem 11.70: Saturated Fat Intake (Diet Record vs. FFQ)
+
+```{r problem-11.70}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 11.70: SATURATED FAT INTAKE - DIET RECORD vs. FFQ\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+data_sfat <- valid_clean %>%
+  filter(!is.na(sfat_dr), !is.na(sfat_ffq))
+
+cat("Sample size (complete cases):", nrow(data_sfat), "\n\n")
+
+spearman_sfat <- cor.test(data_sfat$sfat_dr, data_sfat$sfat_ffq,
+                          method = "spearman",
+                          exact = FALSE)
+
+cat("=== SPEARMAN RANK CORRELATION TEST ===\n\n")
+cat(sprintf("  Spearman's rho (ρ): %.4f\n", spearman_sfat$estimate))
+cat(sprintf("  p-value: %.4f\n\n", spearman_sfat$p.value))
+
+if (spearman_sfat$p.value < 0.05) {
+  cat("CONCLUSION: SIGNIFICANT (p < 0.05)\n")
+} else {
+  cat("CONCLUSION: NOT SIGNIFICANT (p ≥ 0.05)\n")
+}
+
+cat("\nVALIDITY INTERPRETATION:\n")
+rho_val <- spearman_sfat$estimate
+if (rho_val >= 0.70) {
+  cat("  EXCELLENT validity (ρ ≥ 0.70)\n")
+} else if (rho_val >= 0.50) {
+  cat("  GOOD validity (0.50 ≤ ρ < 0.70)\n")
+} else if (rho_val >= 0.30) {
+  cat("  MODERATE validity (0.30 ≤ ρ < 0.50)\n")
+} else {
+  cat("  POOR validity (ρ < 0.30)\n")
+}
+
+# Pearson comparison
+pearson_sfat <- cor.test(data_sfat$sfat_dr, data_sfat$sfat_ffq, method = "pearson")
+cat(sprintf("\nPearson's r: %.4f (p = %.4f)\n", pearson_sfat$estimate, pearson_sfat$p.value))
+```
+
+---
+
+# Problem 11.71: Total Caloric Intake (Diet Record vs. FFQ)
+
+```{r problem-11.71}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 11.71: TOTAL CALORIC INTAKE - DIET RECORD vs. FFQ\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+data_cal <- valid_clean %>%
+  filter(!is.na(cal_dr), !is.na(cal_ffq))
+
+cat("Sample size (complete cases):", nrow(data_cal), "\n\n")
+
+spearman_cal <- cor.test(data_cal$cal_dr, data_cal$cal_ffq,
+                         method = "spearman",
+                         exact = FALSE)
+
+cat("=== SPEARMAN RANK CORRELATION TEST ===\n\n")
+cat(sprintf("  Spearman's rho (ρ): %.4f\n", spearman_cal$estimate))
+cat(sprintf("  p-value: %.4f\n\n", spearman_cal$p.value))
+
+if (spearman_cal$p.value < 0.05) {
+  cat("CONCLUSION: SIGNIFICANT (p < 0.05)\n")
+} else {
+  cat("CONCLUSION: NOT SIGNIFICANT (p ≥ 0.05)\n")
+}
+
+cat("\nVALIDITY INTERPRETATION:\n")
+rho_val <- spearman_cal$estimate
+if (rho_val >= 0.70) {
+  cat("  EXCELLENT validity (ρ ≥ 0.70)\n")
+} else if (rho_val >= 0.50) {
+  cat("  GOOD validity (0.50 ≤ ρ < 0.70)\n")
+} else if (rho_val >= 0.30) {
+  cat("  MODERATE validity (0.30 ≤ ρ < 0.50)\n")
+} else {
+  cat("  POOR validity (ρ < 0.30)\n")
+}
+
+# Pearson comparison
+pearson_cal <- cor.test(data_cal$cal_dr, data_cal$cal_ffq, method = "pearson")
+cat(sprintf("\nPearson's r: %.4f (p = %.4f)\n", pearson_cal$estimate, pearson_cal$p.value))
+```
+
+---
+
+# Problem 11.72: Parametric vs. Nonparametric Methods
+
+## Research Question
+
+Do you think parametric or nonparametric methods are better suited to analyze the data in VALID.DAT? Explain.
+
+```{r problem-11.72}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 11.72: PARAMETRIC vs. NONPARAMETRIC METHODS\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+cat("=== ASSESSMENT OF DATA CHARACTERISTICS ===\n\n")
+
+# 1. Check normality for each variable
+cat("1. NORMALITY TESTING (Shapiro-Wilk Test)\n\n")
+
+normality_results <- data.frame(
+  Variable = c("alco_dr", "alco_ffq", "tfat_dr", "tfat_ffq",
+               "sfat_dr", "sfat_ffq", "cal_dr", "cal_ffq"),
+  W_statistic = numeric(8),
+  P_value = numeric(8),
+  Normal = character(8)
+)
+
+# Test each variable
+normality_results[1, 2:3] <- c(shapiro.test(valid_clean$alco_dr)$statistic,
+                                shapiro.test(valid_clean$alco_dr)$p.value)
+normality_results[2, 2:3] <- c(shapiro.test(valid_clean$alco_ffq)$statistic,
+                                shapiro.test(valid_clean$alco_ffq)$p.value)
+normality_results[3, 2:3] <- c(shapiro.test(valid_clean$tfat_dr)$statistic,
+                                shapiro.test(valid_clean$tfat_dr)$p.value)
+normality_results[4, 2:3] <- c(shapiro.test(valid_clean$tfat_ffq)$statistic,
+                                shapiro.test(valid_clean$tfat_ffq)$p.value)
+normality_results[5, 2:3] <- c(shapiro.test(valid_clean$sfat_dr)$statistic,
+                                shapiro.test(valid_clean$sfat_dr)$p.value)
+normality_results[6, 2:3] <- c(shapiro.test(valid_clean$sfat_ffq)$statistic,
+                                shapiro.test(valid_clean$sfat_ffq)$p.value)
+normality_results[7, 2:3] <- c(shapiro.test(valid_clean$cal_dr)$statistic,
+                                shapiro.test(valid_clean$cal_dr)$p.value)
+normality_results[8, 2:3] <- c(shapiro.test(valid_clean$cal_ffq)$statistic,
+                                shapiro.test(valid_clean$cal_ffq)$p.value)
+
+normality_results$Normal <- ifelse(normality_results$P_value >= 0.05, "Yes", "No")
+
+kable(normality_results, digits = 4,
+      caption = "Normality Tests for All Variables") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+n_normal <- sum(normality_results$Normal == "Yes")
+cat(sprintf("\nNormally distributed variables: %d out of 8\n", n_normal))
+
+# 2. Check for outliers using IQR method
+cat("\n2. OUTLIER DETECTION (IQR Method)\n\n")
+
+count_outliers <- function(x) {
+  q1 <- quantile(x, 0.25, na.rm = TRUE)
+  q3 <- quantile(x, 0.75, na.rm = TRUE)
+  iqr <- q3 - q1
+  lower <- q1 - 1.5 * iqr
+  upper <- q3 + 1.5 * iqr
+  sum(x < lower | x > upper, na.rm = TRUE)
+}
+
+outlier_counts <- data.frame(
+  Variable = c("alco_dr", "alco_ffq", "tfat_dr", "tfat_ffq",
+               "sfat_dr", "sfat_ffq", "cal_dr", "cal_ffq"),
+  N_Outliers = c(
+    count_outliers(valid_clean$alco_dr),
+    count_outliers(valid_clean$alco_ffq),
+    count_outliers(valid_clean$tfat_dr),
+    count_outliers(valid_clean$tfat_ffq),
+    count_outliers(valid_clean$sfat_dr),
+    count_outliers(valid_clean$sfat_ffq),
+    count_outliers(valid_clean$cal_dr),
+    count_outliers(valid_clean$cal_ffq)
+  ),
+  Percent = numeric(8)
+)
+
+outlier_counts$Percent <- (outlier_counts$N_Outliers / nrow(valid_clean)) * 100
+
+kable(outlier_counts, digits = 2,
+      caption = "Outlier Counts by Variable") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# 3. Compare Spearman vs. Pearson
+cat("\n3. SPEARMAN vs. PEARSON CORRELATION COMPARISON\n\n")
+
+comparison_table <- data.frame(
+  Nutrient = c("Alcohol", "Total Fat", "Saturated Fat", "Calories"),
+  Spearman_rho = c(spearman_alco$estimate, spearman_tfat$estimate,
+                   spearman_sfat$estimate, spearman_cal$estimate),
+  Pearson_r = c(pearson_alco$estimate, pearson_tfat$estimate,
+                pearson_sfat$estimate, pearson_cal$estimate),
+  Difference = numeric(4)
+)
+
+comparison_table$Difference <- abs(comparison_table$Spearman_rho - comparison_table$Pearson_r)
+
+kable(comparison_table, digits = 4,
+      caption = "Comparison of Spearman and Pearson Correlations") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# 4. Overall recommendation
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("RECOMMENDATION: PARAMETRIC vs. NONPARAMETRIC\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+cat("EVIDENCE FOR NONPARAMETRIC METHODS:\n\n")
+
+if (n_normal < 6) {
+  cat(sprintf("1. ✓ NORMALITY VIOLATION: Only %d/8 variables normally distributed\n", n_normal))
+} else {
+  cat(sprintf("1. ✗ Most variables normal: %d/8 variables normally distributed\n", n_normal))
+}
+
+total_outliers <- sum(outlier_counts$N_Outliers)
+if (total_outliers > 10) {
+  cat(sprintf("2. ✓ OUTLIERS PRESENT: %d total outliers detected\n", total_outliers))
+} else {
+  cat(sprintf("2. ✗ Few outliers: %d total outliers detected\n", total_outliers))
+}
+
+mean_diff <- mean(comparison_table$Difference)
+if (mean_diff > 0.05) {
+  cat(sprintf("3. ✓ NONLINEARITY: Mean |Spearman - Pearson| = %.4f > 0.05\n", mean_diff))
+} else {
+  cat(sprintf("3. ✗ Linearity: Mean |Spearman - Pearson| = %.4f ≤ 0.05\n", mean_diff))
+}
+
+cat("\n4. ✓ DIETARY DATA CHARACTERISTICS:\n")
+cat("   • Dietary intakes are typically skewed\n")
+cat("   • Extreme values common (very low/high intakes)\n")
+cat("   • Rank correlation is standard in nutritional epidemiology\n")
+
+cat("\n=== FINAL RECOMMENDATION ===\n\n")
+cat("NONPARAMETRIC METHODS (Spearman correlation) are PREFERRED because:\n\n")
+cat("  1. Robust to non-normality and outliers\n")
+cat("  2. Appropriate for skewed dietary data\n")
+cat("  3. Standard practice in nutritional validation studies\n")
+cat("  4. Focuses on ranking (relative intake) rather than absolute values\n")
+cat("  5. More conservative and reliable for this type of data\n\n")
+
+cat("PRACTICAL IMPLICATION:\n")
+cat("  Using Spearman correlation provides valid assessment of FFQ validity\n")
+cat("  even when parametric assumptions are violated.\n")
+```
+
+---
+
+# Problem 11.73: Significance Assessment (ρ = 0.45, n = 24)
+
+## Research Question
+
+Suppose we have an estimated rank correlation of ρ = 0.45 based on a sample of size n = 24. Assess the significance of the results.
+
+```{r problem-11.73}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 11.73: SIGNIFICANCE TEST FOR ρ = 0.45, n = 24\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Given values
+rho_73 <- 0.45
+n_73 <- 24
+
+cat("Given Information:\n")
+cat(sprintf("  Spearman's rho (ρ): %.2f\n", rho_73))
+cat(sprintf("  Sample size (n): %d\n\n", n_73))
+
+# Method 1: t-test approximation
+cat("=== METHOD 1: t-TEST APPROXIMATION ===\n\n")
+
+# Test statistic: t = rho * sqrt((n-2) / (1-rho^2))
+t_stat_73 <- rho_73 * sqrt((n_73 - 2) / (1 - rho_73^2))
+df_73 <- n_73 - 2
+p_value_73 <- 2 * (1 - pt(abs(t_stat_73), df_73))
+
+cat("Formula: t = ρ × sqrt[(n-2) / (1-ρ²)]\n\n")
+cat(sprintf("  t-statistic: %.4f\n", t_stat_73))
+cat(sprintf("  Degrees of freedom: %d\n", df_73))
+cat(sprintf("  p-value (two-tailed): %.4f\n\n", p_value_73))
+
+# Critical value
+t_crit_73 <- qt(0.975, df_73)
+cat(sprintf("  Critical value (α = 0.05): ±%.4f\n", t_crit_73))
+
+if (p_value_73 < 0.05) {
+  cat("\nCONCLUSION: STATISTICALLY SIGNIFICANT\n")
+  cat(sprintf("  p = %.4f < 0.05\n", p_value_73))
+  cat(sprintf("  |t| = %.4f > %.4f (critical value)\n", abs(t_stat_73), t_crit_73))
+  cat("  Reject H₀: The rank correlation is significantly different from zero.\n")
+} else {
+  cat("\nCONCLUSION: NOT STATISTICALLY SIGNIFICANT\n")
+  cat(sprintf("  p = %.4f ≥ 0.05\n", p_value_73))
+  cat("  Fail to reject H₀: No evidence of rank correlation.\n")
+}
+
+# Method 2: Fisher's Z transformation
+cat("\n=== METHOD 2: FISHER'S Z TRANSFORMATION ===\n\n")
+
+z_rho_73 <- 0.5 * log((1 + rho_73) / (1 - rho_73))
+se_z_73 <- 1 / sqrt(n_73 - 3)
+z_stat_73 <- z_rho_73 / se_z_73
+p_value_z_73 <- 2 * (1 - pnorm(abs(z_stat_73)))
+
+cat("Formula: Z = 0.5 × ln[(1+ρ) / (1-ρ)]\n")
+cat(sprintf("         SE(Z) = 1/sqrt(n-3)\n\n"))
+cat(sprintf("  Fisher's Z: %.4f\n", z_rho_73))
+cat(sprintf("  SE(Z): %.4f\n", se_z_73))
+cat(sprintf("  z-statistic: %.4f\n", z_stat_73))
+cat(sprintf("  p-value: %.4f\n", p_value_z_73))
+
+# 95% Confidence Interval
+z_ci_lower_73 <- z_rho_73 - 1.96 * se_z_73
+z_ci_upper_73 <- z_rho_73 + 1.96 * se_z_73
+rho_ci_lower_73 <- (exp(2 * z_ci_lower_73) - 1) / (exp(2 * z_ci_lower_73) + 1)
+rho_ci_upper_73 <- (exp(2 * z_ci_upper_73) - 1) / (exp(2 * z_ci_upper_73) + 1)
+
+cat("\n=== 95% CONFIDENCE INTERVAL FOR ρ ===\n")
+cat(sprintf("  95%% CI: [%.4f, %.4f]\n\n", rho_ci_lower_73, rho_ci_upper_73))
+
+if (rho_ci_lower_73 > 0) {
+  cat("  CI does NOT include 0: Significant positive correlation\n")
+} else if (rho_ci_upper_73 < 0) {
+  cat("  CI does NOT include 0: Significant negative correlation\n")
+} else {
+  cat("  CI INCLUDES 0: Not significant\n")
+}
+
+cat("\n=== INTERPRETATION ===\n\n")
+cat(sprintf("With ρ = %.2f and n = %d:\n", rho_73, n_73))
+if (p_value_73 < 0.05) {
+  cat("  • The correlation IS statistically significant\n")
+  cat("  • This represents a MODERATE positive association\n")
+  cat("  • In a validation study, this suggests ACCEPTABLE agreement\n")
+} else {
+  cat("  • The correlation is NOT statistically significant\n")
+  cat("  • More data needed to establish relationship\n")
+}
+```
+
+---
+
+# Problem 11.74: Significance Assessment (ρ = 0.75, n = 8)
+
+## Research Question
+
+Suppose we have an estimated rank correlation of ρ = 0.75 based on a sample of size n = 8. Assess the significance of the results.
+
+```{r problem-11.74}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 11.74: SIGNIFICANCE TEST FOR ρ = 0.75, n = 8\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Given values
+rho_74 <- 0.75
+n_74 <- 8
+
+cat("Given Information:\n")
+cat(sprintf("  Spearman's rho (ρ): %.2f\n", rho_74))
+cat(sprintf("  Sample size (n): %d\n\n", n_74))
+
+# Method 1: t-test approximation
+cat("=== METHOD 1: t-TEST APPROXIMATION ===\n\n")
+
+t_stat_74 <- rho_74 * sqrt((n_74 - 2) / (1 - rho_74^2))
+df_74 <- n_74 - 2
+p_value_74 <- 2 * (1 - pt(abs(t_stat_74), df_74))
+
+cat("Formula: t = ρ × sqrt[(n-2) / (1-ρ²)]\n\n")
+cat(sprintf("  t-statistic: %.4f\n", t_stat_74))
+cat(sprintf("  Degrees of freedom: %d\n", df_74))
+cat(sprintf("  p-value (two-tailed): %.4f\n\n", p_value_74))
+
+t_crit_74 <- qt(0.975, df_74)
+cat(sprintf("  Critical value (α = 0.05): ±%.4f\n", t_crit_74))
+
+if (p_value_74 < 0.05) {
+  cat("\nCONCLUSION: STATISTICALLY SIGNIFICANT\n")
+  cat(sprintf("  p = %.4f < 0.05\n", p_value_74))
+  cat(sprintf("  |t| = %.4f > %.4f (critical value)\n", abs(t_stat_74), t_crit_74))
+  cat("  Reject H₀: The rank correlation is significantly different from zero.\n")
+} else {
+  cat("\nCONCLUSION: NOT STATISTICALLY SIGNIFICANT\n")
+  cat(sprintf("  p = %.4f ≥ 0.05\n", p_value_74))
+  cat("  Fail to reject H₀: No evidence of rank correlation.\n")
+}
+
+# Method 2: Fisher's Z transformation
+cat("\n=== METHOD 2: FISHER'S Z TRANSFORMATION ===\n\n")
+
+z_rho_74 <- 0.5 * log((1 + rho_74) / (1 - rho_74))
+se_z_74 <- 1 / sqrt(n_74 - 3)
+z_stat_74 <- z_rho_74 / se_z_74
+p_value_z_74 <- 2 * (1 - pnorm(abs(z_stat_74)))
+
+cat(sprintf("  Fisher's Z: %.4f\n", z_rho_74))
+cat(sprintf("  SE(Z): %.4f\n", se_z_74))
+cat(sprintf("  z-statistic: %.4f\n", z_stat_74))
+cat(sprintf("  p-value: %.4f\n", p_value_z_74))
+
+# 95% Confidence Interval
+z_ci_lower_74 <- z_rho_74 - 1.96 * se_z_74
+z_ci_upper_74 <- z_rho_74 + 1.96 * se_z_74
+rho_ci_lower_74 <- (exp(2 * z_ci_lower_74) - 1) / (exp(2 * z_ci_lower_74) + 1)
+rho_ci_upper_74 <- (exp(2 * z_ci_upper_74) - 1) / (exp(2 * z_ci_upper_74) + 1)
+
+cat("\n=== 95% CONFIDENCE INTERVAL FOR ρ ===\n")
+cat(sprintf("  95%% CI: [%.4f, %.4f]\n\n", rho_ci_lower_74, rho_ci_upper_74))
+
+if (rho_ci_lower_74 > 0) {
+  cat("  CI does NOT include 0: Significant positive correlation\n")
+} else if (rho_ci_upper_74 < 0) {
+  cat("  CI does NOT include 0: Significant negative correlation\n")
+} else {
+  cat("  CI INCLUDES 0: Not significant\n")
+}
+
+cat("\n=== INTERPRETATION ===\n\n")
+cat(sprintf("With ρ = %.2f and n = %d:\n", rho_74, n_74))
+if (p_value_74 < 0.05) {
+  cat("  • The correlation IS statistically significant\n")
+  cat("  • This represents a STRONG positive association\n")
+  cat("  • In a validation study, this suggests EXCELLENT agreement\n")
+} else {
+  cat("  • The correlation is NOT statistically significant\n")
+  cat("  • Despite the large correlation, sample size is too small\n")
+  cat("  • This illustrates the importance of adequate sample size\n")
+}
+
+cat("\n=== STATISTICAL POWER NOTE ===\n\n")
+cat("  ⚠ SMALL SAMPLE SIZE WARNING (n = 8):\n")
+cat("    • Very small sample reduces statistical power\n")
+cat("    • Wide confidence interval reflects uncertainty\n")
+cat("    • Results should be interpreted cautiously\n")
+cat("    • Larger sample needed for definitive conclusions\n")
+```
+
+## Comparison: Problems 11.73 vs. 11.74
+
+```{r compare-73-74}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("COMPARISON: PROBLEM 11.73 vs. 11.74\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+comparison_73_74 <- data.frame(
+  Problem = c("11.73", "11.74"),
+  Rho = c(rho_73, rho_74),
+  N = c(n_73, n_74),
+  t_statistic = c(t_stat_73, t_stat_74),
+  P_value = c(p_value_73, p_value_74),
+  Significant = c(p_value_73 < 0.05, p_value_74 < 0.05),
+  CI_Lower = c(rho_ci_lower_73, rho_ci_lower_74),
+  CI_Upper = c(rho_ci_upper_73, rho_ci_upper_74),
+  CI_Width = c(rho_ci_upper_73 - rho_ci_lower_73,
+               rho_ci_upper_74 - rho_ci_lower_74)
+)
+
+kable(comparison_73_74, digits = 4,
+      caption = "Comparison of Two Scenarios") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+cat("\nKEY INSIGHTS:\n\n")
+cat("1. CORRELATION STRENGTH vs. SAMPLE SIZE:\n")
+cat(sprintf("   • Problem 11.73: Moderate ρ (%.2f), Larger n (%d)\n", rho_73, n_73))
+cat(sprintf("   • Problem 11.74: Strong ρ (%.2f), Smaller n (%d)\n\n", rho_74, n_74))
+
+cat("2. STATISTICAL SIGNIFICANCE:\n")
+if (comparison_73_74$Significant[1] && comparison_73_74$Significant[2]) {
+  cat("   • Both are significant despite different sample sizes\n")
+} else if (comparison_73_74$Significant[1] && !comparison_73_74$Significant[2]) {
+  cat("   • Problem 11.73 significant despite lower ρ (larger n compensates)\n")
+  cat("   • Problem 11.74 not significant despite higher ρ (n too small)\n")
+} else if (!comparison_73_74$Significant[1] && comparison_73_74$Significant[2]) {
+  cat("   • Problem 11.74 significant due to very high ρ\n")
+  cat("   • Problem 11.73 not significant (moderate ρ, moderate n)\n")
+} else {
+  cat("   • Neither reaches statistical significance\n")
+}
+
+cat("\n3. CONFIDENCE INTERVAL WIDTH:\n")
+cat(sprintf("   • Problem 11.73 CI width: %.4f\n", comparison_73_74$CI_Width[1]))
+cat(sprintf("   • Problem 11.74 CI width: %.4f\n", comparison_73_74$CI_Width[2]))
+cat("   • Smaller sample → Wider CI → More uncertainty\n\n")
+
+cat("LESSON: Both correlation strength AND sample size determine significance!\n")
+```
+
+---
+
+# Visualization
+
+## Scatterplots: Diet Record vs. FFQ
+
+```{r scatterplots, fig.height=12}
+# Create scatterplots for all four nutrients
+
+p1 <- ggplot(data_alco, aes(x = alco_dr, y = alco_ffq)) +
+  geom_point(alpha = 0.6, size = 3, color = "#2E86AB") +
+  geom_smooth(method = "lm", se = TRUE, color = "#A23B72", fill = "#F18F01", alpha = 0.2) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray40") +
+  labs(title = "Alcohol Intake: Diet Record vs. FFQ",
+       subtitle = sprintf("Spearman ρ = %.3f, p = %.4f",
+                         spearman_alco$estimate, spearman_alco$p.value),
+       x = "Alcohol Intake - Diet Record",
+       y = "Alcohol Intake - FFQ") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 12))
+
+p2 <- ggplot(data_tfat, aes(x = tfat_dr, y = tfat_ffq)) +
+  geom_point(alpha = 0.6, size = 3, color = "#A23B72") +
+  geom_smooth(method = "lm", se = TRUE, color = "#2E86AB", fill = "#F18F01", alpha = 0.2) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray40") +
+  labs(title = "Total Fat Intake: Diet Record vs. FFQ",
+       subtitle = sprintf("Spearman ρ = %.3f, p = %.4f",
+                         spearman_tfat$estimate, spearman_tfat$p.value),
+       x = "Total Fat - Diet Record",
+       y = "Total Fat - FFQ") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 12))
+
+p3 <- ggplot(data_sfat, aes(x = sfat_dr, y = sfat_ffq)) +
+  geom_point(alpha = 0.6, size = 3, color = "#F18F01") +
+  geom_smooth(method = "lm", se = TRUE, color = "#2E86AB", fill = "#A23B72", alpha = 0.2) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray40") +
+  labs(title = "Saturated Fat Intake: Diet Record vs. FFQ",
+       subtitle = sprintf("Spearman ρ = %.3f, p = %.4f",
+                         spearman_sfat$estimate, spearman_sfat$p.value),
+       x = "Saturated Fat - Diet Record",
+       y = "Saturated Fat - FFQ") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 12))
+
+p4 <- ggplot(data_cal, aes(x = cal_dr, y = cal_ffq)) +
+  geom_point(alpha = 0.6, size = 3, color = "#66BB6A") +
+  geom_smooth(method = "lm", se = TRUE, color = "#2E86AB", fill = "#A23B72", alpha = 0.2) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray40") +
+  labs(title = "Total Caloric Intake: Diet Record vs. FFQ",
+       subtitle = sprintf("Spearman ρ = %.3f, p = %.4f",
+                         spearman_cal$estimate, spearman_cal$p.value),
+       x = "Calories - Diet Record",
+       y = "Calories - FFQ") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 12))
+
+grid.arrange(p1, p2, p3, p4, ncol = 1)
+```
+
+Note: Dashed line represents perfect agreement (y = x)
+
+---
+
+# Summary of Results
+
+```{r summary-table}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("SUMMARY OF VALIDATION STUDY RESULTS\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Create comprehensive summary table
+summary_all <- data.frame(
+  Problem = c("11.68", "11.69", "11.70", "11.71"),
+  Nutrient = c("Alcohol", "Total Fat", "Saturated Fat", "Calories"),
+  N = c(nrow(data_alco), nrow(data_tfat), nrow(data_sfat), nrow(data_cal)),
+  Spearman_rho = c(spearman_alco$estimate, spearman_tfat$estimate,
+                   spearman_sfat$estimate, spearman_cal$estimate),
+  P_value = c(spearman_alco$p.value, spearman_tfat$p.value,
+              spearman_sfat$p.value, spearman_cal$p.value),
+  Significant = c(
+    ifelse(spearman_alco$p.value < 0.05, "Yes", "No"),
+    ifelse(spearman_tfat$p.value < 0.05, "Yes", "No"),
+    ifelse(spearman_sfat$p.value < 0.05, "Yes", "No"),
+    ifelse(spearman_cal$p.value < 0.05, "Yes", "No")
+  ),
+  Validity = c(
+    ifelse(spearman_alco$estimate >= 0.70, "Excellent",
+           ifelse(spearman_alco$estimate >= 0.50, "Good",
+                  ifelse(spearman_alco$estimate >= 0.30, "Moderate", "Poor"))),
+    ifelse(spearman_tfat$estimate >= 0.70, "Excellent",
+           ifelse(spearman_tfat$estimate >= 0.50, "Good",
+                  ifelse(spearman_tfat$estimate >= 0.30, "Moderate", "Poor"))),
+    ifelse(spearman_sfat$estimate >= 0.70, "Excellent",
+           ifelse(spearman_sfat$estimate >= 0.50, "Good",
+                  ifelse(spearman_sfat$estimate >= 0.30, "Moderate", "Poor"))),
+    ifelse(spearman_cal$estimate >= 0.70, "Excellent",
+           ifelse(spearman_cal$estimate >= 0.50, "Good",
+                  ifelse(spearman_cal$estimate >= 0.30, "Moderate", "Poor")))
+  )
+)
+
+kable(summary_all, digits = 4,
+      caption = "Summary of FFQ Validation Results (Problems 11.68-11.71)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+cat("\n=== OVERALL CONCLUSION ===\n\n")
+
+n_excellent <- sum(summary_all$Validity == "Excellent")
+n_good <- sum(summary_all$Validity == "Good")
+n_moderate <- sum(summary_all$Validity == "Moderate")
+
+cat("FFQ VALIDITY ASSESSMENT:\n")
+if (n_excellent >= 3) {
+  cat("  ✓ FFQ shows EXCELLENT validity across most nutrients\n")
+  cat("  ✓ Can be confidently used in place of diet records\n")
+} else if (n_good + n_excellent >= 3) {
+  cat("  ✓ FFQ shows GOOD validity for most nutrients\n")
+  cat("  ✓ Suitable for ranking individuals by intake\n")
+} else if (n_moderate >= 2) {
+  cat("  ⚠ FFQ shows MODERATE validity\n")
+  cat("  ⚠ Use with caution; may underestimate true associations\n")
+} else {
+  cat("  ✗ FFQ shows POOR validity\n")
+  cat("  ✗ Not recommended for assessing these nutrients\n")
+}
+
+cat("\nMETHODOLOGICAL RECOMMENDATION (Problem 11.72):\n")
+cat("  → NONPARAMETRIC methods (Spearman) are PREFERRED\n")
+cat("  → Robust to outliers and non-normality in dietary data\n")
+
+cat("\nSAMPLE SIZE CONSIDERATIONS (Problems 11.73-11.74):\n")
+cat("  → Adequate sample size crucial for detecting correlations\n")
+cat("  → Small samples have wide CIs and low power\n")
+cat("  → Both correlation strength AND sample size determine significance\n")
+```
+
+---
+
+# Conclusions
+
+## Problem 11.68 (Alcohol)
+- **Spearman's ρ:** `r sprintf("%.4f", spearman_alco$estimate)`
+- **Validity:** `r summary_all$Validity[1]`
+
+## Problem 11.69 (Total Fat)
+- **Spearman's ρ:** `r sprintf("%.4f", spearman_tfat$estimate)`
+- **Validity:** `r summary_all$Validity[2]`
+
+## Problem 11.70 (Saturated Fat)
+- **Spearman's ρ:** `r sprintf("%.4f", spearman_sfat$estimate)`
+- **Validity:** `r summary_all$Validity[3]`
+
+## Problem 11.71 (Calories)
+- **Spearman's ρ:** `r sprintf("%.4f", spearman_cal$estimate)`
+- **Validity:** `r summary_all$Validity[4]`
+
+## Problem 11.72 (Methods)
+**Recommendation:** Nonparametric methods preferred due to non-normality and outliers
+
+## Problem 11.73 (ρ = 0.45, n = 24)
+- **p-value:** `r sprintf("%.4f", p_value_73)`
+- **Significant:** `r ifelse(p_value_73 < 0.05, "Yes", "No")`
+
+## Problem 11.74 (ρ = 0.75, n = 8)
+- **p-value:** `r sprintf("%.4f", p_value_74)`
+- **Significant:** `r ifelse(p_value_74 < 0.05, "Yes", "No")`
+
+---
+
+**END OF ANALYSIS**

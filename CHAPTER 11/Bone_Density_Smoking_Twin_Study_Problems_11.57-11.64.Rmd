@@ -1,0 +1,1001 @@
+---
+title: "Chapter 11: Endocrinology - Bone Density and Smoking in Twin Study (Problems 11.57-11.64)"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: united
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 12, fig.height = 8)
+```
+
+# Background: Twin Study on Bone Density and Smoking
+
+## Study Overview
+
+This is a **twin study** investigating the relationship between **smoking** and **bone density**. Twin studies are powerful because they control for genetic factors and many environmental factors that twins share.
+
+### Why Twin Studies?
+
+**Key Advantage:** Twins share:
+- Genetics (identical twins share 100%, fraternal share ~50%)
+- Early life environment
+- Many lifestyle factors
+
+By comparing **within twin pairs** (heavier smoker vs. lighter smoker), we control for these shared factors, isolating the effect of smoking.
+
+### Study Design
+
+- **Unit of analysis:** Twin pairs (each row is one pair)
+- **Approach:** Compute **differences** between heavier and lighter smoking twin
+- **Confounding control:** Within-pair comparison eliminates many confounders
+
+### Study Variables
+
+**Twin 1 Variables** (suffix `1`):
+- **pyr1:** Pack-years smoked
+- **ls1:** Lumbar spine bone density (g/cm²)
+- **fn1:** Femoral neck bone density (g/cm²)
+- **fs1:** Femoral shaft bone density (g/cm²)
+- **wt1:** Weight (kg)
+- **ht1:** Height (cm)
+- **age, zyg:** Shared variables (same for both twins)
+
+**Twin 2 Variables** (suffix `2`): Same variables with suffix `2`
+
+### Research Questions (Problems 11.57-11.64)
+
+**Problems 11.57-11.59:** Relate **difference in pack-years** to **difference in bone density** (lumbar spine, femoral neck, femoral shaft) using simple regression.
+
+**Problem 11.60:** Test whether heavier smokers differ in **weight** from lighter smokers.
+
+**Problems 11.61-11.63:** Repeat regressions **controlling for weight differences**.
+
+**Problem 11.64:** Consider **other confounders** and provide overall conclusion about smoking and bone density.
+
+---
+
+# Libraries
+
+```{r libraries}
+library(tidyverse)   # Data manipulation and visualization
+library(knitr)       # For kable tables
+library(kableExtra)  # For enhanced table formatting
+library(ggplot2)     # Plotting
+library(gridExtra)   # Multiple plots
+library(broom)       # Tidy model outputs
+library(car)         # For VIF and other diagnostics
+library(lmtest)      # For model testing
+```
+
+---
+
+# Data Import and Processing
+
+```{r data-import}
+# Load the BONEDEN.DAT dataset
+data_path <- "Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/BONEDEN.DAT.txt"
+
+# Read the data - handle quotes in column names
+bone_data <- tryCatch({
+  read.csv(data_path, header = TRUE, strip.white = TRUE, quote = "'\"",
+           na.strings = c("", "NA", ".", "99", "999"))
+}, error = function(e) {
+  cat("Error loading data from primary path. Trying alternative path...\n")
+  read.csv("../CHAPTER 10/Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/BONEDEN.DAT.txt",
+           header = TRUE, strip.white = TRUE, quote = "'\"",
+           na.strings = c("", "NA", ".", "99", "999"))
+})
+
+# Clean column names (remove any quotes that might remain)
+colnames(bone_data) <- gsub("'", "", colnames(bone_data))
+colnames(bone_data) <- gsub("\"", "", colnames(bone_data))
+
+# Display column names after cleaning
+cat("Cleaned column names:\n")
+print(colnames(bone_data))
+
+# Display structure
+cat("\nDataset Structure:\n")
+str(bone_data)
+
+cat("\nFirst few rows:\n")
+head(bone_data, 5) %>%
+  kable(caption = "First 5 Twin Pairs from BONEDEN Dataset") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE, font_size = 10)
+```
+
+# Variable Processing: Creating Differences
+
+```{r variable-processing}
+cat("=== TWIN STUDY ANALYSIS: Creating Within-Pair Differences ===\n\n")
+
+# Process data - identify heavier and lighter smoker
+bone_clean <- bone_data %>%
+  mutate(
+    # Identify which twin smoked more
+    # Heavier smoker: twin with higher pack-years
+    pyr_heavy = pmax(pyr1, pyr2, na.rm = TRUE),
+    pyr_light = pmin(pyr1, pyr2, na.rm = TRUE),
+
+    # Determine which twin is heavier smoker
+    twin1_heavier = (pyr1 >= pyr2),
+
+    # Bone densities for heavier and lighter smoker
+    ls_heavy = ifelse(twin1_heavier, ls1, ls2),
+    ls_light = ifelse(twin1_heavier, ls2, ls1),
+
+    fn_heavy = ifelse(twin1_heavier, fn1, fn2),
+    fn_light = ifelse(twin1_heavier, fn2, fn1),
+
+    fs_heavy = ifelse(twin1_heavier, fs1, fs2),
+    fs_light = ifelse(twin1_heavier, fs2, fs1),
+
+    # Weights for heavier and lighter smoker
+    wt_heavy = ifelse(twin1_heavier, wt1, wt2),
+    wt_light = ifelse(twin1_heavier, wt2, wt1),
+
+    # Heights
+    ht_heavy = ifelse(twin1_heavier, ht1, ht2),
+    ht_light = ifelse(twin1_heavier, ht2, ht1),
+
+    # Other variables
+    tea_heavy = ifelse(twin1_heavier, tea1, tea2),
+    tea_light = ifelse(twin1_heavier, tea2, tea1),
+
+    cof_heavy = ifelse(twin1_heavier, cof1, cof2),
+    cof_light = ifelse(twin1_heavier, cof2, cof1),
+
+    alc_heavy = ifelse(twin1_heavier, alc1, alc2),
+    alc_light = ifelse(twin1_heavier, alc2, alc1),
+
+    # Calculate DIFFERENCES (Heavier smoker - Lighter smoker)
+    diff_pyr = pyr_heavy - pyr_light,
+    diff_ls = ls_heavy - ls_light,
+    diff_fn = fn_heavy - fn_light,
+    diff_fs = fs_heavy - fs_light,
+    diff_wt = wt_heavy - wt_light,
+    diff_ht = ht_heavy - ht_light,
+    diff_tea = tea_heavy - tea_light,
+    diff_cof = cof_heavy - cof_light,
+    diff_alc = alc_heavy - alc_light,
+
+    # Zygosity factor
+    Zygosity = factor(zyg, levels = c(1, 2),
+                     labels = c("Monozygotic", "Dizygotic"))
+  )
+
+cat("Dataset processing completed.\n")
+cat("Total twin pairs:", nrow(bone_clean), "\n\n")
+
+# Summary of differences
+cat("=== Summary of Within-Pair Differences ===\n")
+cat("(Heavier Smoker - Lighter Smoker)\n\n")
+
+summary_diff <- bone_clean %>%
+  summarise(
+    N_pairs = n(),
+    Mean_diff_pyr = mean(diff_pyr, na.rm = TRUE),
+    SD_diff_pyr = sd(diff_pyr, na.rm = TRUE),
+    Mean_diff_ls = mean(diff_ls, na.rm = TRUE),
+    SD_diff_ls = sd(diff_ls, na.rm = TRUE),
+    Mean_diff_fn = mean(diff_fn, na.rm = TRUE),
+    SD_diff_fn = sd(diff_fn, na.rm = TRUE),
+    Mean_diff_fs = mean(diff_fs, na.rm = TRUE),
+    SD_diff_fs = sd(diff_fs, na.rm = TRUE),
+    Mean_diff_wt = mean(diff_wt, na.rm = TRUE),
+    SD_diff_wt = sd(diff_wt, na.rm = TRUE)
+  )
+
+kable(t(summary_diff), digits = 3,
+      caption = "Summary Statistics of Within-Pair Differences",
+      col.names = "Value") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Check for missing values
+cat("\n=== Missing Values ===\n")
+missing_summary <- bone_clean %>%
+  summarise(
+    diff_pyr_missing = sum(is.na(diff_pyr)),
+    diff_ls_missing = sum(is.na(diff_ls)),
+    diff_fn_missing = sum(is.na(diff_fn)),
+    diff_fs_missing = sum(is.na(diff_fs)),
+    diff_wt_missing = sum(is.na(diff_wt))
+  )
+
+kable(t(missing_summary),
+      caption = "Missing Value Counts",
+      col.names = "Count") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+---
+
+# Problem 11.57: Lumbar Spine Bone Density vs. Pack-Years (Simple Regression)
+
+## Research Question
+
+Use regression analysis to relate the **difference in pack-years smoked** to the **difference in bone density of the lumbar spine** between the heavier- and lighter-smoking twin.
+
+### Hypothesis
+
+- **H₀:** β₁ = 0 (No linear relationship between smoking difference and bone density difference)
+- **H₁:** β₁ ≠ 0 (Linear relationship exists)
+
+**Expected:** Negative relationship (more smoking → lower bone density)
+
+```{r problem-11.57}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 11.57: LUMBAR SPINE BONE DENSITY vs. PACK-YEARS DIFFERENCE\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Remove missing values
+data_ls <- bone_clean %>%
+  filter(!is.na(diff_pyr), !is.na(diff_ls))
+
+cat("Sample size (complete twin pairs):", nrow(data_ls), "\n\n")
+
+# Fit simple linear regression
+model_ls <- lm(diff_ls ~ diff_pyr, data = data_ls)
+
+cat("=== REGRESSION MODEL ===\n")
+cat("Outcome: Difference in Lumbar Spine Bone Density (g/cm²)\n")
+cat("Predictor: Difference in Pack-Years Smoked\n\n")
+
+summary(model_ls)
+
+# Tidy output
+cat("\n=== MODEL COEFFICIENTS ===\n")
+tidy(model_ls, conf.int = TRUE) %>%
+  kable(digits = 5, caption = "Regression Coefficients with 95% CI") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Model fit statistics
+cat("\n=== MODEL FIT STATISTICS ===\n")
+glance(model_ls) %>%
+  select(r.squared, adj.r.squared, sigma, statistic, p.value, df, df.residual) %>%
+  kable(digits = 5, caption = "Model Fit Statistics") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Interpretation
+cat("\n=== INTERPRETATION ===\n")
+beta1 <- coef(model_ls)[2]
+pval <- summary(model_ls)$coefficients[2, 4]
+rsq <- summary(model_ls)$r.squared
+
+cat(sprintf("Slope (β₁): %.5f\n", beta1))
+cat(sprintf("  For each additional pack-year difference,\n"))
+cat(sprintf("  lumbar spine bone density differs by %.5f g/cm²\n", beta1))
+
+if (pval < 0.05) {
+  cat(sprintf("\nSTATISTICAL SIGNIFICANCE: p = %.4f < 0.05\n", pval))
+  cat("  The relationship is statistically significant.\n")
+  if (beta1 < 0) {
+    cat("  CONCLUSION: Greater smoking is associated with LOWER bone density.\n")
+  } else {
+    cat("  CONCLUSION: Greater smoking is associated with HIGHER bone density.\n")
+  }
+} else {
+  cat(sprintf("\nSTATISTICAL SIGNIFICANCE: p = %.4f ≥ 0.05\n", pval))
+  cat("  The relationship is NOT statistically significant.\n")
+  cat("  No evidence that smoking affects lumbar spine bone density.\n")
+}
+
+cat(sprintf("\nR²: %.4f (%.1f%% of variance explained)\n", rsq, rsq * 100))
+```
+
+## Goodness of Fit Assessment
+
+```{r gof-11.57}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("GOODNESS OF FIT ASSESSMENT - PROBLEM 11.57\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# 1. Normality of residuals
+cat("1. NORMALITY OF RESIDUALS\n")
+cat("   Shapiro-Wilk Test:\n")
+shapiro_ls <- shapiro.test(residuals(model_ls))
+cat(sprintf("   W = %.4f, p-value = %.4f\n", shapiro_ls$statistic, shapiro_ls$p.value))
+if (shapiro_ls$p.value < 0.05) {
+  cat("   CONCLUSION: Residuals are NOT normally distributed (p < 0.05)\n")
+} else {
+  cat("   CONCLUSION: Residuals are approximately normal (p ≥ 0.05)\n")
+}
+
+# 2. Constant variance (homoscedasticity)
+cat("\n2. CONSTANT VARIANCE (Homoscedasticity)\n")
+cat("   Breusch-Pagan Test:\n")
+bp_ls <- bptest(model_ls)
+cat(sprintf("   BP = %.4f, p-value = %.4f\n", bp_ls$statistic, bp_ls$p.value))
+if (bp_ls$p.value < 0.05) {
+  cat("   CONCLUSION: Heteroscedasticity detected (p < 0.05)\n")
+} else {
+  cat("   CONCLUSION: Variance is constant (p ≥ 0.05)\n")
+}
+
+# 3. Independence (not directly testable in cross-sectional twin data)
+cat("\n3. INDEPENDENCE\n")
+cat("   Note: In twin studies, observations are independent twin pairs.\n")
+cat("   Within-pair correlation is accounted for by using differences.\n")
+
+# 4. Linearity check
+cat("\n4. LINEARITY\n")
+cat("   Visual inspection via residual plots (see diagnostic plots below)\n")
+
+# Overall GOF
+cat("\n=== OVERALL GOODNESS OF FIT ===\n")
+assumptions_met <- (shapiro_ls$p.value >= 0.05) && (bp_ls$p.value >= 0.05)
+if (assumptions_met) {
+  cat("✓ Model assumptions appear to be satisfied.\n")
+  cat("  Regression results are valid.\n")
+} else {
+  cat("⚠ Some model assumptions may be violated.\n")
+  cat("  Consider robust regression or transformations.\n")
+}
+```
+
+---
+
+# Problem 11.58: Femoral Neck Bone Density vs. Pack-Years (Simple Regression)
+
+```{r problem-11.58}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 11.58: FEMORAL NECK BONE DENSITY vs. PACK-YEARS DIFFERENCE\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Remove missing values
+data_fn <- bone_clean %>%
+  filter(!is.na(diff_pyr), !is.na(diff_fn))
+
+cat("Sample size (complete twin pairs):", nrow(data_fn), "\n\n")
+
+# Fit simple linear regression
+model_fn <- lm(diff_fn ~ diff_pyr, data = data_fn)
+
+summary(model_fn)
+
+# Tidy output
+cat("\n=== MODEL COEFFICIENTS ===\n")
+tidy(model_fn, conf.int = TRUE) %>%
+  kable(digits = 5, caption = "Regression Coefficients with 95% CI") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# GOF tests
+cat("\n=== GOODNESS OF FIT ===\n")
+shapiro_fn <- shapiro.test(residuals(model_fn))
+bp_fn <- bptest(model_fn)
+
+cat(sprintf("Shapiro-Wilk: W = %.4f, p = %.4f\n", shapiro_fn$statistic, shapiro_fn$p.value))
+cat(sprintf("Breusch-Pagan: BP = %.4f, p = %.4f\n", bp_fn$statistic, bp_fn$p.value))
+
+# Interpretation
+beta1_fn <- coef(model_fn)[2]
+pval_fn <- summary(model_fn)$coefficients[2, 4]
+
+cat("\n=== INTERPRETATION ===\n")
+cat(sprintf("Slope: %.5f, p-value: %.4f\n", beta1_fn, pval_fn))
+if (pval_fn < 0.05) {
+  cat("SIGNIFICANT: Smoking difference is related to femoral neck bone density.\n")
+} else {
+  cat("NOT SIGNIFICANT: No evidence of relationship.\n")
+}
+```
+
+---
+
+# Problem 11.59: Femoral Shaft Bone Density vs. Pack-Years (Simple Regression)
+
+```{r problem-11.59}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 11.59: FEMORAL SHAFT BONE DENSITY vs. PACK-YEARS DIFFERENCE\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Remove missing values
+data_fs <- bone_clean %>%
+  filter(!is.na(diff_pyr), !is.na(diff_fs))
+
+cat("Sample size (complete twin pairs):", nrow(data_fs), "\n\n")
+
+# Fit simple linear regression
+model_fs <- lm(diff_fs ~ diff_pyr, data = data_fs)
+
+summary(model_fs)
+
+# Tidy output
+cat("\n=== MODEL COEFFICIENTS ===\n")
+tidy(model_fs, conf.int = TRUE) %>%
+  kable(digits = 5, caption = "Regression Coefficients with 95% CI") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# GOF tests
+cat("\n=== GOODNESS OF FIT ===\n")
+shapiro_fs <- shapiro.test(residuals(model_fs))
+bp_fs <- bptest(model_fs)
+
+cat(sprintf("Shapiro-Wilk: W = %.4f, p = %.4f\n", shapiro_fs$statistic, shapiro_fs$p.value))
+cat(sprintf("Breusch-Pagan: BP = %.4f, p = %.4f\n", bp_fs$statistic, bp_fs$p.value))
+
+# Interpretation
+beta1_fs <- coef(model_fs)[2]
+pval_fs <- summary(model_fs)$coefficients[2, 4]
+
+cat("\n=== INTERPRETATION ===\n")
+cat(sprintf("Slope: %.5f, p-value: %.4f\n", beta1_fs, pval_fs))
+if (pval_fs < 0.05) {
+  cat("SIGNIFICANT: Smoking difference is related to femoral shaft bone density.\n")
+} else {
+  cat("NOT SIGNIFICANT: No evidence of relationship.\n")
+}
+```
+
+---
+
+# Problem 11.60: Weight Comparison (Heavier vs. Lighter Smoker)
+
+## Research Question
+
+Compare the weight of the heavier-smoking twin vs. the lighter-smoking twin to determine if heavier smokers tend to weigh less.
+
+### Hypothesis
+
+- **H₀:** μ_diff = 0 (No weight difference between heavier and lighter smokers)
+- **H₁:** μ_diff ≠ 0 (Weight difference exists)
+
+```{r problem-11.60}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 11.60: WEIGHT COMPARISON (HEAVIER vs. LIGHTER SMOKER)\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Remove missing values
+data_wt <- bone_clean %>%
+  filter(!is.na(diff_wt))
+
+cat("Sample size (complete twin pairs):", nrow(data_wt), "\n\n")
+
+# Paired t-test on differences
+cat("=== PAIRED T-TEST ===\n")
+cat("Null Hypothesis: Mean weight difference = 0\n")
+cat("Alternative: Mean weight difference ≠ 0\n\n")
+
+ttest_wt <- t.test(data_wt$diff_wt, mu = 0)
+
+cat("Results:\n")
+cat(sprintf("  Mean difference: %.3f kg\n", mean(data_wt$diff_wt, na.rm = TRUE)))
+cat(sprintf("  SD difference: %.3f kg\n", sd(data_wt$diff_wt, na.rm = TRUE)))
+cat(sprintf("  95%% CI: [%.3f, %.3f]\n", ttest_wt$conf.int[1], ttest_wt$conf.int[2]))
+cat(sprintf("  t-statistic: %.4f\n", ttest_wt$statistic))
+cat(sprintf("  df: %d\n", ttest_wt$parameter))
+cat(sprintf("  p-value: %.4f\n\n", ttest_wt$p.value))
+
+# Interpretation
+if (ttest_wt$p.value < 0.05) {
+  cat("CONCLUSION: p < 0.05 - SIGNIFICANT\n")
+  if (mean(data_wt$diff_wt, na.rm = TRUE) > 0) {
+    cat("  Heavier smokers weigh MORE than lighter smokers.\n")
+  } else {
+    cat("  Heavier smokers weigh LESS than lighter smokers.\n")
+  }
+  cat("  Weight is a POTENTIAL CONFOUNDER that should be controlled.\n")
+} else {
+  cat("CONCLUSION: p ≥ 0.05 - NOT SIGNIFICANT\n")
+  cat("  No evidence that smoking is related to weight.\n")
+  cat("  Weight may not be a major confounder.\n")
+}
+
+# Also test with Wilcoxon signed-rank (nonparametric)
+cat("\n=== WILCOXON SIGNED-RANK TEST (Nonparametric) ===\n")
+wilcox_wt <- wilcox.test(data_wt$diff_wt, mu = 0)
+cat(sprintf("  V-statistic: %.1f\n", wilcox_wt$statistic))
+cat(sprintf("  p-value: %.4f\n", wilcox_wt$p.value))
+```
+
+---
+
+# Problem 11.61: Lumbar Spine - Adjusted for Weight
+
+## Research Question
+
+Repeat the analysis in Problem 11.57, **controlling for weight differences** between the heavier- and lighter-smoking twins.
+
+### Model
+
+**Outcome:** Difference in lumbar spine bone density
+**Predictors:**
+- Difference in pack-years (primary predictor)
+- Difference in weight (confounder)
+
+```{r problem-11.61}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 11.61: LUMBAR SPINE - ADJUSTED FOR WEIGHT DIFFERENCE\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Remove missing values
+data_ls_adj <- bone_clean %>%
+  filter(!is.na(diff_pyr), !is.na(diff_ls), !is.na(diff_wt))
+
+cat("Sample size (complete twin pairs):", nrow(data_ls_adj), "\n\n")
+
+# Fit multiple regression with weight adjustment
+model_ls_adj <- lm(diff_ls ~ diff_pyr + diff_wt, data = data_ls_adj)
+
+cat("=== MULTIPLE REGRESSION MODEL ===\n")
+cat("Outcome: Difference in Lumbar Spine Bone Density\n")
+cat("Predictors: \n")
+cat("  - Difference in Pack-Years (primary)\n")
+cat("  - Difference in Weight (confounder)\n\n")
+
+summary(model_ls_adj)
+
+# Tidy output
+cat("\n=== MODEL COEFFICIENTS ===\n")
+tidy(model_ls_adj, conf.int = TRUE) %>%
+  kable(digits = 5, caption = "Regression Coefficients with 95% CI") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Compare with unadjusted model
+cat("\n=== COMPARISON: UNADJUSTED vs. ADJUSTED ===\n")
+
+comparison_ls <- data.frame(
+  Model = c("Unadjusted (11.57)", "Adjusted for Weight (11.61)"),
+  Beta_pyr = c(coef(model_ls)[2], coef(model_ls_adj)[2]),
+  SE_pyr = c(summary(model_ls)$coefficients[2, 2],
+             summary(model_ls_adj)$coefficients[2, 2]),
+  P_value_pyr = c(summary(model_ls)$coefficients[2, 4],
+                  summary(model_ls_adj)$coefficients[2, 4]),
+  R_squared = c(summary(model_ls)$r.squared,
+                summary(model_ls_adj)$r.squared)
+)
+
+kable(comparison_ls, digits = 5,
+      caption = "Comparison of Models for Lumbar Spine Bone Density") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Interpretation
+cat("\n=== INTERPRETATION ===\n")
+beta_unadj <- coef(model_ls)[2]
+beta_adj <- coef(model_ls_adj)[2]
+pval_adj <- summary(model_ls_adj)$coefficients[2, 4]
+
+cat(sprintf("Unadjusted β (pack-years): %.5f\n", beta_unadj))
+cat(sprintf("Adjusted β (pack-years): %.5f\n", beta_adj))
+cat(sprintf("Change: %.5f (%.1f%%)\n", beta_adj - beta_unadj,
+            ((beta_adj - beta_unadj) / beta_unadj) * 100))
+
+if (abs(beta_adj - beta_unadj) / abs(beta_unadj) > 0.10) {
+  cat("\nCONCLUSION: Weight is a CONFOUNDER (>10% change in coefficient)\n")
+} else {
+  cat("\nCONCLUSION: Weight is NOT a major confounder (<10% change)\n")
+}
+
+if (pval_adj < 0.05) {
+  cat(sprintf("After adjusting for weight, smoking remains significant (p = %.4f)\n", pval_adj))
+} else {
+  cat(sprintf("After adjusting for weight, smoking is not significant (p = %.4f)\n", pval_adj))
+}
+
+# VIF check
+cat("\n=== MULTICOLLINEARITY CHECK ===\n")
+vif_vals <- vif(model_ls_adj)
+cat("Variance Inflation Factors (VIF):\n")
+print(vif_vals)
+if (any(vif_vals > 10)) {
+  cat("\n⚠ High multicollinearity detected (VIF > 10)\n")
+} else if (any(vif_vals > 5)) {
+  cat("\n⚠ Moderate multicollinearity (VIF > 5)\n")
+} else {
+  cat("\n✓ No concerning multicollinearity (all VIF < 5)\n")
+}
+```
+
+---
+
+# Problem 11.62: Femoral Neck - Adjusted for Weight
+
+```{r problem-11.62}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 11.62: FEMORAL NECK - ADJUSTED FOR WEIGHT DIFFERENCE\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+data_fn_adj <- bone_clean %>%
+  filter(!is.na(diff_pyr), !is.na(diff_fn), !is.na(diff_wt))
+
+cat("Sample size:", nrow(data_fn_adj), "\n\n")
+
+model_fn_adj <- lm(diff_fn ~ diff_pyr + diff_wt, data = data_fn_adj)
+
+summary(model_fn_adj)
+
+tidy(model_fn_adj, conf.int = TRUE) %>%
+  kable(digits = 5, caption = "Femoral Neck - Adjusted Model Coefficients") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Comparison
+comparison_fn <- data.frame(
+  Model = c("Unadjusted (11.58)", "Adjusted for Weight (11.62)"),
+  Beta_pyr = c(coef(model_fn)[2], coef(model_fn_adj)[2]),
+  P_value_pyr = c(summary(model_fn)$coefficients[2, 4],
+                  summary(model_fn_adj)$coefficients[2, 4]),
+  R_squared = c(summary(model_fn)$r.squared,
+                summary(model_fn_adj)$r.squared)
+)
+
+kable(comparison_fn, digits = 5,
+      caption = "Comparison: Femoral Neck Models") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+---
+
+# Problem 11.63: Femoral Shaft - Adjusted for Weight
+
+```{r problem-11.63}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 11.63: FEMORAL SHAFT - ADJUSTED FOR WEIGHT DIFFERENCE\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+data_fs_adj <- bone_clean %>%
+  filter(!is.na(diff_pyr), !is.na(diff_fs), !is.na(diff_wt))
+
+cat("Sample size:", nrow(data_fs_adj), "\n\n")
+
+model_fs_adj <- lm(diff_fs ~ diff_pyr + diff_wt, data = data_fs_adj)
+
+summary(model_fs_adj)
+
+tidy(model_fs_adj, conf.int = TRUE) %>%
+  kable(digits = 5, caption = "Femoral Shaft - Adjusted Model Coefficients") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Comparison
+comparison_fs <- data.frame(
+  Model = c("Unadjusted (11.59)", "Adjusted for Weight (11.63)"),
+  Beta_pyr = c(coef(model_fs)[2], coef(model_fs_adj)[2]),
+  P_value_pyr = c(summary(model_fs)$coefficients[2, 4],
+                  summary(model_fs_adj)$coefficients[2, 4]),
+  R_squared = c(summary(model_fs)$r.squared,
+                summary(model_fs_adj)$r.squared)
+)
+
+kable(comparison_fs, digits = 5,
+      caption = "Comparison: Femoral Shaft Models") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+---
+
+# Problem 11.64: Additional Confounders and Overall Conclusion
+
+## Identifying Potential Confounders
+
+Beyond weight, other variables that may differ between heavier and lighter smokers include:
+
+- **Height** (ht1, ht2)
+- **Tea consumption** (tea1, tea2)
+- **Coffee consumption** (cof1, cof2)
+- **Alcohol consumption** (alc1, alc2)
+
+```{r problem-11.64-confounders}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("PROBLEM 11.64: TESTING OTHER POTENTIAL CONFOUNDERS\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Test differences in potential confounders
+cat("=== TESTING DIFFERENCES IN POTENTIAL CONFOUNDERS ===\n\n")
+
+# Height
+ttest_ht <- t.test(bone_clean$diff_ht, mu = 0)
+cat("HEIGHT DIFFERENCE:\n")
+cat(sprintf("  Mean: %.3f cm, p-value: %.4f\n", mean(bone_clean$diff_ht, na.rm = TRUE),
+            ttest_ht$p.value))
+
+# Tea
+ttest_tea <- t.test(bone_clean$diff_tea, mu = 0)
+cat("\nTEA CONSUMPTION DIFFERENCE:\n")
+cat(sprintf("  Mean: %.3f, p-value: %.4f\n", mean(bone_clean$diff_tea, na.rm = TRUE),
+            ttest_tea$p.value))
+
+# Coffee
+ttest_cof <- t.test(bone_clean$diff_cof, mu = 0)
+cat("\nCOFFEE CONSUMPTION DIFFERENCE:\n")
+cat(sprintf("  Mean: %.3f, p-value: %.4f\n", mean(bone_clean$diff_cof, na.rm = TRUE),
+            ttest_cof$p.value))
+
+# Alcohol
+ttest_alc <- t.test(bone_clean$diff_alc, mu = 0)
+cat("\nALCOHOL CONSUMPTION DIFFERENCE:\n")
+cat(sprintf("  Mean: %.3f, p-value: %.4f\n", mean(bone_clean$diff_alc, na.rm = TRUE),
+            ttest_alc$p.value))
+
+cat("\n=== IDENTIFYING SIGNIFICANT CONFOUNDERS (p < 0.05) ===\n")
+confounders <- c()
+if (ttest_wt$p.value < 0.05) confounders <- c(confounders, "Weight")
+if (ttest_ht$p.value < 0.05) confounders <- c(confounders, "Height")
+if (ttest_tea$p.value < 0.05) confounders <- c(confounders, "Tea")
+if (ttest_cof$p.value < 0.05) confounders <- c(confounders, "Coffee")
+if (ttest_alc$p.value < 0.05) confounders <- c(confounders, "Alcohol")
+
+if (length(confounders) > 0) {
+  cat("Potential confounders to adjust for:\n")
+  for (conf in confounders) {
+    cat(sprintf("  - %s\n", conf))
+  }
+} else {
+  cat("No variables show significant differences.\n")
+}
+```
+
+## Fully Adjusted Models
+
+```{r problem-11.64-full-models}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("FULLY ADJUSTED MODELS (All Potential Confounders)\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Prepare complete case data
+data_full <- bone_clean %>%
+  filter(!is.na(diff_pyr), !is.na(diff_ls), !is.na(diff_fn), !is.na(diff_fs),
+         !is.na(diff_wt), !is.na(diff_ht),
+         !is.na(diff_tea), !is.na(diff_cof), !is.na(diff_alc))
+
+cat("Sample size with all variables:", nrow(data_full), "\n\n")
+
+# Lumbar Spine - Fully Adjusted
+cat("=== LUMBAR SPINE - FULLY ADJUSTED ===\n")
+model_ls_full <- lm(diff_ls ~ diff_pyr + diff_wt + diff_ht + diff_tea + diff_cof + diff_alc,
+                    data = data_full)
+summary(model_ls_full)
+
+cat("\nCoefficients:\n")
+tidy(model_ls_full, conf.int = TRUE) %>%
+  kable(digits = 5) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Femoral Neck - Fully Adjusted
+cat("\n=== FEMORAL NECK - FULLY ADJUSTED ===\n")
+model_fn_full <- lm(diff_fn ~ diff_pyr + diff_wt + diff_ht + diff_tea + diff_cof + diff_alc,
+                    data = data_full)
+summary(model_fn_full)
+
+cat("\nCoefficients:\n")
+tidy(model_fn_full, conf.int = TRUE) %>%
+  kable(digits = 5) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Femoral Shaft - Fully Adjusted
+cat("\n=== FEMORAL SHAFT - FULLY ADJUSTED ===\n")
+model_fs_full <- lm(diff_fs ~ diff_pyr + diff_wt + diff_ht + diff_tea + diff_cof + diff_alc,
+                    data = data_full)
+summary(model_fs_full)
+
+cat("\nCoefficients:\n")
+tidy(model_fs_full, conf.int = TRUE) %>%
+  kable(digits = 5) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+## Overall Conclusion
+
+```{r problem-11.64-conclusion}
+cat("\n", paste(rep("=", 80), collapse=""), "\n")
+cat("OVERALL CONCLUSION: ASSOCIATION BETWEEN BONE DENSITY AND SMOKING\n")
+cat(paste(rep("=", 80), collapse=""), "\n\n")
+
+# Create summary table across all models
+summary_table <- data.frame(
+  Bone_Site = rep(c("Lumbar Spine", "Femoral Neck", "Femoral Shaft"), each = 3),
+  Model = rep(c("Unadjusted", "Weight Adjusted", "Fully Adjusted"), 3),
+  Beta_pyr = c(
+    coef(model_ls)[2], coef(model_ls_adj)[2], coef(model_ls_full)[2],
+    coef(model_fn)[2], coef(model_fn_adj)[2], coef(model_fn_full)[2],
+    coef(model_fs)[2], coef(model_fs_adj)[2], coef(model_fs_full)[2]
+  ),
+  SE = c(
+    summary(model_ls)$coefficients[2, 2], summary(model_ls_adj)$coefficients[2, 2],
+    summary(model_ls_full)$coefficients[2, 2],
+    summary(model_fn)$coefficients[2, 2], summary(model_fn_adj)$coefficients[2, 2],
+    summary(model_fn_full)$coefficients[2, 2],
+    summary(model_fs)$coefficients[2, 2], summary(model_fs_adj)$coefficients[2, 2],
+    summary(model_fs_full)$coefficients[2, 2]
+  ),
+  P_value = c(
+    summary(model_ls)$coefficients[2, 4], summary(model_ls_adj)$coefficients[2, 4],
+    summary(model_ls_full)$coefficients[2, 4],
+    summary(model_fn)$coefficients[2, 4], summary(model_fn_adj)$coefficients[2, 4],
+    summary(model_fn_full)$coefficients[2, 4],
+    summary(model_fs)$coefficients[2, 4], summary(model_fs_adj)$coefficients[2, 4],
+    summary(model_fs_full)$coefficients[2, 4]
+  ),
+  Significant = c(
+    summary(model_ls)$coefficients[2, 4] < 0.05,
+    summary(model_ls_adj)$coefficients[2, 4] < 0.05,
+    summary(model_ls_full)$coefficients[2, 4] < 0.05,
+    summary(model_fn)$coefficients[2, 4] < 0.05,
+    summary(model_fn_adj)$coefficients[2, 4] < 0.05,
+    summary(model_fn_full)$coefficients[2, 4] < 0.05,
+    summary(model_fs)$coefficients[2, 4] < 0.05,
+    summary(model_fs_adj)$coefficients[2, 4] < 0.05,
+    summary(model_fs_full)$coefficients[2, 4] < 0.05
+  )
+)
+
+kable(summary_table, digits = 5,
+      caption = "Summary of All Regression Models: Effect of Smoking on Bone Density") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE, font_size = 11)
+
+cat("\n=== FINAL CONCLUSION ===\n\n")
+
+# Count significant results
+n_sig_unadj <- sum(summary_table$Model == "Unadjusted" & summary_table$Significant)
+n_sig_wt <- sum(summary_table$Model == "Weight Adjusted" & summary_table$Significant)
+n_sig_full <- sum(summary_table$Model == "Fully Adjusted" & summary_table$Significant)
+
+cat("Significant associations (p < 0.05):\n")
+cat(sprintf("  Unadjusted models: %d out of 3 bone sites\n", n_sig_unadj))
+cat(sprintf("  Weight-adjusted models: %d out of 3 bone sites\n", n_sig_wt))
+cat(sprintf("  Fully adjusted models: %d out of 3 bone sites\n\n", n_sig_full))
+
+cat("INTERPRETATION:\n")
+if (n_sig_full >= 2) {
+  cat("✓ STRONG EVIDENCE: Even after controlling for multiple confounders,\n")
+  cat("  smoking shows a significant negative association with bone density\n")
+  cat("  at multiple skeletal sites.\n\n")
+  cat("CLINICAL IMPLICATION:\n")
+  cat("  Smoking appears to have a DETRIMENTAL effect on bone health,\n")
+  cat("  independent of weight, height, and lifestyle factors.\n")
+} else if (n_sig_unadj >= 2 && n_sig_full < 2) {
+  cat("⚠ MIXED EVIDENCE: Unadjusted models show association, but this\n")
+  cat("  is largely explained by confounding variables.\n\n")
+  cat("CLINICAL IMPLICATION:\n")
+  cat("  The apparent effect of smoking may be due to other lifestyle\n")
+  cat("  or physical differences between smokers.\n")
+} else {
+  cat("✗ WEAK EVIDENCE: No consistent association between smoking and\n")
+  cat("  bone density across skeletal sites.\n\n")
+  cat("CLINICAL IMPLICATION:\n")
+  cat("  In this twin study, smoking does not appear to have a strong\n")
+  cat("  independent effect on bone density.\n")
+}
+
+cat("\nSTRENGTHS OF TWIN STUDY DESIGN:\n")
+cat("  ✓ Controls for genetics and shared environment\n")
+cat("  ✓ Reduces confounding by factors hard to measure\n")
+cat("  ✓ Within-pair comparison is powerful\n")
+
+cat("\nLIMITATIONS:\n")
+cat("  ⚠ Sample size may limit power to detect small effects\n")
+cat("  ⚠ Assumes equal confounding within twin pairs\n")
+cat("  ⚠ Cross-sectional design cannot establish causation\n")
+```
+
+---
+
+# Diagnostic Plots
+
+```{r diagnostic-plots, fig.height=14}
+cat("\n=== DIAGNOSTIC PLOTS FOR KEY MODELS ===\n\n")
+
+# Create diagnostic plots for the three main outcomes (fully adjusted)
+
+par(mfrow = c(3, 4), mar = c(4, 4, 3, 1))
+
+# Lumbar Spine
+plot(model_ls_full, which = 1, main = "LS: Residuals vs Fitted")
+plot(model_ls_full, which = 2, main = "LS: Q-Q Plot")
+plot(model_ls_full, which = 3, main = "LS: Scale-Location")
+plot(model_ls_full, which = 5, main = "LS: Residuals vs Leverage")
+
+# Femoral Neck
+plot(model_fn_full, which = 1, main = "FN: Residuals vs Fitted")
+plot(model_fn_full, which = 2, main = "FN: Q-Q Plot")
+plot(model_fn_full, which = 3, main = "FN: Scale-Location")
+plot(model_fn_full, which = 5, main = "FN: Residuals vs Leverage")
+
+# Femoral Shaft
+plot(model_fs_full, which = 1, main = "FS: Residuals vs Fitted")
+plot(model_fs_full, which = 2, main = "FS: Q-Q Plot")
+plot(model_fs_full, which = 3, main = "FS: Scale-Location")
+plot(model_fs_full, which = 5, main = "FS: Residuals vs Leverage")
+```
+
+---
+
+# Visualization: Scatterplots
+
+```{r scatterplots, fig.height=10}
+# Scatterplots of difference in pack-years vs. bone density differences
+
+p1 <- ggplot(data_ls, aes(x = diff_pyr, y = diff_ls)) +
+  geom_point(alpha = 0.6, size = 3, color = "#2E86AB") +
+  geom_smooth(method = "lm", se = TRUE, color = "#A23B72", fill = "#F18F01", alpha = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
+  labs(title = "Lumbar Spine Bone Density vs. Pack-Years Difference",
+       subtitle = sprintf("β = %.5f, p = %.4f, R² = %.3f",
+                         coef(model_ls)[2],
+                         summary(model_ls)$coefficients[2, 4],
+                         summary(model_ls)$r.squared),
+       x = "Difference in Pack-Years (Heavier - Lighter Smoker)",
+       y = "Difference in Lumbar Spine Density (g/cm²)") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 12))
+
+p2 <- ggplot(data_fn, aes(x = diff_pyr, y = diff_fn)) +
+  geom_point(alpha = 0.6, size = 3, color = "#A23B72") +
+  geom_smooth(method = "lm", se = TRUE, color = "#2E86AB", fill = "#F18F01", alpha = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
+  labs(title = "Femoral Neck Bone Density vs. Pack-Years Difference",
+       subtitle = sprintf("β = %.5f, p = %.4f, R² = %.3f",
+                         coef(model_fn)[2],
+                         summary(model_fn)$coefficients[2, 4],
+                         summary(model_fn)$r.squared),
+       x = "Difference in Pack-Years (Heavier - Lighter Smoker)",
+       y = "Difference in Femoral Neck Density (g/cm²)") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 12))
+
+p3 <- ggplot(data_fs, aes(x = diff_pyr, y = diff_fs)) +
+  geom_point(alpha = 0.6, size = 3, color = "#F18F01") +
+  geom_smooth(method = "lm", se = TRUE, color = "#2E86AB", fill = "#A23B72", alpha = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
+  labs(title = "Femoral Shaft Bone Density vs. Pack-Years Difference",
+       subtitle = sprintf("β = %.5f, p = %.4f, R² = %.3f",
+                         coef(model_fs)[2],
+                         summary(model_fs)$coefficients[2, 4],
+                         summary(model_fs)$r.squared),
+       x = "Difference in Pack-Years (Heavier - Lighter Smoker)",
+       y = "Difference in Femoral Shaft Density (g/cm²)") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 12))
+
+grid.arrange(p1, p2, p3, ncol = 1)
+```
+
+---
+
+# Summary
+
+This comprehensive analysis examined the relationship between smoking and bone density using a twin study design, analyzing data from `r nrow(bone_clean)` twin pairs.
+
+## Key Findings:
+
+### Simple Regression (Problems 11.57-11.59):
+- **Lumbar Spine:** `r ifelse(summary(model_ls)$coefficients[2, 4] < 0.05, "Significant", "Not significant")` (p = `r sprintf("%.4f", summary(model_ls)$coefficients[2, 4])`)
+- **Femoral Neck:** `r ifelse(summary(model_fn)$coefficients[2, 4] < 0.05, "Significant", "Not significant")` (p = `r sprintf("%.4f", summary(model_fn)$coefficients[2, 4])`)
+- **Femoral Shaft:** `r ifelse(summary(model_fs)$coefficients[2, 4] < 0.05, "Significant", "Not significant")` (p = `r sprintf("%.4f", summary(model_fs)$coefficients[2, 4])`)
+
+### Weight as Confounder (Problem 11.60):
+- Weight difference between heavier and lighter smokers: `r ifelse(ttest_wt$p.value < 0.05, "Significant", "Not significant")` (p = `r sprintf("%.4f", ttest_wt$p.value)`)
+
+### Adjusted Models (Problems 11.61-11.64):
+After controlling for weight and other lifestyle factors, the association between smoking and bone density `r ifelse(n_sig_full >= 2, "remains significant", "becomes attenuated")`.
+
+---
+
+**END OF ANALYSIS**

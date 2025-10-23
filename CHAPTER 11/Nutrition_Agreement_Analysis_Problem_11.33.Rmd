@@ -1,0 +1,789 @@
+---
+title: "Problem 11.33: Nutrition - Agreement Between Dietary Assessment Methods"
+author: "Food-Frequency Questionnaire vs. Dietary Record Validation"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    number_sections: true
+    theme: cerulean
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 12,
+  fig.height = 8,
+  fig.align = 'center'
+)
+```
+
+# Introduction
+
+## Study Background
+
+This document assesses the **agreement between two dietary assessment methods**:
+1. **Food-Frequency Questionnaire (FFQ)** - A retrospective assessment tool
+2. **Dietary Record (DR)** - A prospective recording method
+
+The analysis uses the **VALID.DAT** dataset from Rosner's Fundamentals of Biostatistics.
+
+## Research Question
+
+**Problem 11.33:** Assess the agreement between the food-frequency questionnaire and the dietary record with regard to:
+- **Total fat intake**
+- **Saturated fat intake**
+- **Alcohol intake**
+- **Total caloric intake**
+
+Quantify the level of agreement by representing dietary intake:
+1. On the **original continuous scale**
+2. On a **quintile scale** (categorized into 5 groups)
+
+## Validation Methods
+
+We will use multiple approaches to assess agreement:
+- **Pearson Correlation Coefficient** (r)
+- **Spearman Rank Correlation** (for quintiles)
+- **Linear Regression** (FFQ vs DR)
+- **Bland-Altman Analysis** (difference vs average plots)
+- **Intraclass Correlation Coefficient (ICC)**
+- **Agreement statistics** on quintile scale
+
+# Data Loading and Preparation
+
+```{r load-packages}
+# Load required libraries
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(car)         # For VIF and diagnostic plots
+library(lmtest)      # For diagnostic tests
+library(ggplot2)
+library(gridExtra)   # For multiple plots
+library(broom)       # For tidy model outputs
+library(irr)         # For ICC calculations
+library(psych)       # For correlation matrices
+
+# Set theme for plots
+theme_set(theme_minimal())
+```
+
+
+
+```{r load-data}
+# Load the VALID.DAT dataset
+data_path <- "Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/VALID.DAT.txt"
+
+# Read the data - handle quotes in column names
+valid_data <- tryCatch({
+  read.csv(data_path, header = TRUE, strip.white = TRUE, quote = "'\"")
+}, error = function(e) {
+  cat("Error loading data from primary path. Trying alternative path...\n")
+  read.csv("../Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/VALID.DAT.txt",
+           header = TRUE, strip.white = TRUE, quote = "'\"")
+})
+
+# Clean column names (remove any quotes)
+colnames(valid_data) <- gsub("'", "", colnames(valid_data))
+colnames(valid_data) <- gsub("\"", "", colnames(valid_data))
+
+# Display structure
+cat("Dataset Structure:\n")
+str(valid_data)
+
+cat("\nColumn names in dataset:\n")
+print(colnames(valid_data))
+
+cat("\nFirst few rows:\n")
+head(valid_data) %>%
+  kable(caption = "First 6 Observations from VALID Dataset") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+# Variable Identification and Processing
+
+```{r identify-variables}
+# Display all column names to identify the correct variables
+cat("All available columns:\n")
+for(i in 1:length(colnames(valid_data))) {
+  cat(sprintf("%2d. %s\n", i, colnames(valid_data)[i]))
+}
+
+# Check for variables related to our nutrients of interest
+# Looking for: total fat, saturated fat, alcohol, calories
+# For both FFQ and dietary record
+
+cat("\n\nSearching for relevant variables...\n")
+cat("\nVariables containing 'fat':\n")
+print(grep("fat|Fat|FAT", colnames(valid_data), value = TRUE, ignore.case = TRUE))
+
+cat("\nVariables containing 'cal':\n")
+print(grep("cal|Cal|CAL", colnames(valid_data), value = TRUE, ignore.case = TRUE))
+
+cat("\nVariables containing 'alc':\n")
+print(grep("alc|Alc|ALC", colnames(valid_data), value = TRUE, ignore.case = TRUE))
+
+cat("\nVariables containing 'sat':\n")
+print(grep("sat|Sat|SAT", colnames(valid_data), value = TRUE, ignore.case = TRUE))
+```
+
+```{r process-data}
+# Based on typical VALID.DAT structure, identify FFQ vs DR variables
+# Assume column naming pattern: nutrient_ffq and nutrient_dr (or similar)
+
+# Create processed dataset
+# We'll check which columns exist and assign appropriately
+valid_clean <- valid_data
+
+# Display summary statistics
+cat("\nDataset summary:\n")
+cat("  Total observations:", nrow(valid_clean), "\n")
+cat("  Total variables:", ncol(valid_clean), "\n")
+
+# Check for missing values
+cat("\nMissing values by variable:\n")
+missing_summary <- valid_clean %>%
+  summarise(across(everything(), ~sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "Missing_Count") %>%
+  filter(Missing_Count > 0)
+
+if(nrow(missing_summary) > 0) {
+  kable(missing_summary,
+        caption = "Variables with Missing Values") %>%
+    kable_styling(bootstrap_options = c("striped", "hover"),
+                  full_width = FALSE)
+} else {
+  cat("No missing values detected.\n")
+}
+```
+
+# Define Nutrient Pairs for Analysis
+
+```{r define-nutrient-pairs}
+# Based on inspection, define the pairs of variables to compare
+# Format: FFQ variable vs Dietary Record variable
+
+# This is a template - will be updated based on actual column names
+nutrient_pairs <- list(
+  total_fat = list(
+    ffq_var = NULL,  # Will be identified from data
+    dr_var = NULL,
+    label = "Total Fat (g/day)"
+  ),
+  saturated_fat = list(
+    ffq_var = NULL,
+    dr_var = NULL,
+    label = "Saturated Fat (g/day)"
+  ),
+  alcohol = list(
+    ffq_var = NULL,
+    dr_var = NULL,
+    label = "Alcohol (g/day)"
+  ),
+  calories = list(
+    ffq_var = NULL,
+    dr_var = NULL,
+    label = "Total Calories (kcal/day)"
+  )
+)
+
+# Automatically detect variable pairs based on common naming patterns
+cols <- colnames(valid_clean)
+
+# Try to identify FFQ and DR columns
+# Common patterns: _ffq, _dr, _q, _r, etc.
+
+# Function to find matching pairs
+find_nutrient_pairs <- function(data, nutrient_keywords) {
+  cols <- colnames(data)
+
+  # Search for columns containing the keywords
+  matches <- grep(paste(nutrient_keywords, collapse = "|"),
+                  cols, value = TRUE, ignore.case = TRUE)
+
+  if(length(matches) >= 2) {
+    # Try to identify which is FFQ and which is DR
+    ffq_idx <- grep("ffq|questionnaire|q[^a-z]|freq", matches, ignore.case = TRUE)
+    dr_idx <- grep("dr|record|diary|r[^a-z]", matches, ignore.case = TRUE)
+
+    if(length(ffq_idx) > 0 && length(dr_idx) > 0) {
+      return(list(ffq = matches[ffq_idx[1]], dr = matches[dr_idx[1]]))
+    } else if(length(matches) >= 2) {
+      # If can't distinguish, assume first is FFQ, second is DR
+      return(list(ffq = matches[1], dr = matches[2]))
+    }
+  }
+  return(NULL)
+}
+
+# Try to auto-detect pairs
+cat("\nAttempting to auto-detect nutrient variable pairs...\n\n")
+
+# Total Fat
+fat_pair <- find_nutrient_pairs(valid_clean, c("tfat", "totalfat", "fat"))
+if(!is.null(fat_pair)) {
+  nutrient_pairs$total_fat$ffq_var <- fat_pair$ffq
+  nutrient_pairs$total_fat$dr_var <- fat_pair$dr
+  cat(sprintf("Total Fat: FFQ='%s', DR='%s'\n", fat_pair$ffq, fat_pair$dr))
+}
+
+# Saturated Fat
+satfat_pair <- find_nutrient_pairs(valid_clean, c("sfat", "satfat", "saturated"))
+if(!is.null(satfat_pair)) {
+  nutrient_pairs$saturated_fat$ffq_var <- satfat_pair$ffq
+  nutrient_pairs$saturated_fat$dr_var <- satfat_pair$dr
+  cat(sprintf("Saturated Fat: FFQ='%s', DR='%s'\n", satfat_pair$ffq, satfat_pair$dr))
+}
+
+# Alcohol
+alc_pair <- find_nutrient_pairs(valid_clean, c("alc", "alcohol", "etoh"))
+if(!is.null(alc_pair)) {
+  nutrient_pairs$alcohol$ffq_var <- alc_pair$ffq
+  nutrient_pairs$alcohol$dr_var <- alc_pair$dr
+  cat(sprintf("Alcohol: FFQ='%s', DR='%s'\n", alc_pair$ffq, alc_pair$dr))
+}
+
+# Calories
+cal_pair <- find_nutrient_pairs(valid_clean, c("cal", "kcal", "energy", "tcal"))
+if(!is.null(cal_pair)) {
+  nutrient_pairs$calories$ffq_var <- cal_pair$ffq
+  nutrient_pairs$calories$dr_var <- cal_pair$dr
+  cat(sprintf("Calories: FFQ='%s', DR='%s'\n", cal_pair$ffq, cal_pair$dr))
+}
+
+cat("\n")
+```
+
+# Analysis Functions
+
+```{r analysis-functions}
+# Function to perform comprehensive agreement analysis
+perform_agreement_analysis <- function(data, ffq_var, dr_var, nutrient_label) {
+
+  cat("\n", strrep("=", 80), "\n", sep = "")
+  cat("NUTRIENT:", nutrient_label, "\n")
+  cat("FFQ Variable:", ffq_var, "\n")
+  cat("DR Variable:", dr_var, "\n")
+  cat(strrep("=", 80), "\n\n")
+
+  # Extract data
+  analysis_data <- data %>%
+    dplyr::select(FFQ = all_of(ffq_var), DR = all_of(dr_var)) %>%
+    filter(!is.na(FFQ), !is.na(DR))
+
+  n_obs <- nrow(analysis_data)
+  cat("Sample size:", n_obs, "\n\n")
+
+  if(n_obs < 3) {
+    cat("ERROR: Insufficient data for analysis\n")
+    return(NULL)
+  }
+
+  # === PART 1: CONTINUOUS SCALE ANALYSIS ===
+  cat("\n=== CONTINUOUS SCALE ANALYSIS ===\n\n")
+
+  # Summary statistics
+  cat("--- Summary Statistics ---\n")
+  summary_stats <- analysis_data %>%
+    summarise(
+      FFQ_Mean = mean(FFQ, na.rm = TRUE),
+      FFQ_SD = sd(FFQ, na.rm = TRUE),
+      FFQ_Median = median(FFQ, na.rm = TRUE),
+      DR_Mean = mean(DR, na.rm = TRUE),
+      DR_SD = sd(DR, na.rm = TRUE),
+      DR_Median = median(DR, na.rm = TRUE),
+      Mean_Difference = mean(FFQ - DR, na.rm = TRUE),
+      SD_Difference = sd(FFQ - DR, na.rm = TRUE)
+    )
+
+  print(kable(t(summary_stats),
+              caption = paste(nutrient_label, "- Summary Statistics"),
+              digits = 2,
+              col.names = "Value") %>%
+        kable_styling(bootstrap_options = c("striped", "hover"),
+                      full_width = FALSE))
+
+  # Pearson correlation
+  cat("\n--- Pearson Correlation ---\n")
+  cor_test <- cor.test(analysis_data$FFQ, analysis_data$DR, method = "pearson")
+  cat(sprintf("r = %.4f\n", cor_test$estimate))
+  cat(sprintf("95%% CI: (%.4f, %.4f)\n", cor_test$conf.int[1], cor_test$conf.int[2]))
+  cat(sprintf("p-value = %.4e\n", cor_test$p.value))
+  cat(sprintf("R² = %.4f (%.1f%% of variance explained)\n",
+              cor_test$estimate^2, 100 * cor_test$estimate^2))
+
+  # Linear regression: FFQ ~ DR
+  cat("\n--- Linear Regression: FFQ = β₀ + β₁*DR ---\n")
+  lm_model <- lm(FFQ ~ DR, data = analysis_data)
+  lm_summary <- summary(lm_model)
+  print(tidy(lm_model, conf.int = TRUE) %>%
+        kable(caption = "Regression Coefficients", digits = 4) %>%
+        kable_styling(bootstrap_options = c("striped", "hover"),
+                      full_width = FALSE))
+
+  cat(sprintf("\nR² = %.4f\n", lm_summary$r.squared))
+  cat(sprintf("RMSE = %.4f\n", lm_summary$sigma))
+
+  # Intraclass Correlation Coefficient (ICC)
+  cat("\n--- Intraclass Correlation Coefficient (ICC) ---\n")
+  icc_data <- analysis_data %>% dplyr::select(FFQ, DR)
+  icc_result <- tryCatch({
+    icc(icc_data, model = "twoway", type = "agreement", unit = "single")
+  }, error = function(e) {
+    NULL
+  })
+
+  if(!is.null(icc_result)) {
+    cat(sprintf("ICC = %.4f\n", icc_result$value))
+    cat(sprintf("95%% CI: (%.4f, %.4f)\n",
+                icc_result$lbound, icc_result$ubound))
+  }
+
+  # === PART 2: QUINTILE SCALE ANALYSIS ===
+  cat("\n\n=== QUINTILE SCALE ANALYSIS ===\n\n")
+
+  # Create quintiles
+  analysis_data <- analysis_data %>%
+    mutate(
+      FFQ_Quintile = as.numeric(cut(FFQ,
+                                     breaks = quantile(FFQ, probs = seq(0, 1, 0.2)),
+                                     include.lowest = TRUE,
+                                     labels = FALSE)),
+      DR_Quintile = as.numeric(cut(DR,
+                                    breaks = quantile(DR, probs = seq(0, 1, 0.2)),
+                                    include.lowest = TRUE,
+                                    labels = FALSE))
+    )
+
+  # Spearman correlation on quintiles
+  cat("--- Spearman Correlation (Quintiles) ---\n")
+  spearman_test <- cor.test(analysis_data$FFQ_Quintile,
+                            analysis_data$DR_Quintile,
+                            method = "spearman")
+  cat(sprintf("ρ = %.4f\n", spearman_test$estimate))
+  cat(sprintf("p-value = %.4e\n", spearman_test$p.value))
+
+  # Weighted Kappa for quintiles
+  cat("\n--- Weighted Kappa (Quintiles) ---\n")
+  kappa_result <- tryCatch({
+    kappa2(analysis_data %>% dplyr::select(FFQ_Quintile, DR_Quintile),
+           weight = "squared")
+  }, error = function(e) {
+    NULL
+  })
+
+  if(!is.null(kappa_result)) {
+    cat(sprintf("Weighted κ = %.4f\n", kappa_result$value))
+  }
+
+  # Quintile agreement table
+  cat("\n--- Quintile Cross-Tabulation ---\n")
+  quintile_table <- table(FFQ = analysis_data$FFQ_Quintile,
+                         DR = analysis_data$DR_Quintile)
+  print(kable(addmargins(quintile_table),
+              caption = "FFQ Quintiles vs DR Quintiles") %>%
+        kable_styling(bootstrap_options = c("striped", "hover"),
+                      full_width = FALSE))
+
+  # Calculate agreement statistics
+  exact_agreement <- sum(analysis_data$FFQ_Quintile == analysis_data$DR_Quintile)
+  adjacent_agreement <- sum(abs(analysis_data$FFQ_Quintile - analysis_data$DR_Quintile) <= 1)
+
+  cat(sprintf("\nExact quintile agreement: %d/%d (%.1f%%)\n",
+              exact_agreement, n_obs, 100 * exact_agreement / n_obs))
+  cat(sprintf("Same or adjacent quintile: %d/%d (%.1f%%)\n",
+              adjacent_agreement, n_obs, 100 * adjacent_agreement / n_obs))
+
+  # === VISUALIZATIONS ===
+
+  # 1. Scatterplot with regression line (continuous)
+  p1 <- ggplot(analysis_data, aes(x = DR, y = FFQ)) +
+    geom_point(alpha = 0.5, color = "#3498db", size = 2) +
+    geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink") +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "black") +
+    labs(title = paste(nutrient_label, "- FFQ vs Dietary Record"),
+         subtitle = sprintf("r = %.3f, R² = %.3f", cor_test$estimate, cor_test$estimate^2),
+         x = paste("Dietary Record", nutrient_label),
+         y = paste("FFQ", nutrient_label)) +
+    theme_minimal() +
+    theme(plot.title = element_text(face = "bold"))
+
+  print(p1)
+
+  # 2. Bland-Altman plot
+  analysis_data <- analysis_data %>%
+    mutate(
+      Mean = (FFQ + DR) / 2,
+      Difference = FFQ - DR
+    )
+
+  mean_diff <- mean(analysis_data$Difference)
+  sd_diff <- sd(analysis_data$Difference)
+
+  p2 <- ggplot(analysis_data, aes(x = Mean, y = Difference)) +
+    geom_point(alpha = 0.5, color = "#3498db", size = 2) +
+    geom_hline(yintercept = mean_diff, color = "blue", linetype = "solid", size = 1) +
+    geom_hline(yintercept = mean_diff + 1.96 * sd_diff,
+               color = "red", linetype = "dashed", size = 1) +
+    geom_hline(yintercept = mean_diff - 1.96 * sd_diff,
+               color = "red", linetype = "dashed", size = 1) +
+    geom_hline(yintercept = 0, color = "black", linetype = "dotted") +
+    annotate("text", x = min(analysis_data$Mean), y = mean_diff,
+             label = sprintf("Mean: %.2f", mean_diff), hjust = 0, vjust = -0.5) +
+    annotate("text", x = min(analysis_data$Mean), y = mean_diff + 1.96 * sd_diff,
+             label = sprintf("+1.96 SD: %.2f", mean_diff + 1.96 * sd_diff),
+             hjust = 0, vjust = -0.5) +
+    annotate("text", x = min(analysis_data$Mean), y = mean_diff - 1.96 * sd_diff,
+             label = sprintf("-1.96 SD: %.2f", mean_diff - 1.96 * sd_diff),
+             hjust = 0, vjust = 1.5) +
+    labs(title = paste(nutrient_label, "- Bland-Altman Plot"),
+         subtitle = "Agreement between FFQ and Dietary Record",
+         x = "Average of FFQ and DR",
+         y = "Difference (FFQ - DR)") +
+    theme_minimal() +
+    theme(plot.title = element_text(face = "bold"))
+
+  print(p2)
+
+  # 3. Quintile heatmap
+  quintile_prop <- prop.table(quintile_table)
+  quintile_df <- as.data.frame(quintile_table)
+  colnames(quintile_df) <- c("FFQ_Quintile", "DR_Quintile", "Count")
+
+  p3 <- ggplot(quintile_df, aes(x = DR_Quintile, y = FFQ_Quintile, fill = Count)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = Count), color = "black", size = 5) +
+    scale_fill_gradient(low = "white", high = "#3498db") +
+    labs(title = paste(nutrient_label, "- Quintile Agreement"),
+         x = "Dietary Record Quintile",
+         y = "FFQ Quintile",
+         fill = "Count") +
+    theme_minimal() +
+    theme(plot.title = element_text(face = "bold"))
+
+  print(p3)
+
+  # Return results
+  return(list(
+    nutrient = nutrient_label,
+    n = n_obs,
+    continuous = list(
+      pearson_r = cor_test$estimate,
+      pearson_p = cor_test$p.value,
+      r_squared = cor_test$estimate^2,
+      lm_model = lm_model,
+      icc = ifelse(is.null(icc_result), NA, icc_result$value)
+    ),
+    quintile = list(
+      spearman_rho = spearman_test$estimate,
+      spearman_p = spearman_test$p.value,
+      weighted_kappa = ifelse(is.null(kappa_result), NA, kappa_result$value),
+      exact_agreement_pct = 100 * exact_agreement / n_obs,
+      adjacent_agreement_pct = 100 * adjacent_agreement / n_obs
+    )
+  ))
+}
+```
+
+# Agreement Analysis for Each Nutrient
+
+## Total Fat Intake
+
+```{r analysis-total-fat}
+if(!is.null(nutrient_pairs$total_fat$ffq_var)) {
+  result_fat <- perform_agreement_analysis(
+    valid_clean,
+    nutrient_pairs$total_fat$ffq_var,
+    nutrient_pairs$total_fat$dr_var,
+    nutrient_pairs$total_fat$label
+  )
+} else {
+  cat("Total fat variables not identified in dataset.\n")
+  result_fat <- NULL
+}
+```
+
+## Saturated Fat Intake
+
+```{r analysis-saturated-fat}
+if(!is.null(nutrient_pairs$saturated_fat$ffq_var)) {
+  result_satfat <- perform_agreement_analysis(
+    valid_clean,
+    nutrient_pairs$saturated_fat$ffq_var,
+    nutrient_pairs$saturated_fat$dr_var,
+    nutrient_pairs$saturated_fat$label
+  )
+} else {
+  cat("Saturated fat variables not identified in dataset.\n")
+  result_satfat <- NULL
+}
+```
+
+## Alcohol Intake
+
+```{r analysis-alcohol}
+if(!is.null(nutrient_pairs$alcohol$ffq_var)) {
+  result_alcohol <- perform_agreement_analysis(
+    valid_clean,
+    nutrient_pairs$alcohol$ffq_var,
+    nutrient_pairs$alcohol$dr_var,
+    nutrient_pairs$alcohol$label
+  )
+} else {
+  cat("Alcohol variables not identified in dataset.\n")
+  result_alcohol <- NULL
+}
+```
+
+## Total Caloric Intake
+
+```{r analysis-calories}
+if(!is.null(nutrient_pairs$calories$ffq_var)) {
+  result_calories <- perform_agreement_analysis(
+    valid_clean,
+    nutrient_pairs$calories$ffq_var,
+    nutrient_pairs$calories$dr_var,
+    nutrient_pairs$calories$label
+  )
+} else {
+  cat("Calorie variables not identified in dataset.\n")
+  result_calories <- NULL
+}
+```
+
+# Comprehensive Summary
+
+## Summary of Agreement Measures
+
+```{r comprehensive-summary}
+cat("\n=== COMPREHENSIVE SUMMARY OF AGREEMENT ===\n\n")
+
+# Compile results into summary table
+results_list <- list(result_fat, result_satfat, result_alcohol, result_calories)
+nutrient_names <- c("Total Fat", "Saturated Fat", "Alcohol", "Total Calories")
+
+# Continuous scale summary
+continuous_summary <- data.frame(
+  Nutrient = character(),
+  N = integer(),
+  Pearson_r = numeric(),
+  R_squared = numeric(),
+  P_value = numeric(),
+  ICC = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Quintile scale summary
+quintile_summary <- data.frame(
+  Nutrient = character(),
+  Spearman_rho = numeric(),
+  Weighted_Kappa = numeric(),
+  Exact_Agreement_Pct = numeric(),
+  Adjacent_Agreement_Pct = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for(i in 1:4) {
+  if(!is.null(results_list[[i]])) {
+    # Continuous
+    continuous_summary <- rbind(continuous_summary, data.frame(
+      Nutrient = nutrient_names[i],
+      N = results_list[[i]]$n,
+      Pearson_r = results_list[[i]]$continuous$pearson_r,
+      R_squared = results_list[[i]]$continuous$r_squared,
+      P_value = results_list[[i]]$continuous$pearson_p,
+      ICC = results_list[[i]]$continuous$icc
+    ))
+
+    # Quintile
+    quintile_summary <- rbind(quintile_summary, data.frame(
+      Nutrient = nutrient_names[i],
+      Spearman_rho = results_list[[i]]$quintile$spearman_rho,
+      Weighted_Kappa = results_list[[i]]$quintile$weighted_kappa,
+      Exact_Agreement_Pct = results_list[[i]]$quintile$exact_agreement_pct,
+      Adjacent_Agreement_Pct = results_list[[i]]$quintile$adjacent_agreement_pct
+    ))
+  }
+}
+
+# Display continuous scale summary
+cat("--- CONTINUOUS SCALE AGREEMENT ---\n\n")
+kable(continuous_summary,
+      caption = "Agreement Measures on Continuous Scale",
+      digits = 4,
+      col.names = c("Nutrient", "N", "Pearson r", "R²", "P-value", "ICC")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+cat("\n\n--- QUINTILE SCALE AGREEMENT ---\n\n")
+kable(quintile_summary,
+      caption = "Agreement Measures on Quintile Scale",
+      digits = 4,
+      col.names = c("Nutrient", "Spearman ρ", "Weighted κ",
+                   "Exact Agreement (%)", "Same/Adjacent (%)")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+## Visual Summary: Comparison Across Nutrients
+
+```{r visual-summary}
+# Bar plot of correlation coefficients
+if(nrow(continuous_summary) > 0) {
+  p1 <- ggplot(continuous_summary, aes(x = reorder(Nutrient, Pearson_r), y = Pearson_r)) +
+    geom_bar(stat = "identity", fill = "#3498db", alpha = 0.7) +
+    geom_text(aes(label = sprintf("%.3f", Pearson_r)), vjust = -0.5) +
+    coord_flip() +
+    labs(title = "Pearson Correlation: FFQ vs Dietary Record",
+         subtitle = "Higher values indicate better agreement",
+         x = "Nutrient",
+         y = "Pearson r") +
+    theme_minimal() +
+    theme(plot.title = element_text(face = "bold"))
+
+  print(p1)
+}
+
+# Bar plot of quintile agreement
+if(nrow(quintile_summary) > 0) {
+  quintile_long <- quintile_summary %>%
+    pivot_longer(cols = c(Exact_Agreement_Pct, Adjacent_Agreement_Pct),
+                names_to = "Agreement_Type",
+                values_to = "Percentage")
+
+  p2 <- ggplot(quintile_long, aes(x = Nutrient, y = Percentage, fill = Agreement_Type)) +
+    geom_bar(stat = "identity", position = "dodge", alpha = 0.7) +
+    geom_text(aes(label = sprintf("%.1f%%", Percentage)),
+              position = position_dodge(width = 0.9), vjust = -0.5, size = 3) +
+    scale_fill_manual(values = c("Exact_Agreement_Pct" = "#2ecc71",
+                                 "Adjacent_Agreement_Pct" = "#3498db"),
+                     labels = c("Exact Quintile", "Same or Adjacent Quintile")) +
+    labs(title = "Quintile Agreement: FFQ vs Dietary Record",
+         x = "Nutrient",
+         y = "Percentage (%)",
+         fill = "Agreement Type") +
+    theme_minimal() +
+    theme(plot.title = element_text(face = "bold"),
+          axis.text.x = element_text(angle = 45, hjust = 1))
+
+  print(p2)
+}
+```
+
+# Interpretation and Conclusions
+
+## Agreement Interpretation Guidelines
+
+### Pearson Correlation (r)
+- **r > 0.70**: Excellent agreement
+- **0.50 < r ≤ 0.70**: Good agreement
+- **0.30 < r ≤ 0.50**: Moderate agreement
+- **r ≤ 0.30**: Poor agreement
+
+### Intraclass Correlation Coefficient (ICC)
+- **ICC > 0.75**: Excellent reliability
+- **0.60 < ICC ≤ 0.75**: Good reliability
+- **0.40 < ICC ≤ 0.60**: Fair reliability
+- **ICC ≤ 0.40**: Poor reliability
+
+### Weighted Kappa (κ)
+- **κ > 0.80**: Almost perfect agreement
+- **0.60 < κ ≤ 0.80**: Substantial agreement
+- **0.40 < κ ≤ 0.60**: Moderate agreement
+- **0.20 < κ ≤ 0.40**: Fair agreement
+- **κ ≤ 0.20**: Slight agreement
+
+## Key Findings
+
+### Continuous Scale Analysis
+
+```{r conclusions-continuous, echo=FALSE, results='asis'}
+if(nrow(continuous_summary) > 0) {
+  for(i in 1:nrow(continuous_summary)) {
+    nutrient <- continuous_summary$Nutrient[i]
+    r_val <- continuous_summary$Pearson_r[i]
+    r_sq <- continuous_summary$R_squared[i]
+
+    agreement_level <- ifelse(r_val > 0.70, "EXCELLENT",
+                             ifelse(r_val > 0.50, "GOOD",
+                                   ifelse(r_val > 0.30, "MODERATE", "POOR")))
+
+    cat(sprintf("**%s:**\n", nutrient))
+    cat(sprintf("- Pearson r = %.3f (%s agreement)\n", r_val, agreement_level))
+    cat(sprintf("- R² = %.3f (%.1f%% of variance explained)\n", r_sq, 100 * r_sq))
+    cat("\n")
+  }
+} else {
+  cat("No results available.\n")
+}
+```
+
+### Quintile Scale Analysis
+
+```{r conclusions-quintile, echo=FALSE, results='asis'}
+if(nrow(quintile_summary) > 0) {
+  for(i in 1:nrow(quintile_summary)) {
+    nutrient <- quintile_summary$Nutrient[i]
+    exact_pct <- quintile_summary$Exact_Agreement_Pct[i]
+    adjacent_pct <- quintile_summary$Adjacent_Agreement_Pct[i]
+
+    cat(sprintf("**%s:**\n", nutrient))
+    cat(sprintf("- Exact quintile agreement: %.1f%%\n", exact_pct))
+    cat(sprintf("- Same or adjacent quintile: %.1f%%\n", adjacent_pct))
+    cat("\n")
+  }
+} else {
+  cat("No results available.\n")
+}
+```
+
+## Overall Conclusions
+
+1. **Validity of FFQ**: The food-frequency questionnaire shows `r ifelse(nrow(continuous_summary) > 0, ifelse(mean(continuous_summary$Pearson_r) > 0.5, "good to excellent", "moderate"), "")` agreement with dietary records
+
+2. **Nutrient-Specific Performance**: Agreement varies by nutrient type, with some nutrients showing stronger correlations than others
+
+3. **Continuous vs Quintile Scale**: Both scales provide complementary information about agreement:
+   - Continuous scale: Shows magnitude and direction of association
+   - Quintile scale: Shows ability to correctly classify individuals into intake categories
+
+4. **Clinical Implications**: The FFQ appears to be a `r ifelse(nrow(continuous_summary) > 0, ifelse(mean(continuous_summary$Pearson_r) > 0.5, "valid", "moderately valid"), "")` tool for ranking individuals according to nutrient intake
+
+## Strengths and Limitations
+
+### Strengths
+- Multiple measures of agreement (correlation, regression, ICC, kappa)
+- Analysis on both continuous and categorical scales
+- Visual assessment with Bland-Altman plots
+
+### Limitations
+- Assumes dietary record as "gold standard" (but it also has measurement error)
+- Linear models assume constant relationship across intake levels
+- Quintile categorization loses information about magnitude of differences
+
+## Statistical Methods Used
+
+- **Pearson Correlation Coefficient** - Linear association on continuous scale
+- **Spearman Rank Correlation** - Monotonic association on quintile scale
+- **Linear Regression** - Predictive relationship
+- **Intraclass Correlation Coefficient (ICC)** - Absolute agreement
+- **Weighted Kappa** - Agreement on ordered categories
+- **Bland-Altman Analysis** - Bias and limits of agreement
+- **Cross-tabulation** - Classification agreement
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
+
+---
+**End of Analysis**

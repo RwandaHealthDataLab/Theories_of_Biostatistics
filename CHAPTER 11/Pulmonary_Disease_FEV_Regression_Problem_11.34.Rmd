@@ -1,0 +1,1203 @@
+---
+title: "Problem 11.34: Pulmonary Disease - FEV Regression Analysis"
+author: "Regression Analysis of Forced Expiratory Volume"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    number_sections: true
+    theme: cerulean
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 12,
+  fig.height = 8,
+  fig.align = 'center'
+)
+```
+
+# Introduction
+
+## Study Background
+
+This document analyzes the relationship between **Forced Expiratory Volume (FEV)** and various factors using the **FEV.DAT** dataset from Rosner's Fundamentals of Biostatistics.
+
+### Research Questions
+
+**Problem 11.34:** Use regression methods to examine the relationship between level of pulmonary function and other factors (age, height, personal smoking) when considered:
+1. **Separately** (Simple linear regression for each predictor)
+2. **Simultaneously** (Multiple regression with all predictors)
+
+Perform analyses for:
+- **Combined analysis**: Males and females together (with gender controlled)
+- **Gender-specific analyses**: Separate models for males and females
+
+### FEV Background
+
+**Forced Expiratory Volume (FEV)** is a measure of pulmonary function that indicates how much air a person can exhale during a forced breath. Higher FEV values indicate better lung function.
+
+# Data Loading and Preparation
+
+```{r load-packages}
+# Load required libraries
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(car)         # For VIF and diagnostic plots
+library(lmtest)      # For diagnostic tests
+library(ggplot2)
+library(gridExtra)   # For multiple plots
+library(broom)       # For tidy model outputs
+
+# Set theme for plots
+theme_set(theme_minimal())
+```
+
+
+```{r load-data}
+# Load the FEV.DAT dataset
+data_path <- "Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/FEV.DAT.txt"
+
+# Read the data - handle quotes in column names
+fev_data <- tryCatch({
+  read.csv(data_path, header = TRUE, strip.white = TRUE, quote = "'\"")
+}, error = function(e) {
+  cat("Error loading data from primary path. Trying alternative path...\n")
+  read.csv("../Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/FEV.DAT.txt",
+           header = TRUE, strip.white = TRUE, quote = "'\"")
+})
+
+# Clean column names (remove any quotes)
+colnames(fev_data) <- gsub("'", "", colnames(fev_data))
+colnames(fev_data) <- gsub("\"", "", colnames(fev_data))
+
+# Display structure
+cat("Dataset Structure:\n")
+str(fev_data)
+
+cat("\nColumn names in dataset:\n")
+print(colnames(fev_data))
+
+cat("\nFirst few rows:\n")
+head(fev_data) %>%
+  kable(caption = "First 6 Observations from FEV Dataset") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+# Variable Definitions
+
+```{r variable-definitions}
+# Create variable definitions table
+var_definitions <- data.frame(
+  Variable = c("ID", "Age", "FEV", "Hgt", "Sex", "Smoke"),
+  Description = c(
+    "Subject identification number",
+    "Age (years)",
+    "Forced Expiratory Volume (liters)",
+    "Height (inches)",
+    "Sex (0 = Female, 1 = Male)",
+    "Smoking status (0 = Non-smoker, 1 = Current smoker)"
+  ),
+  Type = c("ID", "Continuous", "Continuous (Outcome)", "Continuous",
+           "Binary", "Binary")
+)
+
+kable(var_definitions,
+      caption = "Variable Definitions for FEV Dataset") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+# Data Processing
+
+```{r data-processing}
+# Verify required columns exist
+required_cols <- c("Age", "FEV", "Hgt", "Sex", "Smoke")
+
+missing_cols <- setdiff(required_cols, colnames(fev_data))
+if(length(missing_cols) > 0) {
+  stop(paste("Missing columns:", paste(missing_cols, collapse = ", ")))
+}
+
+cat("All required columns are present.\n")
+cat("Dataset has", nrow(fev_data), "observations.\n\n")
+
+# Create factor variables with meaningful labels
+fev_data <- fev_data %>%
+  mutate(
+    # Sex factor
+    Sex_Label = factor(Sex, levels = c(0, 1),
+                      labels = c("Female", "Male")),
+
+    # Smoking status factor
+    Smoke_Label = factor(Smoke, levels = c(0, 1),
+                        labels = c("Non-smoker", "Smoker"))
+  )
+
+# Check for missing values
+cat("Missing values by variable:\n")
+missing_summary <- fev_data %>%
+  summarise(across(all_of(required_cols), ~sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "Missing_Count")
+
+kable(missing_summary,
+      caption = "Missing Values Summary") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Remove any missing values
+fev_clean <- fev_data %>%
+  filter(!is.na(FEV), !is.na(Age), !is.na(Hgt), !is.na(Sex), !is.na(Smoke))
+
+cat("\nAfter removing missing values:\n")
+cat("  Total observations:", nrow(fev_clean), "\n")
+cat("  Males:", sum(fev_clean$Sex == 1), "\n")
+cat("  Females:", sum(fev_clean$Sex == 0), "\n")
+cat("  Smokers:", sum(fev_clean$Smoke == 1), "\n")
+cat("  Non-smokers:", sum(fev_clean$Smoke == 0), "\n\n")
+
+cat("Data processing completed successfully.\n")
+```
+
+# Exploratory Data Analysis
+
+## Overall Summary Statistics
+
+```{r overall-summary}
+# Summary statistics for continuous variables
+summary_stats <- fev_clean %>%
+  summarise(
+    N = n(),
+    Mean_Age = round(mean(Age), 2),
+    SD_Age = round(sd(Age), 2),
+    Mean_FEV = round(mean(FEV), 3),
+    SD_FEV = round(sd(FEV), 3),
+    Mean_Height = round(mean(Hgt), 2),
+    SD_Height = round(sd(Hgt), 2)
+  )
+
+kable(summary_stats,
+      caption = "Overall Summary Statistics",
+      col.names = c("N", "Mean Age", "SD Age", "Mean FEV", "SD FEV",
+                   "Mean Height", "SD Height")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+## Summary by Gender
+
+```{r summary-by-gender}
+# Summary statistics by gender
+summary_gender <- fev_clean %>%
+  group_by(Sex_Label) %>%
+  summarise(
+    N = n(),
+    Mean_Age = round(mean(Age), 2),
+    SD_Age = round(sd(Age), 2),
+    Mean_FEV = round(mean(FEV), 3),
+    SD_FEV = round(sd(FEV), 3),
+    Mean_Height = round(mean(Hgt), 2),
+    SD_Height = round(sd(Hgt), 2),
+    N_Smokers = sum(Smoke == 1),
+    Pct_Smokers = round(100 * mean(Smoke == 1), 1)
+  )
+
+kable(summary_gender,
+      caption = "Summary Statistics by Gender",
+      col.names = c("Gender", "N", "Mean Age", "SD Age", "Mean FEV", "SD FEV",
+                   "Mean Height", "SD Height", "N Smokers", "% Smokers")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+## Summary by Smoking Status
+
+```{r summary-by-smoking}
+# Summary statistics by smoking status
+summary_smoking <- fev_clean %>%
+  group_by(Smoke_Label) %>%
+  summarise(
+    N = n(),
+    Mean_Age = round(mean(Age), 2),
+    SD_Age = round(sd(Age), 2),
+    Mean_FEV = round(mean(FEV), 3),
+    SD_FEV = round(sd(FEV), 3),
+    Mean_Height = round(mean(Hgt), 2),
+    SD_Height = round(sd(Hgt), 2),
+    N_Males = sum(Sex == 1),
+    Pct_Males = round(100 * mean(Sex == 1), 1)
+  )
+
+kable(summary_smoking,
+      caption = "Summary Statistics by Smoking Status",
+      col.names = c("Smoking Status", "N", "Mean Age", "SD Age", "Mean FEV", "SD FEV",
+                   "Mean Height", "SD Height", "N Males", "% Males")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+## Correlation Matrix
+
+```{r correlation-matrix}
+# Correlation matrix for continuous variables
+cor_matrix <- fev_clean %>%
+  dplyr::select(FEV, Age, Hgt, Sex, Smoke) %>%
+  cor()
+
+cat("Correlation Matrix:\n")
+print(round(cor_matrix, 3))
+
+# Visualize correlation matrix with corrplot if available, otherwise use base R
+if(require(corrplot, quietly = TRUE)) {
+  corrplot(cor_matrix, method = "color", type = "upper",
+           addCoef.col = "black", number.cex = 0.8,
+           tl.col = "black", tl.srt = 45,
+           title = "Correlation Matrix of FEV and Predictors",
+           mar = c(0,0,2,0))
+} else {
+  # Alternative: heatmap using base R
+  heatmap(cor_matrix, Rowv = NA, Colv = NA, scale = "none",
+          main = "Correlation Matrix of FEV and Predictors")
+}
+```
+
+## Distribution Visualizations
+
+```{r distribution-plots}
+# FEV distribution
+p1 <- ggplot(fev_clean, aes(x = FEV)) +
+  geom_histogram(bins = 30, fill = "#3498db", alpha = 0.7, color = "black") +
+  geom_vline(aes(xintercept = mean(FEV)), color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Distribution of FEV",
+       x = "FEV (liters)",
+       y = "Count") +
+  theme_minimal()
+
+# FEV by gender
+p2 <- ggplot(fev_clean, aes(x = Sex_Label, y = FEV, fill = Sex_Label)) +
+  geom_boxplot(alpha = 0.7, outlier.size = 2) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  scale_fill_manual(values = c("Female" = "#e74c3c", "Male" = "#3498db")) +
+  labs(title = "FEV by Gender",
+       x = "Gender",
+       y = "FEV (liters)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# FEV by smoking status
+p3 <- ggplot(fev_clean, aes(x = Smoke_Label, y = FEV, fill = Smoke_Label)) +
+  geom_boxplot(alpha = 0.7, outlier.size = 2) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  scale_fill_manual(values = c("Non-smoker" = "#2ecc71", "Smoker" = "#95a5a6")) +
+  labs(title = "FEV by Smoking Status",
+       x = "Smoking Status",
+       y = "FEV (liters)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Age distribution
+p4 <- ggplot(fev_clean, aes(x = Age)) +
+  geom_histogram(bins = 20, fill = "#9b59b6", alpha = 0.7, color = "black") +
+  labs(title = "Distribution of Age",
+       x = "Age (years)",
+       y = "Count") +
+  theme_minimal()
+
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+## Scatterplot Matrix
+
+```{r scatterplot-matrix}
+# Create scatterplot matrix using base R pairs() function
+# This avoids the GGally dependency issue
+pairs(fev_clean %>% dplyr::select(FEV, Age, Hgt, Sex, Smoke),
+      main = "Scatterplot Matrix: FEV and Predictors",
+      col = "#3498db",
+      pch = 19,
+      lower.panel = NULL)
+
+# Add correlation values
+panel.cor <- function(x, y, digits = 3, prefix = "", cex.cor, ...) {
+  usr <- par("usr"); on.exit(par(usr))
+  par(usr = c(0, 1, 0, 1))
+  r <- cor(x, y, use = "complete.obs")
+  txt <- format(c(r, 0.123456789), digits = digits)[1]
+  txt <- paste0(prefix, txt)
+  if(missing(cex.cor)) cex.cor <- 0.8/strwidth(txt)
+  text(0.5, 0.5, txt, cex = cex.cor * abs(r) + 0.5)
+}
+
+pairs(fev_clean %>% dplyr::select(FEV, Age, Hgt, Sex, Smoke),
+      main = "Scatterplot Matrix with Correlations",
+      upper.panel = panel.cor,
+      col = "#3498db",
+      pch = 19)
+```
+
+---
+
+# PART 1: Combined Analysis (Males and Females Together)
+
+## Simple Linear Regression Models (Separate Predictors)
+
+### Model 1a: FEV vs Age
+
+```{r model-1a-age}
+cat("=== MODEL 1a: FEV ~ Age ===\n\n")
+
+# Fit model
+model_1a <- lm(FEV ~ Age, data = fev_clean)
+
+# Summary
+summary(model_1a)
+
+# Tidy output
+tidy_1a <- tidy(model_1a, conf.int = TRUE)
+kable(tidy_1a,
+      caption = "Model 1a: FEV ~ Age",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Model fit statistics
+glance_1a <- glance(model_1a)
+cat(sprintf("\nModel Fit Statistics:\n"))
+cat(sprintf("  R² = %.4f\n", glance_1a$r.squared))
+cat(sprintf("  Adjusted R² = %.4f\n", glance_1a$adj.r.squared))
+cat(sprintf("  RMSE = %.4f\n", glance_1a$sigma))
+cat(sprintf("  F-statistic = %.2f (p = %.4e)\n", glance_1a$statistic, glance_1a$p.value))
+
+# Interpretation
+cat(sprintf("\nInterpretation:\n"))
+cat(sprintf("  For each 1-year increase in age, FEV increases by %.4f liters (95%% CI: %.4f to %.4f)\n",
+            tidy_1a$estimate[2], tidy_1a$conf.low[2], tidy_1a$conf.high[2]))
+cat(sprintf("  Age explains %.1f%% of the variance in FEV\n", 100 * glance_1a$r.squared))
+```
+
+```{r plot-1a}
+# Scatterplot with regression line
+ggplot(fev_clean, aes(x = Age, y = FEV)) +
+  geom_point(alpha = 0.5, color = "#3498db") +
+  geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink") +
+  labs(title = "Model 1a: FEV vs Age",
+       subtitle = sprintf("R² = %.4f, p < 0.0001", glance_1a$r.squared),
+       x = "Age (years)",
+       y = "FEV (liters)") +
+  theme_minimal()
+```
+
+### Model 1b: FEV vs Height
+
+```{r model-1b-height}
+cat("\n=== MODEL 1b: FEV ~ Height ===\n\n")
+
+# Fit model
+model_1b <- lm(FEV ~ Hgt, data = fev_clean)
+
+# Summary
+summary(model_1b)
+
+# Tidy output
+tidy_1b <- tidy(model_1b, conf.int = TRUE)
+kable(tidy_1b,
+      caption = "Model 1b: FEV ~ Height",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Model fit statistics
+glance_1b <- glance(model_1b)
+cat(sprintf("\nModel Fit Statistics:\n"))
+cat(sprintf("  R² = %.4f\n", glance_1b$r.squared))
+cat(sprintf("  Adjusted R² = %.4f\n", glance_1b$adj.r.squared))
+cat(sprintf("  RMSE = %.4f\n", glance_1b$sigma))
+cat(sprintf("  F-statistic = %.2f (p = %.4e)\n", glance_1b$statistic, glance_1b$p.value))
+
+# Interpretation
+cat(sprintf("\nInterpretation:\n"))
+cat(sprintf("  For each 1-inch increase in height, FEV increases by %.4f liters (95%% CI: %.4f to %.4f)\n",
+            tidy_1b$estimate[2], tidy_1b$conf.low[2], tidy_1b$conf.high[2]))
+cat(sprintf("  Height explains %.1f%% of the variance in FEV\n", 100 * glance_1b$r.squared))
+```
+
+```{r plot-1b}
+# Scatterplot with regression line
+ggplot(fev_clean, aes(x = Hgt, y = FEV)) +
+  geom_point(alpha = 0.5, color = "#9b59b6") +
+  geom_smooth(method = "lm", se = TRUE, color = "red", fill = "pink") +
+  labs(title = "Model 1b: FEV vs Height",
+       subtitle = sprintf("R² = %.4f, p < 0.0001", glance_1b$r.squared),
+       x = "Height (inches)",
+       y = "FEV (liters)") +
+  theme_minimal()
+```
+
+### Model 1c: FEV vs Sex
+
+```{r model-1c-sex}
+cat("\n=== MODEL 1c: FEV ~ Sex ===\n\n")
+
+# Fit model
+model_1c <- lm(FEV ~ Sex, data = fev_clean)
+
+# Summary
+summary(model_1c)
+
+# Tidy output
+tidy_1c <- tidy(model_1c, conf.int = TRUE)
+kable(tidy_1c,
+      caption = "Model 1c: FEV ~ Sex (0=Female, 1=Male)",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Model fit statistics
+glance_1c <- glance(model_1c)
+cat(sprintf("\nModel Fit Statistics:\n"))
+cat(sprintf("  R² = %.4f\n", glance_1c$r.squared))
+cat(sprintf("  Adjusted R² = %.4f\n", glance_1c$adj.r.squared))
+cat(sprintf("  RMSE = %.4f\n", glance_1c$sigma))
+cat(sprintf("  F-statistic = %.2f (p = %.4e)\n", glance_1c$statistic, glance_1c$p.value))
+
+# Interpretation
+cat(sprintf("\nInterpretation:\n"))
+cat(sprintf("  Mean FEV for females: %.4f liters\n", tidy_1c$estimate[1]))
+cat(sprintf("  Males have %.4f liters higher FEV than females (95%% CI: %.4f to %.4f)\n",
+            tidy_1c$estimate[2], tidy_1c$conf.low[2], tidy_1c$conf.high[2]))
+cat(sprintf("  Sex explains %.1f%% of the variance in FEV\n", 100 * glance_1c$r.squared))
+```
+
+```{r plot-1c}
+# Boxplot with individual points
+ggplot(fev_clean, aes(x = Sex_Label, y = FEV, fill = Sex_Label)) +
+  geom_boxplot(alpha = 0.7, outlier.size = 2) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  scale_fill_manual(values = c("Female" = "#e74c3c", "Male" = "#3498db")) +
+  labs(title = "Model 1c: FEV vs Sex",
+       subtitle = sprintf("R² = %.4f, p < 0.0001", glance_1c$r.squared),
+       x = "Sex",
+       y = "FEV (liters)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+### Model 1d: FEV vs Smoking Status
+
+```{r model-1d-smoke}
+cat("\n=== MODEL 1d: FEV ~ Smoke ===\n\n")
+
+# Fit model
+model_1d <- lm(FEV ~ Smoke, data = fev_clean)
+
+# Summary
+summary(model_1d)
+
+# Tidy output
+tidy_1d <- tidy(model_1d, conf.int = TRUE)
+kable(tidy_1d,
+      caption = "Model 1d: FEV ~ Smoke (0=Non-smoker, 1=Smoker)",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Model fit statistics
+glance_1d <- glance(model_1d)
+cat(sprintf("\nModel Fit Statistics:\n"))
+cat(sprintf("  R² = %.4f\n", glance_1d$r.squared))
+cat(sprintf("  Adjusted R² = %.4f\n", glance_1d$adj.r.squared))
+cat(sprintf("  RMSE = %.4f\n", glance_1d$sigma))
+cat(sprintf("  F-statistic = %.2f (p = %.4e)\n", glance_1d$statistic, glance_1d$p.value))
+
+# Interpretation
+cat(sprintf("\nInterpretation:\n"))
+cat(sprintf("  Mean FEV for non-smokers: %.4f liters\n", tidy_1d$estimate[1]))
+if(nrow(tidy_1d) > 1) {
+  cat(sprintf("  Smokers have %.4f liters %s FEV than non-smokers (95%% CI: %.4f to %.4f)\n",
+              abs(tidy_1d$estimate[2]),
+              ifelse(tidy_1d$estimate[2] > 0, "higher", "lower"),
+              tidy_1d$conf.low[2], tidy_1d$conf.high[2]))
+}
+cat(sprintf("  Smoking status explains %.1f%% of the variance in FEV\n", 100 * glance_1d$r.squared))
+```
+
+```{r plot-1d}
+# Boxplot with individual points
+ggplot(fev_clean, aes(x = Smoke_Label, y = FEV, fill = Smoke_Label)) +
+  geom_boxplot(alpha = 0.7, outlier.size = 2) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  scale_fill_manual(values = c("Non-smoker" = "#2ecc71", "Smoker" = "#95a5a6")) +
+  labs(title = "Model 1d: FEV vs Smoking Status",
+       subtitle = sprintf("R² = %.4f", glance_1d$r.squared),
+       x = "Smoking Status",
+       y = "FEV (liters)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+## Multiple Regression Model (All Predictors Simultaneously)
+
+### Model 2: Full Model with All Predictors
+
+```{r model-2-full}
+cat("\n=== MODEL 2: FEV ~ Age + Height + Sex + Smoke (FULL MODEL) ===\n\n")
+
+# Fit full model
+model_2 <- lm(FEV ~ Age + Hgt + Sex + Smoke, data = fev_clean)
+
+# Summary
+summary(model_2)
+
+# Tidy output
+tidy_2 <- tidy(model_2, conf.int = TRUE)
+kable(tidy_2,
+      caption = "Model 2: Full Multiple Regression Model",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Model fit statistics
+glance_2 <- glance(model_2)
+cat(sprintf("\nModel Fit Statistics:\n"))
+cat(sprintf("  R² = %.4f\n", glance_2$r.squared))
+cat(sprintf("  Adjusted R² = %.4f\n", glance_2$adj.r.squared))
+cat(sprintf("  RMSE = %.4f\n", glance_2$sigma))
+cat(sprintf("  F-statistic = %.2f (p = %.4e)\n", glance_2$statistic, glance_2$p.value))
+
+# Interpretation
+cat(sprintf("\n=== INTERPRETATION ===\n"))
+cat("Holding all other variables constant:\n")
+for(i in 2:nrow(tidy_2)) {
+  var_name <- tidy_2$term[i]
+  coef <- tidy_2$estimate[i]
+  ci_low <- tidy_2$conf.low[i]
+  ci_high <- tidy_2$conf.high[i]
+  p_val <- tidy_2$p.value[i]
+
+  if(var_name == "Age") {
+    cat(sprintf("  - Each additional year of age is associated with %.4f liter %s in FEV (95%% CI: %.4f to %.4f, p = %.4f)\n",
+                abs(coef), ifelse(coef > 0, "increase", "decrease"), ci_low, ci_high, p_val))
+  } else if(var_name == "Hgt") {
+    cat(sprintf("  - Each additional inch of height is associated with %.4f liter increase in FEV (95%% CI: %.4f to %.4f, p = %.4f)\n",
+                coef, ci_low, ci_high, p_val))
+  } else if(var_name == "Sex") {
+    cat(sprintf("  - Males have %.4f liters %s FEV than females (95%% CI: %.4f to %.4f, p = %.4f)\n",
+                abs(coef), ifelse(coef > 0, "higher", "lower"), ci_low, ci_high, p_val))
+  } else if(var_name == "Smoke") {
+    cat(sprintf("  - Smokers have %.4f liters %s FEV than non-smokers (95%% CI: %.4f to %.4f, p = %.4f)\n",
+                abs(coef), ifelse(coef > 0, "higher", "lower"), ci_low, ci_high, p_val))
+  }
+}
+```
+
+### Model Comparison: Simple vs Multiple Regression
+
+```{r model-comparison}
+cat("\n=== MODEL COMPARISON ===\n\n")
+
+# Compare R² values
+comparison_df <- data.frame(
+  Model = c("1a: Age only", "1b: Height only", "1c: Sex only", "1d: Smoke only",
+            "2: Full Model (All predictors)"),
+  Predictors = c("Age", "Height", "Sex", "Smoke", "Age + Height + Sex + Smoke"),
+  R_squared = c(glance_1a$r.squared, glance_1b$r.squared, glance_1c$r.squared,
+                glance_1d$r.squared, glance_2$r.squared),
+  Adj_R_squared = c(glance_1a$adj.r.squared, glance_1b$adj.r.squared,
+                    glance_1c$adj.r.squared, glance_1d$adj.r.squared,
+                    glance_2$adj.r.squared),
+  RMSE = c(glance_1a$sigma, glance_1b$sigma, glance_1c$sigma,
+           glance_1d$sigma, glance_2$sigma),
+  AIC = c(AIC(model_1a), AIC(model_1b), AIC(model_1c), AIC(model_1d), AIC(model_2)),
+  BIC = c(BIC(model_1a), BIC(model_1b), BIC(model_1c), BIC(model_1d), BIC(model_2))
+)
+
+kable(comparison_df,
+      caption = "Model Comparison: Simple vs Multiple Regression",
+      digits = 4,
+      col.names = c("Model", "Predictors", "R²", "Adj. R²", "RMSE", "AIC", "BIC")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  row_spec(5, bold = TRUE, background = "#ffffcc")
+
+cat(sprintf("\nKey Findings:\n"))
+cat(sprintf("  - Full model explains %.1f%% of variance in FEV\n", 100 * glance_2$r.squared))
+cat(sprintf("  - Height alone explains %.1f%% (highest among single predictors)\n",
+            100 * glance_1b$r.squared))
+cat(sprintf("  - Adding all predictors increases R² from %.4f to %.4f\n",
+            max(glance_1a$r.squared, glance_1b$r.squared, glance_1c$r.squared, glance_1d$r.squared),
+            glance_2$r.squared))
+```
+
+### Multicollinearity Check
+
+```{r vif-check}
+cat("\n=== VARIANCE INFLATION FACTORS (VIF) ===\n\n")
+
+# Calculate VIF
+vif_values <- vif(model_2)
+cat("VIF values (concern if > 5, serious if > 10):\n")
+print(vif_values)
+
+vif_df <- data.frame(
+  Predictor = names(vif_values),
+  VIF = vif_values,
+  Status = ifelse(vif_values > 10, "Serious concern",
+                  ifelse(vif_values > 5, "Moderate concern", "OK"))
+)
+
+kable(vif_df,
+      caption = "Variance Inflation Factors",
+      digits = 3,
+      row.names = FALSE) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+cat("\nInterpretation:\n")
+if(max(vif_values) > 10) {
+  cat("  WARNING: Severe multicollinearity detected. Consider removing predictors.\n")
+} else if(max(vif_values) > 5) {
+  cat("  CAUTION: Moderate multicollinearity detected. Interpret coefficients carefully.\n")
+} else {
+  cat("  No serious multicollinearity issues detected.\n")
+}
+```
+
+## Goodness of Fit Assessment
+
+### Diagnostic Plots
+
+```{r diagnostic-plots-combined}
+cat("\n=== REGRESSION DIAGNOSTICS ===\n\n")
+
+# Set up plot layout
+par(mfrow = c(2, 2))
+plot(model_2, which = 1:4)
+par(mfrow = c(1, 1))
+```
+
+### Residual Tests
+
+```{r residual-tests}
+cat("\n=== RESIDUAL ANALYSIS ===\n\n")
+
+# Normality test (Shapiro-Wilk)
+shapiro_test <- shapiro.test(residuals(model_2))
+cat(sprintf("Shapiro-Wilk Normality Test:\n"))
+cat(sprintf("  W = %.4f, p-value = %.4e\n", shapiro_test$statistic, shapiro_test$p.value))
+cat(sprintf("  Conclusion: Residuals are %s normally distributed (α = 0.05)\n",
+            ifelse(shapiro_test$p.value > 0.05, "approximately", "NOT")))
+
+# Breusch-Pagan test for homoscedasticity
+bp_test <- bptest(model_2)
+cat(sprintf("\nBreusch-Pagan Test for Homoscedasticity:\n"))
+cat(sprintf("  BP = %.4f, df = %d, p-value = %.4f\n",
+            bp_test$statistic, bp_test$parameter, bp_test$p.value))
+cat(sprintf("  Conclusion: Variance is %s (α = 0.05)\n",
+            ifelse(bp_test$p.value > 0.05, "homogeneous (constant)", "heterogeneous (non-constant)")))
+
+# Durbin-Watson test for autocorrelation
+dw_test <- dwtest(model_2)
+cat(sprintf("\nDurbin-Watson Test for Autocorrelation:\n"))
+cat(sprintf("  DW = %.4f, p-value = %.4f\n", dw_test$statistic, dw_test$p.value))
+cat(sprintf("  Conclusion: %s evidence of autocorrelation (α = 0.05)\n",
+            ifelse(dw_test$p.value > 0.05, "No significant", "Significant")))
+```
+
+### Influential Points Analysis
+
+```{r influential-points}
+cat("\n=== INFLUENTIAL POINTS ANALYSIS ===\n\n")
+
+# Calculate influence measures
+influence_measures <- influence.measures(model_2)
+
+# Cook's distance
+cooks_d <- cooks.distance(model_2)
+influential_cooks <- which(cooks_d > 4/nrow(fev_clean))
+
+cat(sprintf("Cook's Distance (threshold = 4/n = %.4f):\n", 4/nrow(fev_clean)))
+cat(sprintf("  Number of influential points: %d\n", length(influential_cooks)))
+if(length(influential_cooks) > 0) {
+  cat(sprintf("  Influential observations: %s\n", paste(influential_cooks, collapse = ", ")))
+}
+
+# Leverage
+hat_values <- hatvalues(model_2)
+high_leverage <- which(hat_values > 2 * mean(hat_values))
+
+cat(sprintf("\nLeverage (threshold = 2 * mean = %.4f):\n", 2 * mean(hat_values)))
+cat(sprintf("  Number of high leverage points: %d\n", length(high_leverage)))
+
+# DFBETAS
+dfbetas_vals <- dfbetas(model_2)
+high_dfbetas <- which(apply(abs(dfbetas_vals), 1, max) > 2/sqrt(nrow(fev_clean)))
+
+cat(sprintf("\nDFBETAS (threshold = 2/sqrt(n) = %.4f):\n", 2/sqrt(nrow(fev_clean))))
+cat(sprintf("  Number of influential points: %d\n", length(high_dfbetas)))
+```
+
+```{r influence-plots}
+# Cook's distance plot
+plot_data <- data.frame(
+  Index = 1:nrow(fev_clean),
+  Cooks_D = cooks_d,
+  Influential = cooks_d > 4/nrow(fev_clean)
+)
+
+ggplot(plot_data, aes(x = Index, y = Cooks_D, color = Influential)) +
+  geom_point(alpha = 0.6) +
+  geom_hline(yintercept = 4/nrow(fev_clean), linetype = "dashed", color = "red") +
+  scale_color_manual(values = c("FALSE" = "#3498db", "TRUE" = "#e74c3c")) +
+  labs(title = "Cook's Distance Plot",
+       subtitle = paste0("Threshold = ", sprintf("%.4f", 4/nrow(fev_clean))),
+       x = "Observation Index",
+       y = "Cook's Distance") +
+  theme_minimal()
+```
+
+---
+
+# PART 2: Gender-Specific Analyses
+
+## Males Only
+
+### Summary Statistics - Males
+
+```{r summary-males}
+cat("\n=== ANALYSIS FOR MALES ONLY ===\n\n")
+
+# Subset males
+males_data <- fev_clean %>% filter(Sex == 1)
+
+cat(sprintf("Sample size: %d males\n\n", nrow(males_data)))
+
+# Summary statistics
+summary_males <- males_data %>%
+  summarise(
+    N = n(),
+    Mean_Age = round(mean(Age), 2),
+    SD_Age = round(sd(Age), 2),
+    Mean_FEV = round(mean(FEV), 3),
+    SD_FEV = round(sd(FEV), 3),
+    Mean_Height = round(mean(Hgt), 2),
+    SD_Height = round(sd(Hgt), 2),
+    N_Smokers = sum(Smoke == 1),
+    Pct_Smokers = round(100 * mean(Smoke == 1), 1)
+  )
+
+kable(summary_males,
+      caption = "Summary Statistics - Males Only",
+      col.names = c("N", "Mean Age", "SD Age", "Mean FEV", "SD FEV",
+                   "Mean Height", "SD Height", "N Smokers", "% Smokers")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+### Simple Regression Models - Males
+
+```{r males-simple-models}
+# Age
+model_males_age <- lm(FEV ~ Age, data = males_data)
+glance_males_age <- glance(model_males_age)
+
+# Height
+model_males_hgt <- lm(FEV ~ Hgt, data = males_data)
+glance_males_hgt <- glance(model_males_hgt)
+
+# Smoke
+model_males_smoke <- lm(FEV ~ Smoke, data = males_data)
+glance_males_smoke <- glance(model_males_smoke)
+
+# Summary table
+males_simple_summary <- data.frame(
+  Model = c("FEV ~ Age", "FEV ~ Height", "FEV ~ Smoke"),
+  R_squared = c(glance_males_age$r.squared, glance_males_hgt$r.squared,
+                glance_males_smoke$r.squared),
+  Adj_R_squared = c(glance_males_age$adj.r.squared, glance_males_hgt$adj.r.squared,
+                    glance_males_smoke$adj.r.squared),
+  RMSE = c(glance_males_age$sigma, glance_males_hgt$sigma,
+           glance_males_smoke$sigma),
+  F_statistic = c(glance_males_age$statistic, glance_males_hgt$statistic,
+                  glance_males_smoke$statistic),
+  P_value = c(glance_males_age$p.value, glance_males_hgt$p.value,
+              glance_males_smoke$p.value)
+)
+
+kable(males_simple_summary,
+      caption = "Simple Regression Models - Males Only",
+      digits = 4,
+      col.names = c("Model", "R²", "Adj. R²", "RMSE", "F-statistic", "P-value")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+### Multiple Regression Model - Males
+
+```{r males-full-model}
+cat("\n=== MULTIPLE REGRESSION: MALES ONLY ===\n\n")
+
+# Fit full model for males
+model_males_full <- lm(FEV ~ Age + Hgt + Smoke, data = males_data)
+
+# Summary
+summary(model_males_full)
+
+# Tidy output
+tidy_males_full <- tidy(model_males_full, conf.int = TRUE)
+kable(tidy_males_full,
+      caption = "Multiple Regression Model - Males Only",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Model fit statistics
+glance_males_full <- glance(model_males_full)
+cat(sprintf("\nModel Fit Statistics (Males):\n"))
+cat(sprintf("  R² = %.4f\n", glance_males_full$r.squared))
+cat(sprintf("  Adjusted R² = %.4f\n", glance_males_full$adj.r.squared))
+cat(sprintf("  RMSE = %.4f\n", glance_males_full$sigma))
+cat(sprintf("  F-statistic = %.2f (p = %.4e)\n", glance_males_full$statistic, glance_males_full$p.value))
+```
+
+### Diagnostics - Males
+
+```{r males-diagnostics}
+cat("\n=== DIAGNOSTICS: MALES ONLY ===\n\n")
+
+# Diagnostic plots
+par(mfrow = c(2, 2))
+plot(model_males_full, which = 1:4, main = "Males Only")
+par(mfrow = c(1, 1))
+
+# VIF
+vif_males <- vif(model_males_full)
+cat("\nVIF values (Males):\n")
+print(vif_males)
+
+# Normality test
+shapiro_males <- shapiro.test(residuals(model_males_full))
+cat(sprintf("\nShapiro-Wilk Test (Males): W = %.4f, p = %.4e\n",
+            shapiro_males$statistic, shapiro_males$p.value))
+
+# Homoscedasticity test
+bp_males <- bptest(model_males_full)
+cat(sprintf("Breusch-Pagan Test (Males): BP = %.4f, p = %.4f\n",
+            bp_males$statistic, bp_males$p.value))
+```
+
+## Females Only
+
+### Summary Statistics - Females
+
+```{r summary-females}
+cat("\n=== ANALYSIS FOR FEMALES ONLY ===\n\n")
+
+# Subset females
+females_data <- fev_clean %>% filter(Sex == 0)
+
+cat(sprintf("Sample size: %d females\n\n", nrow(females_data)))
+
+# Summary statistics
+summary_females <- females_data %>%
+  summarise(
+    N = n(),
+    Mean_Age = round(mean(Age), 2),
+    SD_Age = round(sd(Age), 2),
+    Mean_FEV = round(mean(FEV), 3),
+    SD_FEV = round(sd(FEV), 3),
+    Mean_Height = round(mean(Hgt), 2),
+    SD_Height = round(sd(Hgt), 2),
+    N_Smokers = sum(Smoke == 1),
+    Pct_Smokers = round(100 * mean(Smoke == 1), 1)
+  )
+
+kable(summary_females,
+      caption = "Summary Statistics - Females Only",
+      col.names = c("N", "Mean Age", "SD Age", "Mean FEV", "SD FEV",
+                   "Mean Height", "SD Height", "N Smokers", "% Smokers")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+### Simple Regression Models - Females
+
+```{r females-simple-models}
+# Age
+model_females_age <- lm(FEV ~ Age, data = females_data)
+glance_females_age <- glance(model_females_age)
+
+# Height
+model_females_hgt <- lm(FEV ~ Hgt, data = females_data)
+glance_females_hgt <- glance(model_females_hgt)
+
+# Smoke
+model_females_smoke <- lm(FEV ~ Smoke, data = females_data)
+glance_females_smoke <- glance(model_females_smoke)
+
+# Summary table
+females_simple_summary <- data.frame(
+  Model = c("FEV ~ Age", "FEV ~ Height", "FEV ~ Smoke"),
+  R_squared = c(glance_females_age$r.squared, glance_females_hgt$r.squared,
+                glance_females_smoke$r.squared),
+  Adj_R_squared = c(glance_females_age$adj.r.squared, glance_females_hgt$adj.r.squared,
+                    glance_females_smoke$adj.r.squared),
+  RMSE = c(glance_females_age$sigma, glance_females_hgt$sigma,
+           glance_females_smoke$sigma),
+  F_statistic = c(glance_females_age$statistic, glance_females_hgt$statistic,
+                  glance_females_smoke$statistic),
+  P_value = c(glance_females_age$p.value, glance_females_hgt$p.value,
+              glance_females_smoke$p.value)
+)
+
+kable(females_simple_summary,
+      caption = "Simple Regression Models - Females Only",
+      digits = 4,
+      col.names = c("Model", "R²", "Adj. R²", "RMSE", "F-statistic", "P-value")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+### Multiple Regression Model - Females
+
+```{r females-full-model}
+cat("\n=== MULTIPLE REGRESSION: FEMALES ONLY ===\n\n")
+
+# Fit full model for females
+model_females_full <- lm(FEV ~ Age + Hgt + Smoke, data = females_data)
+
+# Summary
+summary(model_females_full)
+
+# Tidy output
+tidy_females_full <- tidy(model_females_full, conf.int = TRUE)
+kable(tidy_females_full,
+      caption = "Multiple Regression Model - Females Only",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Model fit statistics
+glance_females_full <- glance(model_females_full)
+cat(sprintf("\nModel Fit Statistics (Females):\n"))
+cat(sprintf("  R² = %.4f\n", glance_females_full$r.squared))
+cat(sprintf("  Adjusted R² = %.4f\n", glance_females_full$adj.r.squared))
+cat(sprintf("  RMSE = %.4f\n", glance_females_full$sigma))
+cat(sprintf("  F-statistic = %.2f (p = %.4e)\n", glance_females_full$statistic, glance_females_full$p.value))
+```
+
+### Diagnostics - Females
+
+```{r females-diagnostics}
+cat("\n=== DIAGNOSTICS: FEMALES ONLY ===\n\n")
+
+# Diagnostic plots
+par(mfrow = c(2, 2))
+plot(model_females_full, which = 1:4, main = "Females Only")
+par(mfrow = c(1, 1))
+
+# VIF
+vif_females <- vif(model_females_full)
+cat("\nVIF values (Females):\n")
+print(vif_females)
+
+# Normality test
+shapiro_females <- shapiro.test(residuals(model_females_full))
+cat(sprintf("\nShapiro-Wilk Test (Females): W = %.4f, p = %.4e\n",
+            shapiro_females$statistic, shapiro_females$p.value))
+
+# Homoscedasticity test
+bp_females <- bptest(model_females_full)
+cat(sprintf("Breusch-Pagan Test (Females): BP = %.4f, p = %.4f\n",
+            bp_females$statistic, bp_females$p.value))
+```
+
+---
+
+# Comprehensive Model Comparison
+
+## Comparison Across All Models
+
+```{r comprehensive-comparison}
+cat("\n=== COMPREHENSIVE MODEL COMPARISON ===\n\n")
+
+# Create comprehensive comparison table
+all_models_comparison <- data.frame(
+  Analysis = c("Combined (with Sex)", "Males Only", "Females Only"),
+  Sample_Size = c(nrow(fev_clean), nrow(males_data), nrow(females_data)),
+  Predictors = c("Age + Height + Sex + Smoke", "Age + Height + Smoke", "Age + Height + Smoke"),
+  R_squared = c(glance_2$r.squared, glance_males_full$r.squared, glance_females_full$r.squared),
+  Adj_R_squared = c(glance_2$adj.r.squared, glance_males_full$adj.r.squared,
+                    glance_females_full$adj.r.squared),
+  RMSE = c(glance_2$sigma, glance_males_full$sigma, glance_females_full$sigma),
+  AIC = c(AIC(model_2), AIC(model_males_full), AIC(model_females_full)),
+  BIC = c(BIC(model_2), BIC(model_males_full), BIC(model_females_full))
+)
+
+kable(all_models_comparison,
+      caption = "Comprehensive Model Comparison: Combined vs Gender-Specific",
+      digits = 4,
+      col.names = c("Analysis", "N", "Predictors", "R²", "Adj. R²", "RMSE", "AIC", "BIC")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+## Coefficient Comparison by Gender
+
+```{r coefficient-comparison}
+# Extract coefficients for comparison
+coef_comparison <- data.frame(
+  Predictor = c("(Intercept)", "Age", "Height", "Smoke"),
+  Combined = coef(model_2)[1:4],
+  Combined_SE = summary(model_2)$coefficients[1:4, 2],
+  Males = c(coef(model_males_full)[1:3], coef(model_males_full)[4]),
+  Males_SE = summary(model_males_full)$coefficients[, 2],
+  Females = c(coef(model_females_full)[1:3], coef(model_females_full)[4]),
+  Females_SE = summary(model_females_full)$coefficients[, 2]
+)
+
+kable(coef_comparison,
+      caption = "Regression Coefficients Comparison",
+      digits = 4,
+      col.names = c("Predictor", "Combined β", "SE", "Males β", "SE", "Females β", "SE")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+## Visual Comparison of Models
+
+```{r visual-comparison}
+# Predicted vs Actual for all three models
+# Create separate data frames for each model (they have different sample sizes)
+pred_df_combined <- data.frame(
+  Actual = fev_clean$FEV,
+  Predicted = predict(model_2),
+  Model = "Combined"
+)
+
+pred_df_males <- data.frame(
+  Actual = males_data$FEV,
+  Predicted = predict(model_males_full),
+  Model = "Males Only"
+)
+
+pred_df_females <- data.frame(
+  Actual = females_data$FEV,
+  Predicted = predict(model_females_full),
+  Model = "Females Only"
+)
+
+# Combine all predictions
+pred_df_all <- bind_rows(pred_df_combined, pred_df_males, pred_df_females)
+
+# Create faceted plot
+ggplot(pred_df_all, aes(x = Actual, y = Predicted)) +
+  geom_point(alpha = 0.5, color = "#3498db") +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+  facet_wrap(~Model, ncol = 3) +
+  labs(title = "Predicted vs Actual FEV: Model Comparison",
+       x = "Actual FEV (liters)",
+       y = "Predicted FEV (liters)") +
+  theme_minimal()
+```
+
+---
+
+# Summary and Conclusions
+
+## Key Findings
+
+### 1. Combined Analysis (Males and Females Together)
+
+**Simple Regression Models:**
+- **Height** is the strongest single predictor (R² = `r sprintf("%.4f", glance_1b$r.squared)`)
+- **Age** also shows strong relationship (R² = `r sprintf("%.4f", glance_1a$r.squared)`)
+- **Sex** explains significant variance (R² = `r sprintf("%.4f", glance_1c$r.squared)`)
+- **Smoking** shows weaker relationship (R² = `r sprintf("%.4f", glance_1d$r.squared)`)
+
+**Multiple Regression Model:**
+- All predictors together explain **`r sprintf("%.1f%%", 100 * glance_2$r.squared)`** of variance in FEV
+- Adjusted R² = `r sprintf("%.4f", glance_2$adj.r.squared)`
+- RMSE = `r sprintf("%.4f", glance_2$sigma)` liters
+- No serious multicollinearity issues (all VIF < 5)
+
+**Significant Predictors (in full model):**
+```{r key-predictors-combined, echo=FALSE}
+sig_predictors <- tidy_2 %>%
+  filter(p.value < 0.05, term != "(Intercept)") %>%
+  dplyr::select(term, estimate, p.value)
+
+kable(sig_predictors,
+      caption = "Statistically Significant Predictors (Combined Model, α = 0.05)",
+      digits = 4,
+      col.names = c("Predictor", "Coefficient", "P-value")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+### 2. Gender-Specific Analyses
+
+**Males Only:**
+- R² = `r sprintf("%.4f", glance_males_full$r.squared)` (explains `r sprintf("%.1f%%", 100 * glance_males_full$r.squared)` of variance)
+- Sample size: `r nrow(males_data)` males
+- RMSE = `r sprintf("%.4f", glance_males_full$sigma)` liters
+
+**Females Only:**
+- R² = `r sprintf("%.4f", glance_females_full$r.squared)` (explains `r sprintf("%.1f%%", 100 * glance_females_full$r.squared)` of variance)
+- Sample size: `r nrow(females_data)` females
+- RMSE = `r sprintf("%.4f", glance_females_full$sigma)` liters
+
+**Comparison:**
+- Gender-specific models show `r ifelse(glance_males_full$r.squared > glance_females_full$r.squared, "males have slightly higher R²", "females have slightly higher R²")`
+- Coefficient patterns differ between genders, suggesting different relationships with FEV predictors
+
+### 3. Goodness of Fit Assessment
+
+**Model Assumptions:**
+- **Linearity:** Residual plots show reasonably linear relationships
+- **Normality:** Shapiro-Wilk test indicates `r ifelse(shapiro_test$p.value > 0.05, "residuals are approximately normal", "some deviation from normality")`
+- **Homoscedasticity:** Breusch-Pagan test shows `r ifelse(bp_test$p.value > 0.05, "constant variance", "some heteroscedasticity")`
+- **Independence:** Durbin-Watson test shows `r ifelse(dw_test$p.value > 0.05, "no significant autocorrelation", "some autocorrelation")`
+
+**Influential Points:**
+- Cook's distance identified `r length(influential_cooks)` potentially influential observations
+- Overall model is robust to individual observations
+
+## Clinical Implications
+
+1. **Height and Age** are the most important predictors of pulmonary function (FEV)
+2. **Gender differences** are significant and should be considered in clinical assessment
+3. **Smoking effect** is present but smaller than expected when controlling for age and height
+4. Gender-specific models may provide more accurate predictions for individual patients
+
+## Statistical Methods Used
+
+- **Simple Linear Regression** (bivariate analysis)
+- **Multiple Linear Regression** (multivariate analysis)
+- **Model Comparison** (R², Adjusted R², AIC, BIC)
+- **Regression Diagnostics** (residual plots, VIF, influence measures)
+- **Assumption Testing** (Shapiro-Wilk, Breusch-Pagan, Durbin-Watson)
+
+## Recommendations
+
+1. Use the **full model with all predictors** for best prediction accuracy
+2. Consider **gender-specific models** for clinical applications
+3. Monitor for potential **confounding** between age and smoking status
+4. Validate models on independent datasets before clinical use
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
+
+---
+**End of Analysis**
