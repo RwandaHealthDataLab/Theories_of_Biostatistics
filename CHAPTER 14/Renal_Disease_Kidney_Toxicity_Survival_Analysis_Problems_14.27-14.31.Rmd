@@ -1,0 +1,1292 @@
+---
+title: "Renal Disease - Kidney Toxicity Study"
+subtitle: "Problems 14.27-14.31: Survival Analysis of Serum Creatinine Toxicity"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    code_folding: show
+    theme: united
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  comment = NA
+)
+```
+
+# Introduction
+
+## Study Overview
+
+This analysis examines **kidney toxicity** in subjects treated with different doses of N-acetyl-p-aminophenol (NAPAP) compared to controls, using longitudinal serum creatinine measurements.
+
+**Key Definitions:**
+- **Kidney toxicity**: Serum creatinine level ≥ 1.5 mg/dL
+- **Event**: First occurrence of creatinine ≥ 1.5 mg/dL
+- **Censoring**: Subject never reaches toxic level during follow-up
+- **Baseline exclusion**: Subjects with creatinine ≥ 1.5 mg/dL at baseline are excluded
+
+## Research Questions
+
+**Problem 14.27**: Compare incidence of kidney toxicity between high-NAPAP group and control group (unadjusted).
+
+**Problem 14.28**: Compare incidence of kidney toxicity between low-NAPAP group and control group (unadjusted).
+
+**Problem 14.29**: Repeat Problem 14.27 controlling for age and initial creatinine level (parametric and nonparametric methods).
+
+**Problem 14.30**: Repeat Problem 14.28 controlling for age and initial creatinine level.
+
+**Problem 14.31**: Assess proportional hazards assumption validity for Problems 14.29 and 14.30.
+
+## Key Statistical Concepts
+
+- **Time-to-toxicity**: Time until serum creatinine first reaches ≥ 1.5 mg/dL
+- **Kaplan-Meier estimator**: Nonparametric survival curves
+- **Log-rank test**: Compare survival curves between groups
+- **Cox proportional hazards model**: Adjust for covariates (age, baseline creatinine)
+- **Parametric survival models**: Exponential, Weibull, log-logistic distributions
+- **Proportional hazards assumption**: Test using Schoenfeld residuals
+
+# Data Preparation
+
+## Load Required Packages
+
+```{r load-packages}
+# Load required libraries
+library(tidyverse)
+library(survival)      # Survival analysis
+library(survminer)     # Enhanced survival plots
+library(broom)         # Tidy model outputs
+library(knitr)         # Tables
+library(ggplot2)       # Visualization
+library(gridExtra)     # Multiple plots
+library(flexsurv)      # Parametric survival models
+
+# Set options
+options(contrasts = c("contr.treatment", "contr.poly"))
+```
+
+## Load and Inspect Data
+
+```{r load-data}
+# Read the data
+swiss_data <- read.table("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-tab/SWISS.DAT.txt",
+                         header = TRUE, sep = "\t")
+
+# Display data structure
+cat("Dataset Structure:\n")
+str(swiss_data)
+
+cat("\n\nFirst few rows:\n")
+head(swiss_data, 10)
+
+cat("\n\nVariable names:\n")
+names(swiss_data)
+
+cat("\n\nSummary statistics:\n")
+summary(swiss_data)
+```
+
+## Identify Study Structure
+
+```{r identify-structure}
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("IDENTIFYING STUDY STRUCTURE\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Data structure from SWISS.DAT:
+# - Id: Subject ID
+# - age: Age at baseline
+# - group: Treatment group (1=control, 2=low-NAPAP, 3=high-NAPAP)
+# - creat_68, creat_69, ..., creat_78: Creatinine measurements at different years
+
+# Look for ID and group variables
+id_vars <- grep("id|subject", names(swiss_data), ignore.case = TRUE, value = TRUE)
+group_vars <- grep("group|trt|treatment", names(swiss_data), ignore.case = TRUE, value = TRUE)
+age_vars <- grep("age", names(swiss_data), ignore.case = TRUE, value = TRUE)
+
+cat("\nID variables:", paste(id_vars, collapse = ", "), "\n")
+cat("Group/treatment variables:", paste(group_vars, collapse = ", "), "\n")
+cat("Age variables:", paste(age_vars, collapse = ", "), "\n")
+
+# Identify creatinine measurement columns
+creat_cols <- grep("creat", names(swiss_data), ignore.case = TRUE, value = TRUE)
+cat("\nCreatinine measurement columns:\n")
+print(creat_cols)
+cat("Number of measurements:", length(creat_cols), "\n")
+```
+
+## Data Cleaning and Preparation
+
+```{r clean-data}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("DATA CLEANING AND PREPARATION\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Standardize variable names
+swiss_clean <- swiss_data %>%
+  rename(
+    subject_id = Id,
+    treatment_group = group
+  )
+
+# Check if age exists, handle capitalization variations
+if("age" %in% names(swiss_clean)) {
+  swiss_clean <- swiss_clean %>% rename(age_baseline = age)
+} else if("Age" %in% names(swiss_clean)) {
+  swiss_clean <- swiss_clean %>% rename(age_baseline = Age)
+} else if("AGE" %in% names(swiss_clean)) {
+  swiss_clean <- swiss_clean %>% rename(age_baseline = AGE)
+}
+
+# Create treatment group factor with labels
+swiss_clean <- swiss_clean %>%
+  mutate(
+    treatment = factor(treatment_group,
+                      levels = 1:3,
+                      labels = c("Control", "Low-NAPAP", "High-NAPAP"))
+  )
+
+cat("\nData prepared for analysis\n")
+cat("Total subjects:", nrow(swiss_clean), "\n")
+
+cat("\nTreatment groups:\n")
+print(table(swiss_clean$treatment))
+
+# Display age distribution by group
+if("age_baseline" %in% names(swiss_clean)) {
+  cat("\n\nAge distribution by treatment group:\n")
+  age_summary <- swiss_clean %>%
+    group_by(treatment) %>%
+    summarise(
+      n = n(),
+      mean_age = mean(age_baseline, na.rm = TRUE),
+      sd_age = sd(age_baseline, na.rm = TRUE),
+      min_age = min(age_baseline, na.rm = TRUE),
+      max_age = max(age_baseline, na.rm = TRUE)
+    )
+  print(age_summary)
+}
+```
+
+## Identify Baseline Creatinine
+
+```{r baseline-creatinine}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("BASELINE CREATININE IDENTIFICATION\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# The first creatinine measurement is baseline
+# Extract year from column names to identify baseline
+creat_cols <- grep("creat", names(swiss_clean), ignore.case = TRUE, value = TRUE)
+
+cat("\nCreatinine columns found:\n")
+print(creat_cols)
+
+# Assume first column is baseline
+baseline_creat_col <- creat_cols[1]
+cat("\nBaseline creatinine column:", baseline_creat_col, "\n")
+
+# Create baseline variable
+swiss_clean <- swiss_clean %>%
+  mutate(
+    baseline_creatinine = !!sym(baseline_creat_col)
+  )
+
+cat("\nBaseline creatinine summary:\n")
+summary(swiss_clean$baseline_creatinine)
+
+cat("\n\nBaseline creatinine by treatment group:\n")
+baseline_summary <- swiss_clean %>%
+  group_by(treatment) %>%
+  summarise(
+    n = n(),
+    mean = mean(baseline_creatinine, na.rm = TRUE),
+    sd = sd(baseline_creatinine, na.rm = TRUE),
+    min = min(baseline_creatinine, na.rm = TRUE),
+    max = max(baseline_creatinine, na.rm = TRUE),
+    n_above_1.5 = sum(baseline_creatinine >= 1.5, na.rm = TRUE)
+  )
+print(baseline_summary)
+```
+
+## Exclude Subjects with Baseline Creatinine ≥ 1.5 mg/dL
+
+```{r exclude-baseline}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("EXCLUDING SUBJECTS WITH BASELINE TOXICITY\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Count subjects to exclude
+n_total <- nrow(swiss_clean)
+n_exclude <- sum(swiss_clean$baseline_creatinine >= 1.5, na.rm = TRUE)
+
+cat("Total subjects:", n_total, "\n")
+cat("Subjects with baseline creatinine >= 1.5 mg/dL:", n_exclude, "\n")
+cat("Subjects to be included in analysis:", n_total - n_exclude, "\n")
+
+# Exclude subjects
+swiss_eligible <- swiss_clean %>%
+  filter(baseline_creatinine < 1.5)
+
+cat("\n\nEligible subjects by treatment group:\n")
+print(table(swiss_eligible$treatment))
+
+# Check baseline characteristics of eligible subjects
+cat("\n\nBaseline characteristics of eligible subjects:\n")
+eligible_summary <- swiss_eligible %>%
+  group_by(treatment) %>%
+  summarise(
+    n = n(),
+    mean_age = mean(age_baseline, na.rm = TRUE),
+    sd_age = sd(age_baseline, na.rm = TRUE),
+    mean_creat = mean(baseline_creatinine, na.rm = TRUE),
+    sd_creat = sd(baseline_creatinine, na.rm = TRUE)
+  )
+print(eligible_summary)
+```
+
+## Create Time-to-Toxicity Dataset
+
+```{r time-to-toxicity}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("CREATING TIME-TO-TOXICITY DATASET\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Extract follow-up creatinine measurements (exclude baseline)
+follow_up_cols <- creat_cols[-1]  # Exclude first (baseline) measurement
+
+cat("Follow-up measurement columns:\n")
+print(follow_up_cols)
+cat("Number of follow-up time points:", length(follow_up_cols), "\n")
+
+# Extract time points from column names (assuming pattern like creat_68, creat_69, etc.)
+# These represent years (68 = 1968, 69 = 1969, etc.)
+time_points <- as.numeric(gsub(".*_", "", follow_up_cols))
+cat("\nTime points identified:", paste(time_points, collapse = ", "), "\n")
+
+# Calculate follow-up times (years from baseline)
+baseline_year <- time_points[1] - 1  # Assume baseline is one year before first follow-up
+follow_up_times <- time_points - baseline_year
+
+cat("Baseline assumed at year:", baseline_year, "\n")
+cat("Follow-up times (years from baseline):", paste(follow_up_times, collapse = ", "), "\n")
+
+# Create survival dataset
+# For each subject, find first time when creatinine >= 1.5
+
+# Initialize vectors for results
+n_subjects <- nrow(swiss_eligible)
+time_to_toxicity <- numeric(n_subjects)
+toxicity_event <- numeric(n_subjects)
+
+# Loop through each subject
+for(subj in 1:n_subjects) {
+  # Get creatinine values at follow-up times
+  creat_values <- as.numeric(swiss_eligible[subj, follow_up_cols])
+
+  # Find times when creatinine >= 1.5
+  times_above <- follow_up_times[!is.na(creat_values) & creat_values >= 1.5]
+
+  if(length(times_above) > 0) {
+    # Event occurred - record first time
+    time_to_toxicity[subj] <- min(times_above)
+    toxicity_event[subj] <- 1
+  } else {
+    # Censored - use last follow-up time
+    # Find last non-missing measurement
+    last_time_idx <- max(which(!is.na(creat_values)))
+    if(length(last_time_idx) > 0 && last_time_idx > 0) {
+      time_to_toxicity[subj] <- follow_up_times[last_time_idx]
+    } else {
+      time_to_toxicity[subj] <- max(follow_up_times)
+    }
+    toxicity_event[subj] <- 0
+  }
+}
+
+# Add to dataset
+swiss_survival <- swiss_eligible %>%
+  mutate(
+    time_to_toxicity = time_to_toxicity,
+    toxicity_event = toxicity_event
+  )
+
+cat("\n\nSurvival dataset created\n")
+cat("Total subjects:", nrow(swiss_survival), "\n")
+
+cat("\nEvent summary:\n")
+cat("Events (toxicity occurred):", sum(swiss_survival$toxicity_event), "\n")
+cat("Censored:", sum(swiss_survival$toxicity_event == 0), "\n")
+cat("Event rate:", round(100 * mean(swiss_survival$toxicity_event), 1), "%\n")
+
+# Summary by treatment group
+cat("\n\nEvent rates by treatment group:\n")
+event_summary <- swiss_survival %>%
+  group_by(treatment) %>%
+  summarise(
+    n = n(),
+    events = sum(toxicity_event),
+    censored = sum(toxicity_event == 0),
+    event_rate = round(100 * mean(toxicity_event), 1),
+    median_time = median(time_to_toxicity)
+  )
+print(event_summary)
+```
+
+# Problem 14.27: High-NAPAP vs Control (Unadjusted)
+
+## Subset Data for Comparison
+
+```{r problem-14-27-subset}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 14.27: HIGH-NAPAP vs CONTROL\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Subset to High-NAPAP and Control groups only
+swiss_27 <- swiss_survival %>%
+  filter(treatment %in% c("Control", "High-NAPAP")) %>%
+  mutate(treatment = droplevels(treatment))
+
+cat("\nSubjects included in analysis:\n")
+print(table(swiss_27$treatment))
+
+cat("\n\nEvent summary by group:\n")
+summary_27 <- swiss_27 %>%
+  group_by(treatment) %>%
+  summarise(
+    n = n(),
+    events = sum(toxicity_event),
+    event_rate = round(100 * mean(toxicity_event), 1)
+  )
+print(summary_27)
+```
+
+## Kaplan-Meier Survival Curves
+
+```{r km-14-27}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("KAPLAN-MEIER SURVIVAL ANALYSIS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Fit Kaplan-Meier curves
+km_fit_27 <- survfit(Surv(time_to_toxicity, toxicity_event) ~ treatment,
+                     data = swiss_27)
+
+cat("Kaplan-Meier Estimates:\n")
+print(km_fit_27)
+
+cat("\n\nSurvival probabilities at specific time points:\n")
+summary(km_fit_27)
+```
+
+## Visualization
+
+```{r plot-14-27, fig.height=7}
+# Plot survival curves
+ggsurvplot(
+  km_fit_27,
+  data = swiss_27,
+  pval = TRUE,
+  pval.method = TRUE,
+  conf.int = FALSE,
+  risk.table = TRUE,
+  risk.table.height = 0.25,
+  title = "Time to Kidney Toxicity: High-NAPAP vs Control",
+  xlab = "Time (years)",
+  ylab = "Proportion Free of Toxicity (Creatinine < 1.5 mg/dL)",
+  legend.title = "Treatment Group",
+  legend.labs = c("Control", "High-NAPAP"),
+  palette = c("#2E9FDF", "#E7B800"),
+  ggtheme = theme_bw()
+)
+```
+
+## Log-Rank Test
+
+```{r logrank-14-27}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("LOG-RANK TEST\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Log-rank test
+logrank_27 <- survdiff(Surv(time_to_toxicity, toxicity_event) ~ treatment,
+                       data = swiss_27)
+
+print(logrank_27)
+
+# Extract test statistics
+chi_sq_27 <- logrank_27$chisq
+p_value_27 <- 1 - pchisq(chi_sq_27, 1)
+
+cat("\n\nTest Summary:\n")
+cat(sprintf("Chi-square statistic: %.3f\n", chi_sq_27))
+cat(sprintf("Degrees of freedom: 1\n"))
+cat(sprintf("P-value: %.4f\n", p_value_27))
+
+if(p_value_27 < 0.05) {
+  cat("\nConclusion: SIGNIFICANT difference between groups (p < 0.05)\n")
+} else {
+  cat("\nConclusion: NO significant difference between groups (p >= 0.05)\n")
+}
+```
+
+## Cox Proportional Hazards Model (Unadjusted)
+
+```{r cox-14-27}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("COX PROPORTIONAL HAZARDS MODEL (UNADJUSTED)\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Fit Cox model
+cox_27 <- coxph(Surv(time_to_toxicity, toxicity_event) ~ treatment,
+                data = swiss_27)
+
+cat("Cox Model Summary:\n")
+print(summary(cox_27))
+
+# Extract hazard ratio
+hr_27 <- exp(coef(cox_27))
+ci_27 <- exp(confint(cox_27))
+
+cat("\n\nHazard Ratio (High-NAPAP vs Control):\n")
+cat(sprintf("HR = %.3f (95%% CI: %.3f - %.3f)\n", hr_27, ci_27[1], ci_27[2]))
+
+if(hr_27 > 1) {
+  cat(sprintf("Interpretation: High-NAPAP group has %.0f%% higher hazard of toxicity\n",
+              (hr_27 - 1) * 100))
+} else {
+  cat(sprintf("Interpretation: High-NAPAP group has %.0f%% lower hazard of toxicity\n",
+              (1 - hr_27) * 100))
+}
+```
+
+## Answer to Problem 14.27
+
+```{r answer-14-27}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ANSWER TO PROBLEM 14.27\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nCOMPARISON: High-NAPAP vs Control (Unadjusted Analysis)\n\n")
+
+cat("EVENT RATES:\n")
+cat("- Control:", summary_27$events[1], "/", summary_27$n[1],
+    "(", summary_27$event_rate[1], "%)\n")
+cat("- High-NAPAP:", summary_27$events[2], "/", summary_27$n[2],
+    "(", summary_27$event_rate[2], "%)\n\n")
+
+cat("STATISTICAL TESTS:\n")
+cat(sprintf("- Log-rank test: χ² = %.3f, p = %.4f\n", chi_sq_27, p_value_27))
+cat(sprintf("- Hazard Ratio: %.3f (95%% CI: %.3f - %.3f)\n", hr_27, ci_27[1], ci_27[2]))
+
+cat("\nCONCLUSION:\n")
+if(p_value_27 < 0.05) {
+  cat("There IS a statistically significant difference in the incidence of kidney\n")
+  cat("toxicity between the high-NAPAP group and the control group (p < 0.05).\n")
+  if(hr_27 > 1) {
+    cat("The high-NAPAP group has a higher risk of toxicity.\n")
+  } else {
+    cat("The high-NAPAP group has a lower risk of toxicity.\n")
+  }
+} else {
+  cat("There is NO statistically significant difference in the incidence of kidney\n")
+  cat("toxicity between the high-NAPAP group and the control group (p >= 0.05).\n")
+}
+```
+
+# Problem 14.28: Low-NAPAP vs Control (Unadjusted)
+
+## Subset Data for Comparison
+
+```{r problem-14-28-subset}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 14.28: LOW-NAPAP vs CONTROL\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Subset to Low-NAPAP and Control groups only
+swiss_28 <- swiss_survival %>%
+  filter(treatment %in% c("Control", "Low-NAPAP")) %>%
+  mutate(treatment = droplevels(treatment))
+
+cat("\nSubjects included in analysis:\n")
+print(table(swiss_28$treatment))
+
+cat("\n\nEvent summary by group:\n")
+summary_28 <- swiss_28 %>%
+  group_by(treatment) %>%
+  summarise(
+    n = n(),
+    events = sum(toxicity_event),
+    event_rate = round(100 * mean(toxicity_event), 1)
+  )
+print(summary_28)
+```
+
+## Kaplan-Meier Survival Curves
+
+```{r km-14-28}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("KAPLAN-MEIER SURVIVAL ANALYSIS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Fit Kaplan-Meier curves
+km_fit_28 <- survfit(Surv(time_to_toxicity, toxicity_event) ~ treatment,
+                     data = swiss_28)
+
+cat("Kaplan-Meier Estimates:\n")
+print(km_fit_28)
+
+cat("\n\nSurvival probabilities at specific time points:\n")
+summary(km_fit_28)
+```
+
+## Visualization
+
+```{r plot-14-28, fig.height=7}
+# Plot survival curves
+ggsurvplot(
+  km_fit_28,
+  data = swiss_28,
+  pval = TRUE,
+  pval.method = TRUE,
+  conf.int = FALSE,
+  risk.table = TRUE,
+  risk.table.height = 0.25,
+  title = "Time to Kidney Toxicity: Low-NAPAP vs Control",
+  xlab = "Time (years)",
+  ylab = "Proportion Free of Toxicity (Creatinine < 1.5 mg/dL)",
+  legend.title = "Treatment Group",
+  legend.labs = c("Control", "Low-NAPAP"),
+  palette = c("#2E9FDF", "#00BA38"),
+  ggtheme = theme_bw()
+)
+```
+
+## Log-Rank Test
+
+```{r logrank-14-28}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("LOG-RANK TEST\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Log-rank test
+logrank_28 <- survdiff(Surv(time_to_toxicity, toxicity_event) ~ treatment,
+                       data = swiss_28)
+
+print(logrank_28)
+
+# Extract test statistics
+chi_sq_28 <- logrank_28$chisq
+p_value_28 <- 1 - pchisq(chi_sq_28, 1)
+
+cat("\n\nTest Summary:\n")
+cat(sprintf("Chi-square statistic: %.3f\n", chi_sq_28))
+cat(sprintf("Degrees of freedom: 1\n"))
+cat(sprintf("P-value: %.4f\n", p_value_28))
+
+if(p_value_28 < 0.05) {
+  cat("\nConclusion: SIGNIFICANT difference between groups (p < 0.05)\n")
+} else {
+  cat("\nConclusion: NO significant difference between groups (p >= 0.05)\n")
+}
+```
+
+## Cox Proportional Hazards Model (Unadjusted)
+
+```{r cox-14-28}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("COX PROPORTIONAL HAZARDS MODEL (UNADJUSTED)\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Fit Cox model
+cox_28 <- coxph(Surv(time_to_toxicity, toxicity_event) ~ treatment,
+                data = swiss_28)
+
+cat("Cox Model Summary:\n")
+print(summary(cox_28))
+
+# Extract hazard ratio
+hr_28 <- exp(coef(cox_28))
+ci_28 <- exp(confint(cox_28))
+
+cat("\n\nHazard Ratio (Low-NAPAP vs Control):\n")
+cat(sprintf("HR = %.3f (95%% CI: %.3f - %.3f)\n", hr_28, ci_28[1], ci_28[2]))
+
+if(hr_28 > 1) {
+  cat(sprintf("Interpretation: Low-NAPAP group has %.0f%% higher hazard of toxicity\n",
+              (hr_28 - 1) * 100))
+} else {
+  cat(sprintf("Interpretation: Low-NAPAP group has %.0f%% lower hazard of toxicity\n",
+              (1 - hr_28) * 100))
+}
+```
+
+## Answer to Problem 14.28
+
+```{r answer-14-28}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ANSWER TO PROBLEM 14.28\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nCOMPARISON: Low-NAPAP vs Control (Unadjusted Analysis)\n\n")
+
+cat("EVENT RATES:\n")
+cat("- Control:", summary_28$events[1], "/", summary_28$n[1],
+    "(", summary_28$event_rate[1], "%)\n")
+cat("- Low-NAPAP:", summary_28$events[2], "/", summary_28$n[2],
+    "(", summary_28$event_rate[2], "%)\n\n")
+
+cat("STATISTICAL TESTS:\n")
+cat(sprintf("- Log-rank test: χ² = %.3f, p = %.4f\n", chi_sq_28, p_value_28))
+cat(sprintf("- Hazard Ratio: %.3f (95%% CI: %.3f - %.3f)\n", hr_28, ci_28[1], ci_28[2]))
+
+cat("\nCONCLUSION:\n")
+if(p_value_28 < 0.05) {
+  cat("There IS a statistically significant difference in the incidence of kidney\n")
+  cat("toxicity between the low-NAPAP group and the control group (p < 0.05).\n")
+  if(hr_28 > 1) {
+    cat("The low-NAPAP group has a higher risk of toxicity.\n")
+  } else {
+    cat("The low-NAPAP group has a lower risk of toxicity.\n")
+  }
+} else {
+  cat("There is NO statistically significant difference in the incidence of kidney\n")
+  cat("toxicity between the low-NAPAP group and the control group (p >= 0.05).\n")
+}
+```
+
+# Problem 14.29: High-NAPAP vs Control (Adjusted)
+
+## Assessment of Potential Confounders
+
+```{r assess-confounders-29}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 14.29: ADJUSTED ANALYSIS (HIGH-NAPAP vs CONTROL)\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nASSESSING POTENTIAL CONFOUNDERS\n")
+cat("=" %>% rep(50) %>% paste(collapse = ""), "\n\n")
+
+# Check balance of age and baseline creatinine
+cat("Age distribution by treatment group:\n")
+age_balance_27 <- swiss_27 %>%
+  group_by(treatment) %>%
+  summarise(
+    n = n(),
+    mean_age = mean(age_baseline, na.rm = TRUE),
+    sd_age = sd(age_baseline, na.rm = TRUE)
+  )
+print(age_balance_27)
+
+# Test for age difference
+t_test_age_27 <- t.test(age_baseline ~ treatment, data = swiss_27)
+cat(sprintf("\nT-test for age difference: p = %.4f\n", t_test_age_27$p.value))
+
+cat("\n\nBaseline creatinine distribution by treatment group:\n")
+creat_balance_27 <- swiss_27 %>%
+  group_by(treatment) %>%
+  summarise(
+    n = n(),
+    mean_creat = mean(baseline_creatinine, na.rm = TRUE),
+    sd_creat = sd(baseline_creatinine, na.rm = TRUE)
+  )
+print(creat_balance_27)
+
+# Test for baseline creatinine difference
+t_test_creat_27 <- t.test(baseline_creatinine ~ treatment, data = swiss_27)
+cat(sprintf("\nT-test for baseline creatinine difference: p = %.4f\n", t_test_creat_27$p.value))
+
+if(t_test_age_27$p.value < 0.05 || t_test_creat_27$p.value < 0.05) {
+  cat("\n⚠ Groups are NOT balanced on covariates - adjustment is necessary\n")
+} else {
+  cat("\n✓ Groups appear balanced, but adjustment may still improve precision\n")
+}
+```
+
+## Cox Model Adjusted for Age and Baseline Creatinine
+
+```{r cox-adjusted-14-29}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("COX MODEL ADJUSTED FOR AGE AND BASELINE CREATININE\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Fit adjusted Cox model
+cox_adj_29 <- coxph(Surv(time_to_toxicity, toxicity_event) ~
+                      treatment + age_baseline + baseline_creatinine,
+                    data = swiss_27)
+
+cat("Adjusted Cox Model Summary:\n")
+print(summary(cox_adj_29))
+
+# Extract adjusted hazard ratio for treatment
+hr_adj_29 <- exp(coef(cox_adj_29)["treatmentHigh-NAPAP"])
+ci_adj_29 <- exp(confint(cox_adj_29)["treatmentHigh-NAPAP", ])
+
+cat("\n\nAdjusted Hazard Ratio (High-NAPAP vs Control):\n")
+cat(sprintf("HR = %.3f (95%% CI: %.3f - %.3f)\n", hr_adj_29, ci_adj_29[1], ci_adj_29[2]))
+
+cat("\n\nCovariate Effects:\n")
+hr_age <- exp(coef(cox_adj_29)["age_baseline"])
+cat(sprintf("Age: HR = %.3f per year increase\n", hr_age))
+
+hr_creat <- exp(coef(cox_adj_29)["baseline_creatinine"])
+cat(sprintf("Baseline creatinine: HR = %.3f per mg/dL increase\n", hr_creat))
+
+# Compare unadjusted vs adjusted
+cat("\n\nComparison of Unadjusted vs Adjusted Results:\n")
+cat(sprintf("Unadjusted HR: %.3f (95%% CI: %.3f - %.3f)\n", hr_27, ci_27[1], ci_27[2]))
+cat(sprintf("Adjusted HR:   %.3f (95%% CI: %.3f - %.3f)\n", hr_adj_29, ci_adj_29[1], ci_adj_29[2]))
+
+pct_change <- abs(hr_adj_29 - hr_27) / hr_27 * 100
+cat(sprintf("Change: %.1f%%\n", pct_change))
+
+if(pct_change > 10) {
+  cat("⚠ Substantial confounding detected (>10% change in HR)\n")
+} else {
+  cat("✓ Minimal confounding (<10% change in HR)\n")
+}
+```
+
+## Parametric Survival Models
+
+```{r parametric-14-29}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PARAMETRIC SURVIVAL MODELS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Fit various parametric models
+cat("Fitting parametric models...\n\n")
+
+# Exponential model
+exp_model_29 <- flexsurvreg(Surv(time_to_toxicity, toxicity_event) ~
+                              treatment + age_baseline + baseline_creatinine,
+                            data = swiss_27, dist = "exponential")
+
+cat("1. EXPONENTIAL MODEL:\n")
+print(exp_model_29)
+cat("\nAIC:", exp_model_29$AIC, "\n")
+
+# Weibull model
+weibull_model_29 <- flexsurvreg(Surv(time_to_toxicity, toxicity_event) ~
+                                  treatment + age_baseline + baseline_creatinine,
+                                data = swiss_27, dist = "weibull")
+
+cat("\n\n2. WEIBULL MODEL:\n")
+print(weibull_model_29)
+cat("\nAIC:", weibull_model_29$AIC, "\n")
+
+# Log-logistic model
+llogis_model_29 <- flexsurvreg(Surv(time_to_toxicity, toxicity_event) ~
+                                 treatment + age_baseline + baseline_creatinine,
+                               data = swiss_27, dist = "llogis")
+
+cat("\n\n3. LOG-LOGISTIC MODEL:\n")
+print(llogis_model_29)
+cat("\nAIC:", llogis_model_29$AIC, "\n")
+
+# Compare AICs
+cat("\n\nMODEL COMPARISON (AIC):\n")
+aic_comparison_29 <- data.frame(
+  Model = c("Exponential", "Weibull", "Log-logistic"),
+  AIC = c(exp_model_29$AIC, weibull_model_29$AIC, llogis_model_29$AIC)
+) %>%
+  arrange(AIC) %>%
+  mutate(Delta_AIC = AIC - min(AIC))
+
+print(aic_comparison_29)
+
+best_model_29 <- aic_comparison_29$Model[1]
+cat("\nBest fitting model:", best_model_29, "\n")
+```
+
+## Answer to Problem 14.29
+
+```{r answer-14-29}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ANSWER TO PROBLEM 14.29\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nCOMPARISON: High-NAPAP vs Control (Adjusted for Age and Baseline Creatinine)\n\n")
+
+cat("NONPARAMETRIC METHOD (Cox Model):\n")
+cat(sprintf("- Adjusted HR: %.3f (95%% CI: %.3f - %.3f)\n",
+            hr_adj_29, ci_adj_29[1], ci_adj_29[2]))
+cat(sprintf("- P-value: %.4f\n", summary(cox_adj_29)$coefficients["treatmentHigh-NAPAP", "Pr(>|z|)"]))
+
+cat("\nPARAMETRIC METHODS:\n")
+cat("- Best fitting distribution:", best_model_29, "\n")
+cat("- All parametric models adjust for age and baseline creatinine\n")
+cat("- Model selection based on AIC\n")
+
+cat("\nCONCLUSION:\n")
+p_adj_29 <- summary(cox_adj_29)$coefficients["treatmentHigh-NAPAP", "Pr(>|z|)"]
+if(p_adj_29 < 0.05) {
+  cat("After adjusting for age and baseline creatinine level, there IS a\n")
+  cat("statistically significant difference in kidney toxicity risk between\n")
+  cat("the high-NAPAP group and control group (p < 0.05).\n")
+} else {
+  cat("After adjusting for age and baseline creatinine level, there is NO\n")
+  cat("statistically significant difference in kidney toxicity risk between\n")
+  cat("the high-NAPAP group and control group (p >= 0.05).\n")
+}
+
+cat("\nCOVARIATE EFFECTS:\n")
+cat(sprintf("- Age: Each year increase is associated with %.0f%% change in hazard\n",
+            (hr_age - 1) * 100))
+cat(sprintf("- Baseline creatinine: Each mg/dL increase is associated with %.0f%% change in hazard\n",
+            (hr_creat - 1) * 100))
+```
+
+# Problem 14.30: Low-NAPAP vs Control (Adjusted)
+
+## Assessment of Potential Confounders
+
+```{r assess-confounders-30}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 14.30: ADJUSTED ANALYSIS (LOW-NAPAP vs CONTROL)\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nASSESSING POTENTIAL CONFOUNDERS\n")
+cat("=" %>% rep(50) %>% paste(collapse = ""), "\n\n")
+
+# Check balance of age and baseline creatinine
+cat("Age distribution by treatment group:\n")
+age_balance_28 <- swiss_28 %>%
+  group_by(treatment) %>%
+  summarise(
+    n = n(),
+    mean_age = mean(age_baseline, na.rm = TRUE),
+    sd_age = sd(age_baseline, na.rm = TRUE)
+  )
+print(age_balance_28)
+
+# Test for age difference
+t_test_age_28 <- t.test(age_baseline ~ treatment, data = swiss_28)
+cat(sprintf("\nT-test for age difference: p = %.4f\n", t_test_age_28$p.value))
+
+cat("\n\nBaseline creatinine distribution by treatment group:\n")
+creat_balance_28 <- swiss_28 %>%
+  group_by(treatment) %>%
+  summarise(
+    n = n(),
+    mean_creat = mean(baseline_creatinine, na.rm = TRUE),
+    sd_creat = sd(baseline_creatinine, na.rm = TRUE)
+  )
+print(creat_balance_28)
+
+# Test for baseline creatinine difference
+t_test_creat_28 <- t.test(baseline_creatinine ~ treatment, data = swiss_28)
+cat(sprintf("\nT-test for baseline creatinine difference: p = %.4f\n", t_test_creat_28$p.value))
+
+if(t_test_age_28$p.value < 0.05 || t_test_creat_28$p.value < 0.05) {
+  cat("\n⚠ Groups are NOT balanced on covariates - adjustment is necessary\n")
+} else {
+  cat("\n✓ Groups appear balanced, but adjustment may still improve precision\n")
+}
+```
+
+## Cox Model Adjusted for Age and Baseline Creatinine
+
+```{r cox-adjusted-14-30}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("COX MODEL ADJUSTED FOR AGE AND BASELINE CREATININE\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Fit adjusted Cox model
+cox_adj_30 <- coxph(Surv(time_to_toxicity, toxicity_event) ~
+                      treatment + age_baseline + baseline_creatinine,
+                    data = swiss_28)
+
+cat("Adjusted Cox Model Summary:\n")
+print(summary(cox_adj_30))
+
+# Extract adjusted hazard ratio for treatment
+hr_adj_30 <- exp(coef(cox_adj_30)["treatmentLow-NAPAP"])
+ci_adj_30 <- exp(confint(cox_adj_30)["treatmentLow-NAPAP", ])
+
+cat("\n\nAdjusted Hazard Ratio (Low-NAPAP vs Control):\n")
+cat(sprintf("HR = %.3f (95%% CI: %.3f - %.3f)\n", hr_adj_30, ci_adj_30[1], ci_adj_30[2]))
+
+# Compare unadjusted vs adjusted
+cat("\n\nComparison of Unadjusted vs Adjusted Results:\n")
+cat(sprintf("Unadjusted HR: %.3f (95%% CI: %.3f - %.3f)\n", hr_28, ci_28[1], ci_28[2]))
+cat(sprintf("Adjusted HR:   %.3f (95%% CI: %.3f - %.3f)\n", hr_adj_30, ci_adj_30[1], ci_adj_30[2]))
+
+pct_change_30 <- abs(hr_adj_30 - hr_28) / hr_28 * 100
+cat(sprintf("Change: %.1f%%\n", pct_change_30))
+
+if(pct_change_30 > 10) {
+  cat("⚠ Substantial confounding detected (>10% change in HR)\n")
+} else {
+  cat("✓ Minimal confounding (<10% change in HR)\n")
+}
+```
+
+## Parametric Survival Models
+
+```{r parametric-14-30}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PARAMETRIC SURVIVAL MODELS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Fit various parametric models
+cat("Fitting parametric models...\n\n")
+
+# Exponential model
+exp_model_30 <- flexsurvreg(Surv(time_to_toxicity, toxicity_event) ~
+                              treatment + age_baseline + baseline_creatinine,
+                            data = swiss_28, dist = "exponential")
+
+cat("1. EXPONENTIAL MODEL:\n")
+print(exp_model_30)
+cat("\nAIC:", exp_model_30$AIC, "\n")
+
+# Weibull model
+weibull_model_30 <- flexsurvreg(Surv(time_to_toxicity, toxicity_event) ~
+                                  treatment + age_baseline + baseline_creatinine,
+                                data = swiss_28, dist = "weibull")
+
+cat("\n\n2. WEIBULL MODEL:\n")
+print(weibull_model_30)
+cat("\nAIC:", weibull_model_30$AIC, "\n")
+
+# Log-logistic model
+llogis_model_30 <- flexsurvreg(Surv(time_to_toxicity, toxicity_event) ~
+                                 treatment + age_baseline + baseline_creatinine,
+                               data = swiss_28, dist = "llogis")
+
+cat("\n\n3. LOG-LOGISTIC MODEL:\n")
+print(llogis_model_30)
+cat("\nAIC:", llogis_model_30$AIC, "\n")
+
+# Compare AICs
+cat("\n\nMODEL COMPARISON (AIC):\n")
+aic_comparison_30 <- data.frame(
+  Model = c("Exponential", "Weibull", "Log-logistic"),
+  AIC = c(exp_model_30$AIC, weibull_model_30$AIC, llogis_model_30$AIC)
+) %>%
+  arrange(AIC) %>%
+  mutate(Delta_AIC = AIC - min(AIC))
+
+print(aic_comparison_30)
+
+best_model_30 <- aic_comparison_30$Model[1]
+cat("\nBest fitting model:", best_model_30, "\n")
+```
+
+## Answer to Problem 14.30
+
+```{r answer-14-30}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ANSWER TO PROBLEM 14.30\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nCOMPARISON: Low-NAPAP vs Control (Adjusted for Age and Baseline Creatinine)\n\n")
+
+cat("NONPARAMETRIC METHOD (Cox Model):\n")
+cat(sprintf("- Adjusted HR: %.3f (95%% CI: %.3f - %.3f)\n",
+            hr_adj_30, ci_adj_30[1], ci_adj_30[2]))
+cat(sprintf("- P-value: %.4f\n", summary(cox_adj_30)$coefficients["treatmentLow-NAPAP", "Pr(>|z|)"]))
+
+cat("\nPARAMETRIC METHODS:\n")
+cat("- Best fitting distribution:", best_model_30, "\n")
+cat("- All parametric models adjust for age and baseline creatinine\n")
+cat("- Model selection based on AIC\n")
+
+cat("\nCONCLUSION:\n")
+p_adj_30 <- summary(cox_adj_30)$coefficients["treatmentLow-NAPAP", "Pr(>|z|)"]
+if(p_adj_30 < 0.05) {
+  cat("After adjusting for age and baseline creatinine level, there IS a\n")
+  cat("statistically significant difference in kidney toxicity risk between\n")
+  cat("the low-NAPAP group and control group (p < 0.05).\n")
+} else {
+  cat("After adjusting for age and baseline creatinine level, there is NO\n")
+  cat("statistically significant difference in kidney toxicity risk between\n")
+  cat("the low-NAPAP group and control group (p >= 0.05).\n")
+}
+```
+
+# Problem 14.31: Proportional Hazards Assumption
+
+## Testing Proportional Hazards Assumption for Problem 14.29
+
+```{r ph-test-14-29}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 14.31: PROPORTIONAL HAZARDS ASSUMPTION\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nTESTING FOR HIGH-NAPAP vs CONTROL MODEL\n")
+cat("=" %>% rep(50) %>% paste(collapse = ""), "\n\n")
+
+# Test proportional hazards assumption using Schoenfeld residuals
+ph_test_29 <- cox.zph(cox_adj_29)
+
+cat("Schoenfeld Residuals Test:\n")
+print(ph_test_29)
+
+cat("\n\nInterpretation:\n")
+cat("- Null hypothesis: Proportional hazards assumption holds\n")
+cat("- If p < 0.05: Assumption violated\n")
+cat("- If p >= 0.05: Assumption not violated\n\n")
+
+# Check each covariate
+for(i in 1:nrow(ph_test_29$table)) {
+  var_name <- rownames(ph_test_29$table)[i]
+  p_val <- ph_test_29$table[i, "p"]
+
+  cat(sprintf("%-25s p = %.4f ", var_name, p_val))
+  if(p_val < 0.05) {
+    cat("⚠ VIOLATION\n")
+  } else {
+    cat("✓ OK\n")
+  }
+}
+```
+
+## Graphical Assessment (Problem 14.29)
+
+```{r ph-plot-14-29, fig.height=8}
+cat("\n\nGRAPHICAL ASSESSMENT:\n")
+cat("Plots of scaled Schoenfeld residuals vs time\n")
+cat("Non-random pattern suggests violation of proportional hazards\n\n")
+
+# Plot Schoenfeld residuals
+plot(ph_test_29, main = "Schoenfeld Residuals: High-NAPAP vs Control Model")
+```
+
+## Testing Proportional Hazards Assumption for Problem 14.30
+
+```{r ph-test-14-30}
+cat("\n\nTESTING FOR LOW-NAPAP vs CONTROL MODEL\n")
+cat("=" %>% rep(50) %>% paste(collapse = ""), "\n\n")
+
+# Test proportional hazards assumption
+ph_test_30 <- cox.zph(cox_adj_30)
+
+cat("Schoenfeld Residuals Test:\n")
+print(ph_test_30)
+
+cat("\n\nInterpretation:\n")
+# Check each covariate
+for(i in 1:nrow(ph_test_30$table)) {
+  var_name <- rownames(ph_test_30$table)[i]
+  p_val <- ph_test_30$table[i, "p"]
+
+  cat(sprintf("%-25s p = %.4f ", var_name, p_val))
+  if(p_val < 0.05) {
+    cat("⚠ VIOLATION\n")
+  } else {
+    cat("✓ OK\n")
+  }
+}
+```
+
+## Graphical Assessment (Problem 14.30)
+
+```{r ph-plot-14-30, fig.height=8}
+cat("\n\nGRAPHICAL ASSESSMENT:\n")
+cat("Plots of scaled Schoenfeld residuals vs time\n\n")
+
+# Plot Schoenfeld residuals
+plot(ph_test_30, main = "Schoenfeld Residuals: Low-NAPAP vs Control Model")
+```
+
+## Alternative: Log-Cumulative Hazard Plots
+
+```{r log-cumhaz-plots, fig.height=8}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ALTERNATIVE ASSESSMENT: LOG-CUMULATIVE HAZARD PLOTS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nLog-cumulative hazard plots should be parallel if proportional hazards holds\n\n")
+
+# Create plots for both comparisons
+par(mfrow = c(1, 2))
+
+# High-NAPAP vs Control
+plot(km_fit_27, fun = "cloglog",
+     main = "High-NAPAP vs Control",
+     xlab = "Time (log scale)",
+     ylab = "Log-Cumulative Hazard",
+     col = c("#2E9FDF", "#E7B800"),
+     lwd = 2)
+legend("bottomright",
+       legend = c("Control", "High-NAPAP"),
+       col = c("#2E9FDF", "#E7B800"),
+       lwd = 2)
+
+# Low-NAPAP vs Control
+plot(km_fit_28, fun = "cloglog",
+     main = "Low-NAPAP vs Control",
+     xlab = "Time (log scale)",
+     ylab = "Log-Cumulative Hazard",
+     col = c("#2E9FDF", "#00BA38"),
+     lwd = 2)
+legend("bottomright",
+       legend = c("Control", "Low-NAPAP"),
+       col = c("#2E9FDF", "#00BA38"),
+       lwd = 2)
+
+par(mfrow = c(1, 1))
+
+cat("\nInterpretation:\n")
+cat("- Parallel lines indicate proportional hazards\n")
+cat("- Crossing or converging lines suggest violation\n")
+```
+
+## Answer to Problem 14.31
+
+```{r answer-14-31}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ANSWER TO PROBLEM 14.31\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nASSESSMENT OF PROPORTIONAL HAZARDS ASSUMPTION\n\n")
+
+cat("HIGH-NAPAP vs CONTROL MODEL (Problem 14.29):\n")
+cat("Schoenfeld Residuals Test (Global): p = ",
+    sprintf("%.4f", ph_test_29$table["GLOBAL", "p"]), "\n", sep = "")
+
+if(ph_test_29$table["GLOBAL", "p"] < 0.05) {
+  cat("⚠ The proportional hazards assumption is VIOLATED for this model\n")
+  cat("   Consider:\n")
+  cat("   - Stratified Cox model\n")
+  cat("   - Time-varying coefficients\n")
+  cat("   - Accelerated failure time models\n")
+} else {
+  cat("✓ The proportional hazards assumption is NOT violated (p >= 0.05)\n")
+  cat("   The Cox model is appropriate for this analysis\n")
+}
+
+cat("\n\nLOW-NAPAP vs CONTROL MODEL (Problem 14.30):\n")
+cat("Schoenfeld Residuals Test (Global): p = ",
+    sprintf("%.4f", ph_test_30$table["GLOBAL", "p"]), "\n", sep = "")
+
+if(ph_test_30$table["GLOBAL", "p"] < 0.05) {
+  cat("⚠ The proportional hazards assumption is VIOLATED for this model\n")
+  cat("   Consider alternative modeling approaches\n")
+} else {
+  cat("✓ The proportional hazards assumption is NOT violated (p >= 0.05)\n")
+  cat("   The Cox model is appropriate for this analysis\n")
+}
+
+cat("\n\nSUMMARY:\n")
+cat("The Schoenfeld residuals test and graphical assessments (residual plots\n")
+cat("and log-cumulative hazard plots) provide evidence for the validity (or\n")
+cat("violation) of the proportional hazards assumption. If violated, alternative\n")
+cat("methods such as stratified Cox models, time-varying coefficient models, or\n")
+cat("parametric accelerated failure time models should be considered.\n")
+```
+
+# Comprehensive Summary
+
+```{r comprehensive-summary}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("COMPREHENSIVE SUMMARY OF ALL PROBLEMS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Create summary table
+summary_table <- data.frame(
+  Problem = c("14.27", "14.28", "14.29", "14.30", "14.31"),
+  Comparison = c(
+    "High-NAPAP vs Control",
+    "Low-NAPAP vs Control",
+    "High-NAPAP vs Control",
+    "Low-NAPAP vs Control",
+    "PH Assumption Tests"
+  ),
+  Analysis = c(
+    "Unadjusted (KM, Log-rank, Cox)",
+    "Unadjusted (KM, Log-rank, Cox)",
+    "Adjusted (Cox, Parametric)",
+    "Adjusted (Cox, Parametric)",
+    "Schoenfeld residuals"
+  ),
+  Key_Result = c(
+    sprintf("HR=%.2f, p=%.4f", hr_27, p_value_27),
+    sprintf("HR=%.2f, p=%.4f", hr_28, p_value_28),
+    sprintf("Adj HR=%.2f, p=%.4f", hr_adj_29, p_adj_29),
+    sprintf("Adj HR=%.2f, p=%.4f", hr_adj_30, p_adj_30),
+    sprintf("Global p: %.4f, %.4f",
+            ph_test_29$table["GLOBAL", "p"],
+            ph_test_30$table["GLOBAL", "p"])
+  )
+)
+
+print(kable(summary_table, format = "simple"))
+
+cat("\n\nKEY FINDINGS:\n\n")
+
+cat("1. Event Rates:\n")
+cat("   - Overall toxicity rate:", round(100 * mean(swiss_survival$toxicity_event), 1), "%\n")
+cat("   - Varies by treatment group (see individual analyses)\n\n")
+
+cat("2. Unadjusted Analyses:\n")
+cat("   - High-NAPAP vs Control: ")
+if(p_value_27 < 0.05) cat("SIGNIFICANT difference\n") else cat("NO significant difference\n")
+cat("   - Low-NAPAP vs Control: ")
+if(p_value_28 < 0.05) cat("SIGNIFICANT difference\n") else cat("NO significant difference\n")
+
+cat("\n3. Adjusted Analyses (accounting for age and baseline creatinine):\n")
+cat("   - High-NAPAP vs Control: ")
+if(p_adj_29 < 0.05) cat("SIGNIFICANT difference\n") else cat("NO significant difference\n")
+cat("   - Low-NAPAP vs Control: ")
+if(p_adj_30 < 0.05) cat("SIGNIFICANT difference\n") else cat("NO significant difference\n")
+
+cat("\n4. Proportional Hazards Assumption:\n")
+cat("   - High-NAPAP model: ")
+if(ph_test_29$table["GLOBAL", "p"] < 0.05) cat("VIOLATED\n") else cat("Valid\n")
+cat("   - Low-NAPAP model: ")
+if(ph_test_30$table["GLOBAL", "p"] < 0.05) cat("VIOLATED\n") else cat("Valid\n")
+
+cat("\n5. Clinical Implications:\n")
+cat("   - Dose-response relationship should be evaluated\n")
+cat("   - Adjustment for baseline factors is important\n")
+cat("   - Long-term kidney function monitoring recommended\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
