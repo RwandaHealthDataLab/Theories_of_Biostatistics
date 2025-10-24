@@ -1,0 +1,1820 @@
+---
+title: "Introduction to Biostatistics"
+subtitle: "From Theory to Practice in Public Health"
+author: "Dr. [Your Name]"
+institute: "Ministry of Health, Rwanda / [Your Institution]"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  xaringan::moon_reader:
+    lib_dir: libs
+    css: ["default", "metropolis", "metropolis-fonts"]
+    seal: true
+    nature:
+      highlightStyle: github
+      highlightLines: true
+      countIncrementalSlides: false
+      slideNumberFormat: "%current% / %total%"
+      ratio: "16:9"
+---
+
+```{r setup, include=FALSE}
+options(htmltools.dir.version = FALSE)
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 4.2,
+  fig.retina = 2,
+  out.width = "85%",
+  fig.align = "center",
+  cache = FALSE
+)
+
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+library(tidyr)
+library(scales)
+
+# Set theme for all plots
+theme_set(theme_minimal(base_size = 12))
+```
+
+class: center, middle, inverse, title-slide
+
+# Introduction to Biostatistics
+### Data Science & Public Health in Rwanda
+### `r format(Sys.Date(), '%B %d, %Y')`
+
+---
+
+class: inverse, center, middle
+
+# Part 1: Foundations of Biostatistics
+
+---
+
+## Learning Objectives
+
+By the end of this lecture, you will be able to:
+
+.pull-left[
+**Knowledge:**
+- Define *biostatistics* and understand its *historical evolution*
+- Identify the *applications and scope* of biostatistics in public health
+- Describe the *types and nature of data* used in health research
+
+]
+
+.pull-right[
+**Skills:**
+- Understand *data organization* and *basic study designs*
+- Apply statistical thinking to *Rwanda's public health context*
+- Interpret basic health statistics and indicators
+]
+
+---
+
+## What is Biostatistics?
+
+.pull-left[
+### Definition
+Application of *statistical methods* to:
+- Biological sciences
+- Medical research
+- Public health practice
+- Healthcare delivery
+
+### Purpose
+Transform raw health data into:
+- Evidence-based decisions
+- Policy recommendations
+- Clinical guidelines
+- Research insights
+]
+
+.pull-right[
+### Key Questions Biostatistics Answers:
+1. How common is disease X in Rwanda?
+2. Is treatment A better than treatment B?
+3. What factors increase disease risk?
+4. Are our interventions working?
+5. How can we predict future trends?
+
+> "In God we trust, all others must bring data."
+>
+> — W. Edwards Deming
+]
+
+---
+
+## Historical Evolution of Biostatistics
+
+### Key Milestones
+
+.pull-left[
+**Early Period (1600s-1800s):**
+- 1662: John Graunt's demographic analysis
+- 1854: John Snow's cholera investigation
+- 1863: Florence Nightingale's statistical charts
+
+**Modern Era (1900s):**
+- 1946: First randomized clinical trial
+- 1948: Framingham Heart Study begins
+- 1970: Computer-based statistics
+]
+
+.pull-right[
+**Digital Age (2000s+):**
+- Evidence-based medicine standard
+- Big data and AI in healthcare
+- Real-time health monitoring
+- Mobile health and IoT devices
+- Precision medicine and genomics
+]
+
+---
+
+## Timeline of Biostatistics Evolution
+
+```{r timeline, fig.height=4.5, fig.width=11, out.width="95%"}
+timeline_data <- data.frame(
+  Year = c(1662, 1854, 1863, 1946, 1948, 1970, 2000, 2020),
+  Event = c(
+    "Graunt:\nDemography",
+    "Snow:\nCholera",
+    "Nightingale:\nStatistics",
+    "Hill:\nRCTs",
+    "Framingham\nStudy",
+    "Computer\nEra",
+    "EBM\nEra",
+    "AI & Big\nData"
+  ),
+  Category = c("Early", "Early", "Early", "Modern", "Modern", "Digital", "Digital", "Digital"),
+  Y_Position = c(1, 1.15, 1, 1.15, 1, 1.15, 1, 1.15)
+)
+
+ggplot(timeline_data, aes(x = Year, y = Y_Position, label = Event, color = Category)) +
+  geom_point(size = 5) +
+  geom_text(vjust = -1.5, size = 3.5, fontface = "bold", lineheight = 0.85) +
+  geom_segment(aes(xend = Year, y = 0.88, yend = Y_Position - 0.02), linewidth = 1) +
+  geom_hline(yintercept = 0.88, linewidth = 1.5, color = "gray40") +
+  scale_color_manual(values = c("Early" = "#e74c3c", "Modern" = "#3498db", "Digital" = "#2ecc71")) +
+  labs(title = "Major Milestones in the History of Biostatistics",
+       x = "Year", y = "",
+       color = "Era") +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.grid = element_blank(),
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)
+  ) +
+  ylim(0.75, 1.45)
+```
+
+---
+
+## Historical Pioneers
+
+.pull-left[
+### John Graunt (1620-1674)
+- First to analyze mortality data systematically
+- Created life tables
+- Founding father of demography
+
+### Florence Nightingale (1820-1910)
+- Used statistics to improve hospital conditions
+- Created "coxcomb" diagrams
+- Showed sanitation saves lives
+]
+
+.pull-right[
+### John Snow (1813-1858)
+- Father of epidemiology
+- Mapped cholera outbreak in London
+- Proved waterborne disease transmission
+
+### Austin Bradford Hill (1897-1991)
+- Designed first randomized clinical trial
+- Established causation criteria
+- Linked smoking to lung cancer
+]
+
+---
+
+## Biostatistics in Rwanda's Context
+
+```{r rwanda-context}
+rwanda_achievements <- data.frame(
+  Area = c("Maternal Health", "Child Mortality", "Malaria", "HIV/AIDS", "Health Coverage"),
+  Achievement = c(
+    "MMR reduced from 1,071 (2000) to 105 (2023)",
+    "U5MR dropped from 196 to 36 per 1,000",
+    "60% reduction in malaria cases (2005-2020)",
+    "HIV prevalence stable at 3%, 90-90-90 achieved",
+    "91% health insurance coverage"
+  ),
+  Role_of_Biostatistics = c(
+    "HMIS tracking, DHS surveys, facility data",
+    "Vital registration, demographic surveillance",
+    "Surveillance systems, GIS mapping",
+    "RITA surveys, viral load monitoring",
+    "CBHI data analysis, equity assessments"
+  )
+)
+
+kable(rwanda_achievements,
+      col.names = c("Health Area", "Achievement", "Role of Biostatistics"),
+      caption = "How Biostatistics Drives Rwanda's Health Success") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = TRUE,
+                font_size = 11)
+```
+
+---
+
+class: inverse, center, middle
+
+# Part 2: Applications of Biostatistics
+
+---
+
+## Core Application Areas
+
+.pull-left[
+### 1. Epidemiology
+- Disease surveillance
+- Outbreak investigation
+- Risk factor identification
+- Disease burden estimation
+
+### 2. Clinical Research
+- Clinical trials design
+- Treatment effectiveness
+- Diagnostic test accuracy
+- Patient outcomes research
+]
+
+.pull-right[
+### 3. Public Health Practice
+- Program monitoring & evaluation
+- Health systems strengthening
+- Policy development
+- Resource allocation
+
+### 4. Health Informatics
+- HMIS dashboards
+- Predictive analytics
+- Quality improvement
+- Real-time decision support
+]
+
+---
+
+## Example: COVID-19 Response in Rwanda
+
+```{r covid-example, fig.height=4}
+# Simulated COVID-19 data for Rwanda
+set.seed(123)
+dates <- seq(as.Date("2020-03-14"), as.Date("2021-12-31"), by = "week")
+covid_data <- data.frame(
+  Date = dates,
+  Cases = c(
+    rep(0, 2),
+    cumsum(c(rep(5, 8), rep(15, 10), rep(50, 15), rep(30, 10), rep(20, 15), rep(10, 20)))
+  )[1:length(dates)],
+  Tests = cumsum(rep(c(100, 500, 1000, 2000, 1500), length.out = length(dates))),
+  Vaccinated = c(rep(0, 50), cumsum(rep(c(1000, 5000, 10000, 15000), length.out = length(dates) - 50)))
+)
+
+covid_long <- covid_data %>%
+  pivot_longer(cols = -Date, names_to = "Metric", values_to = "Count")
+
+ggplot(covid_long, aes(x = Date, y = Count, color = Metric)) +
+  geom_line(linewidth = 1) +
+  scale_y_continuous(labels = comma) +
+  scale_color_manual(values = c("Cases" = "#e74c3c", "Tests" = "#3498db", "Vaccinated" = "#2ecc71")) +
+  labs(
+    title = "Rwanda's COVID-19 Response: The Role of Biostatistics",
+    subtitle = "Monitoring cases, scaling testing, and tracking vaccination progress",
+    x = "Date",
+    y = "Cumulative Count",
+    color = "Indicator"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom")
+```
+
+**Biostatistical methods used:** Time series analysis, testing positivity rates, vaccine effectiveness studies, transmission modeling
+
+---
+
+## Biostatistics in Clinical Trials
+
+### Example: Malaria Vaccine Trial in Rwanda
+
+.pull-left[
+**Study Design:**
+- Randomized controlled trial
+- 2 groups: Vaccine vs. Placebo
+- Sample size: 10,000 children
+- Follow-up: 2 years
+
+**Primary Outcome:**
+- Clinical malaria incidence
+
+**Statistical Methods:**
+- Survival analysis
+- Intention-to-treat analysis
+- Subgroup analyses
+]
+
+.pull-right[
+```{r trial-example, fig.height=3.8, fig.width=6}
+# Simulated trial data
+trial_data <- data.frame(
+  Month = rep(0:24, 2),
+  Group = rep(c("Vaccine", "Placebo"), each = 25),
+  Malaria_Free = c(
+    100 - cumsum(c(0, rep(1.5, 24))),  # Vaccine group
+    100 - cumsum(c(0, rep(3, 24)))     # Placebo group
+  )
+)
+
+ggplot(trial_data, aes(x = Month, y = Malaria_Free, color = Group)) +
+  geom_line(linewidth = 1.5) +
+  geom_point(size = 2) +
+  scale_color_manual(values = c("Vaccine" = "#2ecc71", "Placebo" = "#e74c3c")) +
+  labs(
+    title = "Kaplan-Meier Survival Curve",
+    subtitle = "Children malaria-free over time",
+    x = "Months since enrollment",
+    y = "% Malaria-Free"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom",
+        legend.title = element_blank())
+```
+
+**Vaccine Efficacy = (1 - RR) × 100%**
+]
+
+---
+
+class: inverse, center, middle
+
+# Part 3: Types and Nature of Data
+
+---
+
+## Classification of Data Types
+
+```{r data-types-diagram, fig.height=4.5, fig.width=10, out.width="90%"}
+# Create a visual hierarchy of data types
+library(ggplot2)
+
+# Data frame for plotting
+data_hierarchy <- data.frame(
+  x = c(2, 1, 3, 0.5, 1.5, 2.5, 3.5),
+  y = c(3, 2, 2, 1, 1, 1, 1),
+  label = c(
+    "DATA",
+    "Qualitative\n(Categorical)",
+    "Quantitative\n(Numerical)",
+    "Nominal",
+    "Ordinal",
+    "Discrete",
+    "Continuous"
+  ),
+  level = c(1, 2, 2, 3, 3, 3, 3),
+  color_group = c("root", "qual", "quant", "qual", "qual", "quant", "quant")
+)
+
+ggplot(data_hierarchy, aes(x = x, y = y, label = label, fill = color_group)) +
+  geom_tile(aes(width = 0.9, height = 0.7), color = "white", linewidth = 2) +
+  geom_text(size = 4.5, fontface = "bold", color = "white", lineheight = 0.9) +
+  # Add connecting lines
+  geom_segment(aes(x = 2, y = 2.65, xend = 1, yend = 2.35), linewidth = 1.5, color = "gray30") +
+  geom_segment(aes(x = 2, y = 2.65, xend = 3, yend = 2.35), linewidth = 1.5, color = "gray30") +
+  geom_segment(aes(x = 1, y = 1.65, xend = 0.5, yend = 1.35), linewidth = 1.5, color = "gray30") +
+  geom_segment(aes(x = 1, y = 1.65, xend = 1.5, yend = 1.35), linewidth = 1.5, color = "gray30") +
+  geom_segment(aes(x = 3, y = 1.65, xend = 2.5, yend = 1.35), linewidth = 1.5, color = "gray30") +
+  geom_segment(aes(x = 3, y = 1.65, xend = 3.5, yend = 1.35), linewidth = 1.5, color = "gray30") +
+  scale_fill_manual(values = c("root" = "#34495e", "qual" = "#e74c3c", "quant" = "#3498db")) +
+  labs(title = "Hierarchy of Data Types in Biostatistics") +
+  theme_void() +
+  theme(legend.position = "none",
+        plot.title = element_text(size = 14, face = "bold", hjust = 0.5, margin = margin(b = 20))) +
+  coord_cartesian(xlim = c(0, 4), ylim = c(0.4, 3.6))
+```
+
+---
+
+## Detailed Data Type Examples
+
+```{r data-types-table}
+data_types_detail <- data.frame(
+  Type = c("Nominal", "Nominal", "Ordinal", "Ordinal", "Discrete", "Discrete", "Continuous", "Continuous"),
+  Category = c("Categorical", "Categorical", "Categorical", "Categorical",
+               "Numerical", "Numerical", "Numerical", "Numerical"),
+  Health_Example = c(
+    "Blood type (A, B, AB, O)",
+    "Sex (Male, Female)",
+    "Cancer stage (I, II, III, IV)",
+    "Pain level (None, Mild, Moderate, Severe)",
+    "Number of children",
+    "Hospital admissions per year",
+    "Body weight (kg)",
+    "Blood glucose level (mg/dL)"
+  ),
+  Properties = c(
+    "No order, categories",
+    "Binary classification",
+    "Ordered, unequal intervals",
+    "Ranked severity",
+    "Countable, whole numbers",
+    "Count data",
+    "Measurable, infinite precision",
+    "Lab values, decimals"
+  ),
+  Statistical_Methods = c(
+    "Frequency, mode, chi-square",
+    "Proportion, odds ratio",
+    "Median, percentiles, rank tests",
+    "Spearman correlation",
+    "Mean, Poisson regression",
+    "Count models",
+    "Mean, SD, t-test, ANOVA",
+    "Correlation, regression"
+  )
+)
+
+kable(data_types_detail,
+      col.names = c("Type", "Category", "Health Example", "Properties", "Statistical Methods"),
+      caption = "Comprehensive Guide to Data Types in Biostatistics") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = TRUE,
+                font_size = 10) %>%
+  column_spec(1, bold = TRUE, width = "2cm") %>%
+  row_spec(c(1,2), background = "#fadbd8") %>%
+  row_spec(c(3,4), background = "#d6eaf8") %>%
+  row_spec(c(5,6), background = "#d5f4e6") %>%
+  row_spec(c(7,8), background = "#fdeaa8")
+```
+
+---
+
+## Measurement Scales in Detail
+
+.pull-left[
+### Nominal Scale
+- **Definition:** Categories without order
+- **Examples:** Blood type, district names
+- **Operations:** Count, mode
+
+### Ordinal Scale
+- **Definition:** Ordered categories
+- **Examples:** Educational level, disease severity
+- **Operations:** Median, percentiles
+]
+
+.pull-right[
+### Interval Scale
+- **Definition:** Equal intervals, no true zero
+- **Examples:** Temperature (°C), dates, IQ scores
+- **Operations:** Mean, SD (limited)
+
+### Ratio Scale
+- **Definition:** Equal intervals + true zero
+- **Examples:** Weight, height, age, blood pressure
+- **Operations:** All mathematical operations
+]
+
+---
+
+## Data Sources in Public Health
+
+```{r data-sources}
+data_sources <- data.frame(
+  Source = c(
+    "HMIS",
+    "DHS",
+    "RBC Surveillance",
+    "Vital Registration",
+    "CBHI",
+    "Laboratory Systems",
+    "EMR",
+    "Special Surveys"
+  ),
+  Type = c("Secondary", "Primary", "Secondary", "Secondary", "Secondary", "Secondary", "Secondary", "Primary"),
+  Frequency = c("Continuous", "Every 5 years", "Continuous", "Continuous", "Continuous", "Continuous", "Continuous", "Periodic"),
+  Key_Data = c(
+    "Service delivery, disease reports",
+    "Fertility, mortality, nutrition",
+    "Malaria, TB, HIV, COVID-19",
+    "Births, deaths, marriages",
+    "Enrollment, utilization",
+    "Test results, diagnosis",
+    "Patient history, treatments",
+    "Risk factors, seroprevalence"
+  ),
+  Strengths = c(
+    "Real-time, comprehensive",
+    "Nationally representative",
+    "Disease-specific, timely",
+    "Legal documentation",
+    "Financial data, equity",
+    "Accurate diagnosis",
+    "Individual-level data",
+    "Specific research questions"
+  )
+)
+
+kable(data_sources,
+      col.names = c("Data Source", "Type", "Frequency", "Key Data", "Strengths"),
+      caption = "Major Health Data Sources in Rwanda") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = TRUE,
+                font_size = 10)
+```
+
+---
+
+class: inverse, center, middle
+
+# Part 4: Data Organization & Visualization
+
+---
+
+## Principles of Data Organization
+
+.pull-left[
+### Tidy Data Principles
+1. Each variable = one column
+2. Each observation = one row
+3. Each type of observational unit = one table
+
+### Example: Patient Data
+
+| Patient_ID | Age | Sex | Weight | BP |
+|------------|-----|-----|--------|-----|
+| 001 | 35 | F | 62 | 120 |
+| 002 | 42 | M | 78 | 135 |
+| 003 | 28 | F | 55 | 115 |
+
+✅ **This is tidy data!**
+]
+
+.pull-right[
+### Common Data Issues
+
+❌ **Multiple variables in one column**
+```
+Patient_001: Age_35_Sex_F
+```
+
+❌ **Variables in rows instead of columns**
+```
+Patient_001, Age, 35
+Patient_001, Sex, F
+```
+
+### Data Cleaning Steps
+1. Handle missing values
+2. Remove duplicates
+3. Standardize formats
+4. Validate ranges
+5. Document transformations
+]
+
+---
+
+## Frequency Distributions
+
+### Example: Age Distribution of Clinic Patients
+
+.pull-left[
+**Definition:**
+- Shows how often each value occurs in a dataset
+- Foundation for understanding data patterns
+
+**Key Components:**
+- Categories or intervals (Age Groups)
+- Counts (Frequency)
+- Proportions (Percentage)
+
+**Uses in Biostatistics:**
+- Describe population characteristics
+- Identify patterns and trends
+- Support hypothesis generation
+]
+
+.pull-right[
+```{r frequency-dist, echo=FALSE}
+# Example: Age distribution of patients
+set.seed(456)
+age_data <- data.frame(
+  Age_Group = c("0-5", "6-17", "18-35", "36-50", "51-65", "65+"),
+  Frequency = c(245, 312, 589, 428, 267, 159),
+  Percentage = c(12.3, 15.6, 29.5, 21.4, 13.4, 8.0)
+)
+
+kable(age_data,
+      caption = "Age Distribution (N=2,000)",
+      col.names = c("Age Group", "n", "%")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = TRUE,
+                font_size = 13)
+```
+]
+
+---
+
+## Visualization: Bar Charts
+
+.pull-left[
+```{r bar-chart-code, echo=TRUE, eval=FALSE}
+# Create bar chart
+ggplot(age_data,
+       aes(x = Age_Group,
+           y = Frequency,
+           fill = Age_Group)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Frequency),
+            vjust = -0.5) +
+  theme_minimal()
+```
+
+**When to use:**
+- Compare categories
+- Show frequencies
+- Display counts
+]
+
+.pull-right[
+```{r bar-chart-plot, echo=FALSE, fig.height=4, fig.width=5.5}
+ggplot(age_data, aes(x = Age_Group, y = Frequency, fill = Age_Group)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  geom_text(aes(label = Frequency), vjust = -0.5, size = 3.5, fontface = "bold") +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title = "Patient Distribution by Age",
+    x = "Age Group",
+    y = "Number of Patients"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"))
+```
+]
+
+---
+
+## Visualization: Pie Charts
+
+.pull-left[
+```{r pie-chart-code, echo=TRUE, eval=FALSE}
+# Disease distribution
+disease_data <- data.frame(
+  Disease = c("Malaria",
+              "Respiratory",
+              "Diarrhea",
+              "Skin",
+              "Injuries",
+              "Other"),
+  Cases = c(320, 280, 195,
+            145, 110, 250)
+)
+
+ggplot(disease_data,
+       aes(x = "", y = Cases,
+           fill = Disease)) +
+  geom_bar(stat = "identity",
+           width = 1) +
+  coord_polar("y", start = 0)
+```
+]
+
+.pull-right[
+```{r pie-chart-plot, echo=FALSE, fig.height=4, fig.width=5.5}
+disease_data <- data.frame(
+  Disease = c("Malaria", "Respiratory", "Diarrhea", "Skin", "Injuries", "Other"),
+  Cases = c(320, 280, 195, 145, 110, 250)
+)
+
+disease_data <- disease_data %>%
+  mutate(Percentage = Cases / sum(Cases) * 100)
+
+ggplot(disease_data, aes(x = "", y = Cases, fill = Disease)) +
+  geom_bar(stat = "identity", width = 1, color = "white", linewidth = 0.8) +
+  coord_polar("y", start = 0) +
+  geom_text(aes(label = paste0(round(Percentage, 1), "%")),
+            position = position_stack(vjust = 0.5), size = 2.8, fontface = "bold", color = "white") +
+  scale_fill_brewer(palette = "Set3") +
+  labs(title = "Disease Distribution") +
+  theme_void(base_size = 10) +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5))
+```
+]
+
+---
+
+## Visualization: Histograms
+
+.pull-left[
+```{r histogram-code, echo=TRUE, eval=FALSE}
+# Generate BMI data
+set.seed(789)
+bmi_data <- data.frame(
+  BMI = rnorm(500,
+              mean = 24,
+              sd = 4)
+)
+
+ggplot(bmi_data, aes(x = BMI)) +
+  geom_histogram(bins = 30,
+                 fill = "#3498db") +
+  geom_density() +
+  geom_vline(
+    aes(xintercept = mean(BMI)),
+    linetype = "dashed") +
+  theme_minimal()
+```
+]
+
+.pull-right[
+```{r histogram-plot, echo=FALSE, fig.height=4, fig.width=5.5}
+set.seed(789)
+bmi_data <- data.frame(BMI = rnorm(500, mean = 24, sd = 4))
+
+ggplot(bmi_data, aes(x = BMI)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 30, fill = "#3498db",
+                 color = "white", alpha = 0.7) +
+  geom_density(color = "#e74c3c", linewidth = 1.2) +
+  geom_vline(aes(xintercept = mean(BMI)), color = "#2ecc71",
+             linetype = "dashed", linewidth = 1) +
+  labs(
+    title = "BMI Distribution",
+    x = "BMI (kg/m²)",
+    y = "Density"
+  ) +
+  theme_minimal(base_size = 10)
+```
+]
+
+---
+
+## Time Series Visualization
+
+.pull-left[
+```{r time-series-code, echo=TRUE, eval=FALSE}
+# MMR trend data
+mmr_data <- data.frame(
+  Year = c(2000, 2005, 2010,
+           2015, 2020, 2023),
+  MMR = c(1071, 750, 476,
+          290, 203, 105)
+)
+
+ggplot(mmr_data,
+       aes(x = Year, y = MMR)) +
+  geom_line() +
+  geom_point() +
+  geom_text(aes(label = MMR),
+            vjust = -1) +
+  theme_minimal()
+```
+]
+
+.pull-right[
+```{r time-series-plot, echo=FALSE, fig.height=4, fig.width=5.5}
+mmr_data <- data.frame(
+  Year = c(2000, 2005, 2010, 2015, 2020, 2023),
+  MMR = c(1071, 750, 476, 290, 203, 105)
+)
+
+ggplot(mmr_data, aes(x = Year, y = MMR)) +
+  geom_line(linewidth = 1.2, color = "#3498db") +
+  geom_point(size = 3, color = "#e74c3c") +
+  geom_text(aes(label = MMR), vjust = -1, size = 3, fontface = "bold") +
+  labs(
+    title = "Rwanda's Maternal Health Progress",
+    x = "Year",
+    y = "MMR per 100,000"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(plot.title = element_text(face = "bold"))
+```
+]
+
+---
+
+class: inverse, center, middle
+
+# Part 5: Study Designs in Biostatistics
+
+---
+
+## Overview of Study Designs
+
+```{r study-designs, fig.height=4.5, fig.width=11, out.width="95%"}
+# Create a flowchart of study designs
+study_design_data <- data.frame(
+  Level = c(1, 2, 2, 3, 3, 3, 3),
+  X = c(3, 1.5, 4.5, 0.5, 1.5, 3.5, 5.5),
+  Y = c(3, 2, 2, 1, 1, 1, 1),
+  Label = c(
+    "Research\nStudies",
+    "Observational",
+    "Experimental",
+    "Descriptive\n(Case Report,\nCross-sectional)",
+    "Analytical\n(Case-Control,\nCohort)",
+    "Randomized\nControlled\nTrial (RCT)",
+    "Quasi-\nExperimental"
+  ),
+  Type = c("Root", "Obs", "Exp", "Obs", "Obs", "Exp", "Exp")
+)
+
+ggplot(study_design_data, aes(x = X, y = Y, label = Label)) +
+  geom_tile(aes(fill = Type, width = 1.1, height = 0.6),
+            color = "white", linewidth = 2, alpha = 0.85) +
+  geom_text(size = 3.8, fontface = "bold", color = "white", lineheight = 0.9) +
+  # Connecting lines
+  geom_segment(aes(x = 3, y = 2.7, xend = 1.5, yend = 2.3), linewidth = 1.5, color = "gray20") +
+  geom_segment(aes(x = 3, y = 2.7, xend = 4.5, yend = 2.3), linewidth = 1.5, color = "gray20") +
+  geom_segment(aes(x = 1.5, y = 1.7, xend = 0.5, yend = 1.3), linewidth = 1.5, color = "gray20") +
+  geom_segment(aes(x = 1.5, y = 1.7, xend = 1.5, yend = 1.3), linewidth = 1.5, color = "gray20") +
+  geom_segment(aes(x = 4.5, y = 1.7, xend = 3.5, yend = 1.3), linewidth = 1.5, color = "gray20") +
+  geom_segment(aes(x = 4.5, y = 1.7, xend = 5.5, yend = 1.3), linewidth = 1.5, color = "gray20") +
+  scale_fill_manual(values = c("Root" = "#34495e", "Obs" = "#e67e22", "Exp" = "#9b59b6")) +
+  labs(title = "Classification of Research Study Designs") +
+  theme_void() +
+  theme(legend.position = "none",
+        plot.title = element_text(size = 14, face = "bold", hjust = 0.5, margin = margin(b = 15))) +
+  coord_cartesian(xlim = c(-0.1, 6.1), ylim = c(0.5, 3.6))
+```
+
+---
+
+## Comparison of Study Designs
+
+```{r study-comparison}
+study_comp <- data.frame(
+  Design = c(
+    "Cross-Sectional",
+    "Case-Control",
+    "Cohort Study",
+    "RCT",
+    "Systematic Review"
+  ),
+  Evidence = c("Low", "Moderate", "High", "Very High", "Highest"),
+  Time = c("Point in time", "Retrospective", "Prospective", "Prospective", "Synthesis"),
+  Cost = c("Low", "Moderate", "High", "Very High", "Moderate"),
+  Best_For = c(
+    "Prevalence, associations",
+    "Risk factors for rare diseases",
+    "Incidence, causation",
+    "Treatment efficacy",
+    "Evidence synthesis"
+  ),
+  Rwanda_Example = c(
+    "DHS malaria prevalence",
+    "Cervical cancer risk factors",
+    "CVD cohort study",
+    "Malaria vaccine trial",
+    "Meta-analysis of HIV interventions"
+  )
+)
+
+kable(study_comp,
+      col.names = c("Study Design", "Evidence", "Timeline", "Cost",
+                    "Best Used For", "Rwanda Example"),
+      caption = "Comparison of Major Study Designs") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = TRUE,
+                font_size = 10) %>%
+  column_spec(1, bold = TRUE, width = "3cm")
+```
+
+---
+
+## Case Study: Cross-Sectional Design
+
+### Example: Nutrition Survey in Rwanda
+
+.pull-left[
+**Study Question:**
+What is the prevalence of stunting among children under 5 in Rwanda?
+
+**Design:**
+- Single point in time
+- Representative sample
+- Measure height-for-age
+- Classify: stunted vs. not stunted
+
+**Sample Size:** 3,000 children
+
+**Biostatistical Methods:**
+- Descriptive statistics
+- Prevalence estimation
+- 95% confidence intervals
+- Stratification by province
+]
+
+.pull-right[
+```{r cross-sectional-example, fig.height=4.2, fig.width=6}
+# Stunting prevalence by province
+stunting_data <- data.frame(
+  Province = c("Kigali", "Southern", "Western", "Northern", "Eastern"),
+  Prevalence = c(22, 38, 35, 42, 33),
+  Lower_CI = c(18, 34, 31, 38, 29),
+  Upper_CI = c(26, 42, 39, 46, 37)
+)
+
+ggplot(stunting_data, aes(x = reorder(Province, -Prevalence), y = Prevalence)) +
+  geom_bar(stat = "identity", fill = "#e74c3c", alpha = 0.8) +
+  geom_errorbar(aes(ymin = Lower_CI, ymax = Upper_CI),
+                width = 0.25, linewidth = 1, color = "#34495e") +
+  geom_text(aes(label = paste0(Prevalence, "%")),
+            vjust = -2.2, fontface = "bold", size = 4) +
+  labs(
+    title = "Stunting Prevalence by Province",
+    subtitle = "Children under 5 years (95% CI)",
+    x = "Province",
+    y = "Prevalence (%)"
+  ) +
+  ylim(0, 55) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+```
+]
+
+---
+
+## Case Study: Cohort Design
+
+### Example: Community Health Worker Impact Study
+
+```{r cohort-example, fig.height=4, fig.width=10, out.width="85%"}
+# Simulated cohort data
+months <- 0:24
+chw_coverage <- data.frame(
+  Month = rep(months, 2),
+  Group = rep(c("With CHW", "Without CHW"), each = length(months)),
+  Survival = c(
+    100 - cumsum(c(0, rnorm(24, mean = 0.8, sd = 0.2))),  # With CHW
+    100 - cumsum(c(0, rnorm(24, mean = 1.5, sd = 0.3)))   # Without CHW
+  )
+)
+
+ggplot(chw_coverage, aes(x = Month, y = Survival, color = Group, linetype = Group)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 1.5, alpha = 0.6) +
+  scale_color_manual(values = c("With CHW" = "#2ecc71", "Without CHW" = "#e74c3c")) +
+  labs(
+    title = "Child Survival in Communities With vs. Without CHWs",
+    subtitle = "24-month follow-up cohort study",
+    x = "Months of Follow-up",
+    y = "% Children Alive and Healthy",
+    color = "Community Type",
+    linetype = "Community Type"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom")
+```
+
+**Hazard Ratio:** HR = 0.53 (95% CI: 0.41-0.68), p < 0.001
+
+**Interpretation:** Communities with CHWs have 47% lower child mortality
+
+---
+
+class: inverse, center, middle
+
+# Part 6: Practical Applications & Tools
+
+---
+
+## Essential Statistical Software
+
+.pull-left[
+### R & RStudio
+- Free, powerful, reproducible
+- Used by: RBC, universities
+
+### SPSS
+- User-friendly interface
+- Used in: Health facilities
+
+### Stata
+- Good for epidemiology
+- Used by: Research institutions
+]
+
+.pull-right[
+### Excel
+- Accessible, familiar
+- Widespread in Rwanda
+
+### DHIS2
+- Built for health data
+- National HMIS standard
+
+### Python
+- Versatile, modern
+- Emerging in health sector
+]
+
+---
+
+## R Code Example: Basic Analysis
+
+```{r r-example, echo=TRUE}
+# Load sample data: Malaria test results from 5 districts
+malaria_data <- data.frame(
+  District = c("Gasabo", "Kicukiro", "Nyarugenge", "Bugesera", "Rwamagana"),
+  Tests_Conducted = c(1200, 950, 1100, 1450, 1300),
+  Positive_Cases = c(145, 98, 132, 289, 234)
+)
+
+# Calculate positivity rate
+malaria_data <- malaria_data %>%
+  mutate(Positivity_Rate = (Positive_Cases / Tests_Conducted) * 100)
+
+# Summary statistics
+summary_stats <- malaria_data %>%
+  summarise(
+    Mean_Positivity = mean(Positivity_Rate),
+    SD_Positivity = sd(Positivity_Rate),
+    Min_Positivity = min(Positivity_Rate),
+    Max_Positivity = max(Positivity_Rate)
+  )
+
+print(summary_stats)
+```
+
+---
+
+## Visualization of Results
+
+.pull-left[
+```{r r-viz-code, echo=TRUE, eval=FALSE}
+# Create visualization
+ggplot(malaria_data,
+       aes(x = reorder(District,
+                      -Positivity_Rate),
+           y = Positivity_Rate,
+           fill = Positivity_Rate)) +
+  geom_col() +
+  geom_text(
+    aes(label = paste0(
+      round(Positivity_Rate, 1),
+      "%")),
+    vjust = -0.5) +
+  theme_minimal()
+```
+]
+
+.pull-right[
+```{r r-viz-plot, echo=FALSE, fig.height=4, fig.width=5.5}
+ggplot(malaria_data, aes(x = reorder(District, -Positivity_Rate),
+                         y = Positivity_Rate, fill = Positivity_Rate)) +
+  geom_col() +
+  geom_text(aes(label = paste0(round(Positivity_Rate, 1), "%")),
+            vjust = -0.5, fontface = "bold", size = 3) +
+  scale_fill_gradient(low = "#2ecc71", high = "#e74c3c") +
+  labs(
+    title = "Malaria Positivity by District",
+    x = "District",
+    y = "Positivity Rate (%)"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(legend.position = "none")
+```
+]
+
+---
+
+## Statistical Inference Example
+
+```{r statistical-test, echo=TRUE}
+# Hypothesis test: Are positivity rates different between urban and rural?
+urban_rural_data <- data.frame(
+  Setting = c(rep("Urban", 3), rep("Rural", 2)),
+  Positivity = c(12.1, 10.3, 12.0, 19.9, 18.0)
+)
+
+# Perform t-test
+t_test_result <- t.test(Positivity ~ Setting, data = urban_rural_data)
+
+# Display results
+cat("T-Test Results:\n")
+cat("Mean Urban:", round(t_test_result$estimate[2], 2), "%\n")
+cat("Mean Rural:", round(t_test_result$estimate[1], 2), "%\n")
+cat("P-value:", round(t_test_result$p.value, 4), "\n")
+cat("95% CI:", round(t_test_result$conf.int[1], 2), "to",
+    round(t_test_result$conf.int[2], 2), "\n")
+
+if(t_test_result$p.value < 0.05) {
+  cat("\nConclusion: Significant difference exists (p < 0.05)")
+} else {
+  cat("\nConclusion: No significant difference found (p ≥ 0.05)")
+}
+```
+
+---
+
+## Key Health Indicators in Rwanda
+
+```{r health-indicators}
+indicators <- data.frame(
+  Indicator = c(
+    "Maternal Mortality Ratio",
+    "Under-5 Mortality Rate",
+    "Infant Mortality Rate",
+    "Neonatal Mortality Rate",
+    "Total Fertility Rate",
+    "Contraceptive Prevalence",
+    "Antenatal Care (4+ visits)",
+    "Institutional Delivery",
+    "Stunting (<5 years)",
+    "HIV Prevalence (15-49)"
+  ),
+  Value_2020 = c(
+    "203 per 100,000",
+    "36 per 1,000",
+    "29 per 1,000",
+    "19 per 1,000",
+    "3.9 children",
+    "64%",
+    "56%",
+    "94%",
+    "33%",
+    "3.0%"
+  ),
+  Target_2024 = c(
+    "150 per 100,000",
+    "25 per 1,000",
+    "20 per 1,000",
+    "12 per 1,000",
+    "3.5 children",
+    "70%",
+    "80%",
+    "98%",
+    "19%",
+    "<2.5%"
+  ),
+  Status = c(
+    "On track",
+    "Needs acceleration",
+    "On track",
+    "Needs acceleration",
+    "On track",
+    "On track",
+    "Needs acceleration",
+    "On track",
+    "Needs acceleration",
+    "On track"
+  )
+)
+
+kable(indicators,
+      col.names = c("Health Indicator", "2020 Value", "2024 Target", "Status"),
+      caption = "Rwanda's Key Health Indicators and Targets") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = TRUE,
+                font_size = 10) %>%
+  column_spec(1, bold = TRUE, width = "5cm") %>%
+  column_spec(4, color = "white",
+              background = ifelse(indicators$Status == "On track", "#2ecc71", "#e74c3c"))
+```
+
+---
+
+class: inverse, center, middle
+
+# Part 7: Ethical Considerations & Data Quality
+
+---
+
+## Ethics in Biostatistics
+
+.pull-left[
+### Core Principles
+
+**1. Respect for Persons**
+- Informed consent
+- Confidentiality
+- Privacy protection
+
+**2. Beneficence**
+- Maximize benefits
+- Minimize risks
+- Ensure scientific validity
+
+**3. Justice**
+- Fair participant selection
+- Equitable distribution of benefits
+- Access to research results
+]
+
+.pull-right[
+### Practical Implications
+
+**Data Collection:**
+- Obtain ethical approval
+- Secure consent forms
+- Protect participant identity
+
+**Data Analysis:**
+- Honest reporting
+- No data manipulation
+- Transparent methods
+
+**Data Sharing:**
+- De-identification
+- Secure storage
+- Limited access
+
+**Rwanda Context:**
+- National Ethics Committee approval
+- Data protection law compliance
+]
+
+---
+
+## Data Quality Framework
+
+```{r data-quality, fig.height=4.5, fig.width=10, out.width="88%"}
+# Create a data quality dimensions chart
+quality_dims <- data.frame(
+  Dimension = c("Completeness", "Accuracy", "Consistency", "Timeliness", "Validity"),
+  Score = c(85, 78, 92, 88, 82),
+  Target = c(95, 90, 95, 95, 90)
+)
+
+quality_long <- quality_dims %>%
+  pivot_longer(cols = c(Score, Target), names_to = "Type", values_to = "Value")
+
+ggplot(quality_long, aes(x = Dimension, y = Value, fill = Type)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  geom_text(aes(label = paste0(Value, "%")),
+            position = position_dodge(width = 0.7),
+            vjust = -0.5, size = 3.5, fontface = "bold") +
+  scale_fill_manual(values = c("Score" = "#3498db", "Target" = "#2ecc71"),
+                    labels = c("Current Score", "Target")) +
+  labs(
+    title = "Health Data Quality Assessment",
+    subtitle = "HMIS Data Quality Audit Results",
+    x = "Quality Dimension",
+    y = "Score (%)",
+    fill = ""
+  ) +
+  ylim(0, 105) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 0, hjust = 0.5))
+```
+
+---
+
+## Common Data Quality Issues
+
+```{r dq-issues}
+dq_issues <- data.frame(
+  Issue = c(
+    "Missing Values",
+    "Outliers",
+    "Duplicates",
+    "Inconsistent Formats",
+    "Invalid Entries",
+    "Temporal Issues"
+  ),
+  Description = c(
+    "Incomplete records, blank fields",
+    "Extreme values beyond plausible range",
+    "Same patient entered multiple times",
+    "Different date/naming conventions",
+    "Values outside permitted range",
+    "Follow-up date before baseline"
+  ),
+  Detection = c(
+    "Count missing, % complete",
+    "Box plots, Z-scores, IQR",
+    "Unique ID checks, fuzzy matching",
+    "Regular expressions, validation",
+    "Range checks, logical rules",
+    "Date sequence validation"
+  ),
+  Solution = c(
+    "Imputation, deletion, sensitivity",
+    "Verify, cap/truncate, transform",
+    "Remove duplicates, merge records",
+    "Standardize using dictionary",
+    "Correction, deletion, follow-up",
+    "Re-check source, correct entry"
+  ),
+  Rwanda_Example = c(
+    "Birth weight not recorded",
+    "Age recorded as 150 years",
+    "Same patient registered twice",
+    "Date: 01/12/2023 vs 2023-12-01",
+    "Sex coded as '3'",
+    "Death date before admission"
+  )
+)
+
+kable(dq_issues,
+      col.names = c("Issue", "Description", "Detection", "Solution", "Example"),
+      caption = "Common Data Quality Issues and Solutions") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = TRUE,
+                font_size = 9) %>%
+  column_spec(1, bold = TRUE, width = "2.5cm")
+```
+
+---
+
+class: inverse, center, middle
+
+# Part 8: Real-World Case Studies
+
+---
+
+## Case Study 1: Malaria Elimination Strategy
+
+### Rwanda's Goal: Eliminate malaria by 2030
+
+.pull-left[
+**Data Sources:**
+- HMIS weekly surveillance
+- Household surveys
+- Meteorological data
+
+**Statistical Methods:**
+- Time series analysis
+- Spatial mapping (GIS)
+- Interrupted time series
+]
+
+.pull-right[
+```{r malaria-case, fig.height=4, fig.width=5.8}
+years <- 2010:2024
+malaria_incidence <- data.frame(
+  Year = years,
+  Incidence = c(435, 420, 398, 312, 278, 245, 198, 156,
+                124, 102, 88, 76, 65, 58, 52),
+  Intervention = c(rep("Pre-IRS", 3), rep("IRS Campaign", 4),
+                   rep("IRS + LLIN", 5), rep("Elimination", 3))
+)
+
+ggplot(malaria_incidence, aes(x = Year, y = Incidence, color = Intervention)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  geom_vline(xintercept = c(2013, 2017, 2022), linetype = "dashed", alpha = 0.5) +
+  scale_color_manual(values = c("#e74c3c", "#f39c12", "#3498db", "#2ecc71")) +
+  labs(
+    title = "Malaria Incidence Trajectory",
+    x = "Year",
+    y = "Incidence per 1,000",
+    color = "Phase"
+  ) +
+  theme_minimal(base_size = 9) +
+  theme(legend.position = "bottom", legend.text = element_text(size = 7))
+```
+
+**Finding:** IRS reduced incidence by 50% (IRR: 0.50, 95% CI: 0.45-0.56)
+]
+
+---
+
+## Case Study 2: COVID-19 Vaccine Effectiveness
+
+### Rwanda Cohort Study (N=50,000), 2021-2023
+
+```{r covid-vaccine, fig.height=4, fig.width=10, out.width="88%"}
+months_post_vax <- 0:12
+ve_data <- data.frame(
+  Month = rep(months_post_vax, 3),
+  Dose = rep(c("1 Dose", "2 Doses", "3 Doses"), each = length(months_post_vax)),
+  Effectiveness = c(
+    c(0, 45, 62, 68, 65, 62, 58, 54, 50, 46, 42, 38, 35),
+    c(0, 0, 75, 85, 88, 86, 84, 82, 78, 74, 70, 66, 62),
+    c(0, 0, 0, 0, 0, 0, 92, 94, 93, 91, 89, 87, 85)
+  )
+)
+
+ggplot(ve_data, aes(x = Month, y = Effectiveness, color = Dose, linetype = Dose)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 1.5) +
+  scale_color_manual(values = c("#e74c3c", "#3498db", "#2ecc71")) +
+  labs(
+    title = "Vaccine Effectiveness Against Severe Disease Over Time",
+    x = "Months Post-Vaccination",
+    y = "Effectiveness (%)",
+    color = "",
+    linetype = ""
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(legend.position = "bottom")
+```
+
+**Design:** Prospective cohort | **Method:** Cox regression adjusted for age, comorbidities
+
+---
+
+## Case Study 3: Nutrition Intervention Impact
+
+### Does community-based nutrition education reduce child stunting?
+
+.pull-left[
+**Design:**
+- Cluster randomized trial
+- 40 sectors (20 vs. 20)
+- 2,400 children under 2
+- 18-month follow-up
+
+**Intervention:**
+- Monthly growth monitoring
+- Nutrition counseling
+- Recipe demonstrations
+]
+
+.pull-right[
+```{r nutrition-rct, fig.height=4, fig.width=5.8}
+nutrition_results <- data.frame(
+  Group = c("Intervention", "Control"),
+  Baseline_Stunting = c(42, 43),
+  Endline_Stunting = c(28, 39)
+)
+
+nutrition_long <- nutrition_results %>%
+  pivot_longer(cols = c(Baseline_Stunting, Endline_Stunting),
+               names_to = "Time",
+               values_to = "Prevalence") %>%
+  mutate(Time = factor(Time, levels = c("Baseline_Stunting", "Endline_Stunting"),
+                       labels = c("Baseline", "Endline")))
+
+ggplot(nutrition_long, aes(x = Time, y = Prevalence, group = Group, color = Group)) +
+  geom_line(linewidth = 1.5) +
+  geom_point(size = 4) +
+  geom_text(aes(label = paste0(Prevalence, "%")),
+            vjust = -1.2, fontface = "bold", size = 3.5) +
+  scale_color_manual(values = c("Intervention" = "#2ecc71", "Control" = "#e74c3c")) +
+  labs(
+    title = "Stunting Reduction",
+    x = "",
+    y = "Prevalence (%)",
+    color = ""
+  ) +
+  ylim(20, 50) +
+  theme_minimal(base_size = 10) +
+  theme(legend.position = "bottom")
+```
+
+**Result:** Difference-in-differences = -10% (95% CI: -14 to -6%, p<0.001)
+]
+
+---
+
+class: inverse, center, middle
+
+# Part 9: Career Paths & Resources
+
+---
+
+## Career Opportunities in Biostatistics
+
+.pull-left[
+### Rwanda-Specific Opportunities
+
+**Government:**
+- Rwanda Biomedical Center
+- Ministry of Health (M&E units)
+- National Institute of Statistics Rwanda
+
+**Academia:**
+- University of Rwanda (SPH)
+- University of Global Health Equity
+- Research institutions
+
+**NGOs & Partners:**
+- Clinton Health Access Initiative
+- Partners In Health
+- Management Sciences for Health
+]
+
+.pull-right[
+### Skills in Demand
+
+**Technical:**
+- Statistical software (R, SPSS, Stata)
+- Data visualization
+- GIS/spatial analysis
+- Machine learning basics
+
+**Domain Knowledge:**
+- Epidemiology
+- Public health systems
+- Clinical research
+- Health economics
+
+**Soft Skills:**
+- Communication
+- Collaboration
+- Critical thinking
+- Report writing
+]
+
+---
+
+## Learning Resources
+
+```{r learning-resources, echo=FALSE}
+resources <- data.frame(
+  Category = c(rep("Books", 4), rep("Online Courses", 4), rep("R Resources", 3)),
+  Resource = c(
+    "Biostatistics for the Biological and Health Sciences",
+    "Essential Medical Statistics",
+    "Fundamentals of Biostatistics",
+    "The Art of Statistics",
+    "Coursera: Biostatistics",
+    "EdX: Principles of Biostatistics",
+    "Khan Academy: Statistics and Probability",
+    "DataCamp: Statistics with R",
+    "R for Data Science (free)",
+    "R Graphics Cookbook",
+    "Posit Cloud (free online)"
+  ),
+  Author_Provider = c(
+    "Triola et al.",
+    "Kirkwood & Sterne",
+    "Bernard Rosner",
+    "David Spiegelhalter",
+    "Johns Hopkins",
+    "Harvard",
+    "Khan Academy",
+    "DataCamp",
+    "Hadley Wickham",
+    "Winston Chang",
+    "Posit"
+  )
+)
+
+kable(resources,
+      col.names = c("Category", "Resource", "Author/Provider"),
+      caption = "Recommended Learning Resources for Biostatistics") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = TRUE,
+                font_size = 11) %>%
+  column_spec(1, bold = TRUE, width = "3cm")
+```
+
+---
+
+## Recommended Practice Exercises
+
+```{r practice-exercises}
+exercises <- data.frame(
+  Week = 1:8,
+  Topic = c(
+    "Data Types & Organization",
+    "Descriptive Statistics",
+    "Data Visualization",
+    "Probability Basics",
+    "Hypothesis Testing",
+    "Study Designs",
+    "Regression Analysis",
+    "Real-World Project"
+  ),
+  Exercise = c(
+    "Classify variables from Rwanda DHS",
+    "Calculate mean, median, SD",
+    "Create bar, histogram, time series",
+    "Calculate disease probabilities",
+    "Perform t-test comparing groups",
+    "Design a study for research question",
+    "Analyze BMI and blood pressure",
+    "Complete district health data analysis"
+  ),
+  Dataset = c(
+    "DHS 2020",
+    "HMIS extract",
+    "Malaria surveillance",
+    "COVID-19 data",
+    "Clinical trial data",
+    "Literature review",
+    "NCD survey",
+    "District HMIS"
+  )
+)
+
+kable(exercises,
+      col.names = c("Week", "Topic", "Hands-On Exercise", "Dataset"),
+      caption = "8-Week Practice Schedule for Biostatistics Mastery") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = TRUE,
+                font_size = 10) %>%
+  column_spec(1, bold = TRUE, width = "1.5cm") %>%
+  column_spec(2, bold = TRUE, background = "#ecf0f1", width = "3.5cm")
+```
+
+---
+
+## Key Takeaways
+
+.pull-left[
+### Core Concepts
+1. Biostatistics transforms health data into evidence
+2. Proper study design is foundational
+3. Data quality determines analysis validity
+4. Visualization enhances understanding
+5. Ethics must guide all research
+
+### Rwanda Context
+- HMIS is backbone of health data
+- DHS provides population insights
+- Digital health is expanding
+- Evidence drives policy decisions
+]
+
+.pull-right[
+### Next Steps
+**As a Student:**
+- Practice with real datasets
+- Learn statistical software
+- Read health research papers
+- Join biostatistics communities
+- Apply concepts to local problems
+
+**Remember:**
+> "Statistics is the grammar of science."
+>
+> — Karl Pearson
+
+> "Without data, you're just another person with an opinion."
+>
+> — W. Edwards Deming
+]
+
+---
+
+## Summary: The Biostatistics Workflow
+
+```{r workflow, fig.height=4.5, fig.width=11, out.width="95%"}
+# Create workflow diagram
+workflow <- data.frame(
+  Step = 1:7,
+  Stage = c(
+    "1. Research\nQuestion",
+    "2. Study\nDesign",
+    "3. Data\nCollection",
+    "4. Data\nCleaning",
+    "5. Statistical\nAnalysis",
+    "6. Interpretation\n& Visualization",
+    "7. Communication\n& Action"
+  ),
+  X = 1:7,
+  Y = c(1, 1.5, 1, 1.5, 1, 1.5, 1),
+  Color = c("Q", "D", "C", "C", "A", "I", "I")
+)
+
+ggplot(workflow, aes(x = X, y = Y, label = Stage)) +
+  geom_tile(aes(fill = Color, width = 0.8, height = 0.4),
+            color = "white", linewidth = 1.5) +
+  geom_text(size = 3, fontface = "bold", color = "white", lineheight = 0.9) +
+  # Add arrows
+  geom_segment(aes(x = X + 0.4, y = Y, xend = X + 0.6, yend = Y +
+                     ifelse(X %% 2 == 1, 0.5, -0.5)),
+               arrow = arrow(length = unit(0.25, "cm"), type = "closed"),
+               linewidth = 1, color = "gray20",
+               data = workflow[1:6, ]) +
+  scale_fill_manual(values = c("Q" = "#e74c3c", "D" = "#f39c12",
+                                "C" = "#3498db", "A" = "#9b59b6",
+                                "I" = "#2ecc71")) +
+  labs(title = "The Complete Biostatistics Research Workflow",
+       subtitle = "From question to actionable insights") +
+  theme_void() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(size = 13, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 10, hjust = 0.5)
+  ) +
+  coord_cartesian(xlim = c(0.5, 7.5), ylim = c(0.5, 2))
+```
+
+---
+
+## References & Further Reading
+
+### Key Publications
+1. Rwanda Ministry of Health. (2020). *Rwanda Demographic and Health Survey 2019-20*.
+2. Rwanda Biomedical Center. (2023). *Health Management Information System Annual Report*.
+3. Farmer, P. E., et al. (2013). "Reduced premature mortality in Rwanda: lessons from success." *BMJ*, 346.
+4. Binagwaho, A., et al. (2014). "Rwanda 20 years on: investing in life." *The Lancet*, 384(9940).
+
+### Statistical Methods
+5. Kirkwood, B. R., & Sterne, J. A. (2003). *Essential Medical Statistics*.
+6. Altman, D. G. (1991). *Practical Statistics for Medical Research*.
+
+### Online Resources
+- Rwanda DHS: https://www.statistics.gov.rw/
+- WHO Health Statistics: https://www.who.int/data/gho
+- Gapminder: https://www.gapminder.org/
+
+---
+
+## Appendix: Statistical Formulas
+
+```{r formulas-table, echo=FALSE}
+formulas <- data.frame(
+  Statistic = c("Mean", "Standard Deviation", "Standard Error", "Relative Risk", "Odds Ratio", "Confidence Interval"),
+  Formula = c(
+    "x̄ = Σxᵢ / n",
+    "SD = √[Σ(xᵢ - x̄)² / (n-1)]",
+    "SE = SD / √n",
+    "RR = P(Disease|Exposed) / P(Disease|Unexposed)",
+    "OR = (a × d) / (b × c)",
+    "CI₉₅% = x̄ ± 1.96 × SE"
+  ),
+  Use_Case = c(
+    "Central tendency",
+    "Variability measure",
+    "Precision of mean",
+    "Risk comparison",
+    "Case-control studies",
+    "Range of estimates"
+  )
+)
+
+kable(formulas,
+      col.names = c("Statistic", "Formula", "Use Case"),
+      caption = "Commonly Used Statistical Formulas") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = TRUE,
+                font_size = 12) %>%
+  column_spec(1, bold = TRUE, width = "4cm") %>%
+  column_spec(2, monospace = TRUE)
+```
+
+---
+
+## Appendix: Sample Size Calculations
+
+```{r sample-size, echo=TRUE}
+# Sample size for prevalence estimation
+# Formula: n = (Z^2 * p * (1-p)) / e^2
+
+calculate_sample_size <- function(prevalence, margin_of_error, confidence = 0.95) {
+  z <- qnorm((1 + confidence) / 2)
+  n <- (z^2 * prevalence * (1 - prevalence)) / (margin_of_error^2)
+  return(ceiling(n))
+}
+
+# Example: Estimating malaria prevalence
+# Expected: 15%, Margin: 3%, 95% confidence
+n_required <- calculate_sample_size(prevalence = 0.15, margin_of_error = 0.03)
+cat("Required sample size:", n_required, "participants\n")
+
+# Adjust for design effect and non-response
+design_effect <- 1.5
+response_rate <- 0.85
+n_adjusted <- ceiling(n_required * design_effect / response_rate)
+cat("Adjusted sample size:", n_adjusted, "participants")
+```
+
+---
+
+class: center, middle, inverse
+
+# Questions & Discussion
+
+### Contact Information
+**Email:** [your.email@institution.rw]
+
+**Office:** [Your Office Location]
+
+**Office Hours:** [Your Office Hours]
+
+### Course Materials
+All slides, datasets, and code available at:
+
+**[Your Course Website/GitHub Repository]**
+
+---
+
+class: center, middle
+
+# Thank You!
+
+### Remember:
+*"The best time to learn biostatistics was yesterday.*
+
+*The second best time is today."*
+
+**Let's transform health data into better lives for all Rwandans!**

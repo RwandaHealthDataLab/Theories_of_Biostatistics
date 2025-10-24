@@ -1,0 +1,1754 @@
+<!DOCTYPE html>
+<html lang="" xml:lang="">
+  <head>
+    <title>Introduction to Biostatistics</title>
+    <meta charset="utf-8" />
+    <meta name="author" content="Dr. [Your Name]" />
+    <meta name="date" content="2025-10-23" />
+    <script src="libs/header-attrs/header-attrs.js"></script>
+    <link href="libs/remark-css/default.css" rel="stylesheet" />
+    <link href="libs/remark-css/metropolis.css" rel="stylesheet" />
+    <link href="libs/remark-css/metropolis-fonts.css" rel="stylesheet" />
+    <script src="libs/kePrint/kePrint.js"></script>
+    <link href="libs/lightable/lightable.css" rel="stylesheet" />
+  </head>
+  <body>
+    <textarea id="source">
+class: center, middle, inverse, title-slide
+
+.title[
+# Introduction to Biostatistics
+]
+.subtitle[
+## From Theory to Practice in Public Health
+]
+.author[
+### Dr. [Your Name]
+]
+.institute[
+### Ministry of Health, Rwanda / [Your Institution]
+]
+.date[
+### October 23, 2025
+]
+
+---
+
+
+
+
+class: center, middle, inverse, title-slide
+
+# Introduction to Biostatistics
+### Data Science &amp; Public Health in Rwanda
+### October 23, 2025
+
+---
+
+class: inverse, center, middle
+
+# Part 1: Foundations of Biostatistics
+
+---
+
+## Learning Objectives
+
+By the end of this lecture, you will be able to:
+
+.pull-left[
+**Knowledge:**
+- Define *biostatistics* and understand its *historical evolution*
+- Identify the *applications and scope* of biostatistics in public health
+- Describe the *types and nature of data* used in health research
+
+]
+
+.pull-right[
+**Skills:**
+- Understand *data organization* and *basic study designs*
+- Apply statistical thinking to *Rwanda's public health context*
+- Interpret basic health statistics and indicators
+]
+
+---
+
+## What is Biostatistics?
+
+.pull-left[
+### Definition
+Application of *statistical methods* to:
+- Biological sciences
+- Medical research
+- Public health practice
+- Healthcare delivery
+
+### Purpose
+Transform raw health data into:
+- Evidence-based decisions
+- Policy recommendations
+- Clinical guidelines
+- Research insights
+]
+
+.pull-right[
+### Key Questions Biostatistics Answers:
+1. How common is disease X in Rwanda?
+2. Is treatment A better than treatment B?
+3. What factors increase disease risk?
+4. Are our interventions working?
+5. How can we predict future trends?
+
+&gt; "In God we trust, all others must bring data."
+&gt;
+&gt; — W. Edwards Deming
+]
+
+---
+
+## Historical Evolution of Biostatistics
+
+### Key Milestones
+
+.pull-left[
+**Early Period (1600s-1800s):**
+- 1662: John Graunt's demographic analysis
+- 1854: John Snow's cholera investigation
+- 1863: Florence Nightingale's statistical charts
+
+**Modern Era (1900s):**
+- 1946: First randomized clinical trial
+- 1948: Framingham Heart Study begins
+- 1970: Computer-based statistics
+]
+
+.pull-right[
+**Digital Age (2000s+):**
+- Evidence-based medicine standard
+- Big data and AI in healthcare
+- Real-time health monitoring
+- Mobile health and IoT devices
+- Precision medicine and genomics
+]
+
+---
+
+## Timeline of Biostatistics Evolution
+
+&lt;img src="introduction_to_biostatistics_files/figure-html/timeline-1.png" width="95%" style="display: block; margin: auto;" /&gt;
+
+---
+
+## Historical Pioneers
+
+.pull-left[
+### John Graunt (1620-1674)
+- First to analyze mortality data systematically
+- Created life tables
+- Founding father of demography
+
+### Florence Nightingale (1820-1910)
+- Used statistics to improve hospital conditions
+- Created "coxcomb" diagrams
+- Showed sanitation saves lives
+]
+
+.pull-right[
+### John Snow (1813-1858)
+- Father of epidemiology
+- Mapped cholera outbreak in London
+- Proved waterborne disease transmission
+
+### Austin Bradford Hill (1897-1991)
+- Designed first randomized clinical trial
+- Established causation criteria
+- Linked smoking to lung cancer
+]
+
+---
+
+## Biostatistics in Rwanda's Context
+
+&lt;table class="table table-striped table-hover table-condensed" style="font-size: 11px; margin-left: auto; margin-right: auto;"&gt;
+&lt;caption style="font-size: initial !important;"&gt;How Biostatistics Drives Rwanda's Health Success&lt;/caption&gt;
+ &lt;thead&gt;
+  &lt;tr&gt;
+   &lt;th style="text-align:left;"&gt; Health Area &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Achievement &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Role of Biostatistics &lt;/th&gt;
+  &lt;/tr&gt;
+ &lt;/thead&gt;
+&lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; Maternal Health &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; MMR reduced from 1,071 (2000) to 105 (2023) &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; HMIS tracking, DHS surveys, facility data &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; Child Mortality &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; U5MR dropped from 196 to 36 per 1,000 &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Vital registration, demographic surveillance &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; Malaria &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; 60% reduction in malaria cases (2005-2020) &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Surveillance systems, GIS mapping &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; HIV/AIDS &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; HIV prevalence stable at 3%, 90-90-90 achieved &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; RITA surveys, viral load monitoring &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; Health Coverage &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; 91% health insurance coverage &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; CBHI data analysis, equity assessments &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+---
+
+class: inverse, center, middle
+
+# Part 2: Applications of Biostatistics
+
+---
+
+## Core Application Areas
+
+.pull-left[
+### 1. Epidemiology
+- Disease surveillance
+- Outbreak investigation
+- Risk factor identification
+- Disease burden estimation
+
+### 2. Clinical Research
+- Clinical trials design
+- Treatment effectiveness
+- Diagnostic test accuracy
+- Patient outcomes research
+]
+
+.pull-right[
+### 3. Public Health Practice
+- Program monitoring &amp; evaluation
+- Health systems strengthening
+- Policy development
+- Resource allocation
+
+### 4. Health Informatics
+- HMIS dashboards
+- Predictive analytics
+- Quality improvement
+- Real-time decision support
+]
+
+---
+
+## Example: COVID-19 Response in Rwanda
+
+&lt;img src="introduction_to_biostatistics_files/figure-html/covid-example-1.png" width="85%" style="display: block; margin: auto;" /&gt;
+
+**Biostatistical methods used:** Time series analysis, testing positivity rates, vaccine effectiveness studies, transmission modeling
+
+---
+
+## Biostatistics in Clinical Trials
+
+### Example: Malaria Vaccine Trial in Rwanda
+
+.pull-left[
+**Study Design:**
+- Randomized controlled trial
+- 2 groups: Vaccine vs. Placebo
+- Sample size: 10,000 children
+- Follow-up: 2 years
+
+**Primary Outcome:**
+- Clinical malaria incidence
+
+**Statistical Methods:**
+- Survival analysis
+- Intention-to-treat analysis
+- Subgroup analyses
+]
+
+.pull-right[
+&lt;img src="introduction_to_biostatistics_files/figure-html/trial-example-1.png" width="85%" style="display: block; margin: auto;" /&gt;
+
+**Vaccine Efficacy = (1 - RR) × 100%**
+]
+
+---
+
+class: inverse, center, middle
+
+# Part 3: Types and Nature of Data
+
+---
+
+## Classification of Data Types
+
+&lt;img src="introduction_to_biostatistics_files/figure-html/data-types-diagram-1.png" width="90%" style="display: block; margin: auto;" /&gt;
+
+---
+
+## Detailed Data Type Examples
+
+&lt;table class="table table-striped table-hover" style="font-size: 10px; margin-left: auto; margin-right: auto;"&gt;
+&lt;caption style="font-size: initial !important;"&gt;Comprehensive Guide to Data Types in Biostatistics&lt;/caption&gt;
+ &lt;thead&gt;
+  &lt;tr&gt;
+   &lt;th style="text-align:left;"&gt; Type &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Category &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Health Example &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Properties &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Statistical Methods &lt;/th&gt;
+  &lt;/tr&gt;
+ &lt;/thead&gt;
+&lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 2cm; font-weight: bold;background-color: rgba(250, 219, 216, 255) !important;"&gt; Nominal &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(250, 219, 216, 255) !important;"&gt; Categorical &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(250, 219, 216, 255) !important;"&gt; Blood type (A, B, AB, O) &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(250, 219, 216, 255) !important;"&gt; No order, categories &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(250, 219, 216, 255) !important;"&gt; Frequency, mode, chi-square &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 2cm; font-weight: bold;background-color: rgba(250, 219, 216, 255) !important;"&gt; Nominal &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(250, 219, 216, 255) !important;"&gt; Categorical &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(250, 219, 216, 255) !important;"&gt; Sex (Male, Female) &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(250, 219, 216, 255) !important;"&gt; Binary classification &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(250, 219, 216, 255) !important;"&gt; Proportion, odds ratio &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 2cm; font-weight: bold;background-color: rgba(214, 234, 248, 255) !important;"&gt; Ordinal &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(214, 234, 248, 255) !important;"&gt; Categorical &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(214, 234, 248, 255) !important;"&gt; Cancer stage (I, II, III, IV) &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(214, 234, 248, 255) !important;"&gt; Ordered, unequal intervals &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(214, 234, 248, 255) !important;"&gt; Median, percentiles, rank tests &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 2cm; font-weight: bold;background-color: rgba(214, 234, 248, 255) !important;"&gt; Ordinal &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(214, 234, 248, 255) !important;"&gt; Categorical &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(214, 234, 248, 255) !important;"&gt; Pain level (None, Mild, Moderate, Severe) &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(214, 234, 248, 255) !important;"&gt; Ranked severity &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(214, 234, 248, 255) !important;"&gt; Spearman correlation &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 2cm; font-weight: bold;background-color: rgba(213, 244, 230, 255) !important;"&gt; Discrete &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(213, 244, 230, 255) !important;"&gt; Numerical &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(213, 244, 230, 255) !important;"&gt; Number of children &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(213, 244, 230, 255) !important;"&gt; Countable, whole numbers &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(213, 244, 230, 255) !important;"&gt; Mean, Poisson regression &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 2cm; font-weight: bold;background-color: rgba(213, 244, 230, 255) !important;"&gt; Discrete &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(213, 244, 230, 255) !important;"&gt; Numerical &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(213, 244, 230, 255) !important;"&gt; Hospital admissions per year &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(213, 244, 230, 255) !important;"&gt; Count data &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(213, 244, 230, 255) !important;"&gt; Count models &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 2cm; font-weight: bold;background-color: rgba(253, 234, 168, 255) !important;"&gt; Continuous &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(253, 234, 168, 255) !important;"&gt; Numerical &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(253, 234, 168, 255) !important;"&gt; Body weight (kg) &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(253, 234, 168, 255) !important;"&gt; Measurable, infinite precision &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(253, 234, 168, 255) !important;"&gt; Mean, SD, t-test, ANOVA &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 2cm; font-weight: bold;background-color: rgba(253, 234, 168, 255) !important;"&gt; Continuous &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(253, 234, 168, 255) !important;"&gt; Numerical &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(253, 234, 168, 255) !important;"&gt; Blood glucose level (mg/dL) &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(253, 234, 168, 255) !important;"&gt; Lab values, decimals &lt;/td&gt;
+   &lt;td style="text-align:left;background-color: rgba(253, 234, 168, 255) !important;"&gt; Correlation, regression &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+---
+
+## Measurement Scales in Detail
+
+.pull-left[
+### Nominal Scale
+- **Definition:** Categories without order
+- **Examples:** Blood type, district names
+- **Operations:** Count, mode
+
+### Ordinal Scale
+- **Definition:** Ordered categories
+- **Examples:** Educational level, disease severity
+- **Operations:** Median, percentiles
+]
+
+.pull-right[
+### Interval Scale
+- **Definition:** Equal intervals, no true zero
+- **Examples:** Temperature (°C), dates, IQ scores
+- **Operations:** Mean, SD (limited)
+
+### Ratio Scale
+- **Definition:** Equal intervals + true zero
+- **Examples:** Weight, height, age, blood pressure
+- **Operations:** All mathematical operations
+]
+
+---
+
+## Data Sources in Public Health
+
+&lt;table class="table table-striped table-hover table-condensed" style="font-size: 10px; margin-left: auto; margin-right: auto;"&gt;
+&lt;caption style="font-size: initial !important;"&gt;Major Health Data Sources in Rwanda&lt;/caption&gt;
+ &lt;thead&gt;
+  &lt;tr&gt;
+   &lt;th style="text-align:left;"&gt; Data Source &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Type &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Frequency &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Key Data &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Strengths &lt;/th&gt;
+  &lt;/tr&gt;
+ &lt;/thead&gt;
+&lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; HMIS &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Secondary &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Continuous &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Service delivery, disease reports &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Real-time, comprehensive &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; DHS &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Primary &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Every 5 years &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Fertility, mortality, nutrition &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Nationally representative &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; RBC Surveillance &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Secondary &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Continuous &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Malaria, TB, HIV, COVID-19 &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Disease-specific, timely &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; Vital Registration &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Secondary &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Continuous &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Births, deaths, marriages &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Legal documentation &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; CBHI &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Secondary &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Continuous &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Enrollment, utilization &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Financial data, equity &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; Laboratory Systems &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Secondary &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Continuous &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Test results, diagnosis &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Accurate diagnosis &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; EMR &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Secondary &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Continuous &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Patient history, treatments &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Individual-level data &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; Special Surveys &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Primary &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Periodic &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Risk factors, seroprevalence &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Specific research questions &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+---
+
+class: inverse, center, middle
+
+# Part 4: Data Organization &amp; Visualization
+
+---
+
+## Principles of Data Organization
+
+.pull-left[
+### Tidy Data Principles
+1. Each variable = one column
+2. Each observation = one row
+3. Each type of observational unit = one table
+
+### Example: Patient Data
+
+| Patient_ID | Age | Sex | Weight | BP |
+|------------|-----|-----|--------|-----|
+| 001 | 35 | F | 62 | 120 |
+| 002 | 42 | M | 78 | 135 |
+| 003 | 28 | F | 55 | 115 |
+
+✅ **This is tidy data!**
+]
+
+.pull-right[
+### Common Data Issues
+
+❌ **Multiple variables in one column**
+```
+Patient_001: Age_35_Sex_F
+```
+
+❌ **Variables in rows instead of columns**
+```
+Patient_001, Age, 35
+Patient_001, Sex, F
+```
+
+### Data Cleaning Steps
+1. Handle missing values
+2. Remove duplicates
+3. Standardize formats
+4. Validate ranges
+5. Document transformations
+]
+
+---
+
+## Frequency Distributions
+
+### Example: Age Distribution of Clinic Patients
+
+.pull-left[
+**Definition:**
+- Shows how often each value occurs in a dataset
+- Foundation for understanding data patterns
+
+**Key Components:**
+- Categories or intervals (Age Groups)
+- Counts (Frequency)
+- Proportions (Percentage)
+
+**Uses in Biostatistics:**
+- Describe population characteristics
+- Identify patterns and trends
+- Support hypothesis generation
+]
+
+.pull-right[
+&lt;table class="table table-striped table-hover" style="font-size: 13px; margin-left: auto; margin-right: auto;"&gt;
+&lt;caption style="font-size: initial !important;"&gt;Age Distribution (N=2,000)&lt;/caption&gt;
+ &lt;thead&gt;
+  &lt;tr&gt;
+   &lt;th style="text-align:left;"&gt; Age Group &lt;/th&gt;
+   &lt;th style="text-align:right;"&gt; n &lt;/th&gt;
+   &lt;th style="text-align:right;"&gt; % &lt;/th&gt;
+  &lt;/tr&gt;
+ &lt;/thead&gt;
+&lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; 0-5 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 245 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 12.3 &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; 6-17 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 312 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 15.6 &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; 18-35 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 589 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 29.5 &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; 36-50 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 428 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 21.4 &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; 51-65 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 267 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 13.4 &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;"&gt; 65+ &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 159 &lt;/td&gt;
+   &lt;td style="text-align:right;"&gt; 8.0 &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+]
+
+---
+
+## Visualization: Bar Charts
+
+.pull-left[
+
+``` r
+# Create bar chart
+ggplot(age_data,
+       aes(x = Age_Group,
+           y = Frequency,
+           fill = Age_Group)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Frequency),
+            vjust = -0.5) +
+  theme_minimal()
+```
+
+**When to use:**
+- Compare categories
+- Show frequencies
+- Display counts
+]
+
+.pull-right[
+&lt;img src="introduction_to_biostatistics_files/figure-html/bar-chart-plot-1.png" width="85%" style="display: block; margin: auto;" /&gt;
+]
+
+---
+
+## Visualization: Pie Charts
+
+.pull-left[
+
+``` r
+# Disease distribution
+disease_data &lt;- data.frame(
+  Disease = c("Malaria",
+              "Respiratory",
+              "Diarrhea",
+              "Skin",
+              "Injuries",
+              "Other"),
+  Cases = c(320, 280, 195,
+            145, 110, 250)
+)
+
+ggplot(disease_data,
+       aes(x = "", y = Cases,
+           fill = Disease)) +
+  geom_bar(stat = "identity",
+           width = 1) +
+  coord_polar("y", start = 0)
+```
+]
+
+.pull-right[
+&lt;img src="introduction_to_biostatistics_files/figure-html/pie-chart-plot-1.png" width="85%" style="display: block; margin: auto;" /&gt;
+]
+
+---
+
+## Visualization: Histograms
+
+.pull-left[
+
+``` r
+# Generate BMI data
+set.seed(789)
+bmi_data &lt;- data.frame(
+  BMI = rnorm(500,
+              mean = 24,
+              sd = 4)
+)
+
+ggplot(bmi_data, aes(x = BMI)) +
+  geom_histogram(bins = 30,
+                 fill = "#3498db") +
+  geom_density() +
+  geom_vline(
+    aes(xintercept = mean(BMI)),
+    linetype = "dashed") +
+  theme_minimal()
+```
+]
+
+.pull-right[
+&lt;img src="introduction_to_biostatistics_files/figure-html/histogram-plot-1.png" width="85%" style="display: block; margin: auto;" /&gt;
+]
+
+---
+
+## Time Series Visualization
+
+.pull-left[
+
+``` r
+# MMR trend data
+mmr_data &lt;- data.frame(
+  Year = c(2000, 2005, 2010,
+           2015, 2020, 2023),
+  MMR = c(1071, 750, 476,
+          290, 203, 105)
+)
+
+ggplot(mmr_data,
+       aes(x = Year, y = MMR)) +
+  geom_line() +
+  geom_point() +
+  geom_text(aes(label = MMR),
+            vjust = -1) +
+  theme_minimal()
+```
+]
+
+.pull-right[
+&lt;img src="introduction_to_biostatistics_files/figure-html/time-series-plot-1.png" width="85%" style="display: block; margin: auto;" /&gt;
+]
+
+---
+
+class: inverse, center, middle
+
+# Part 5: Study Designs in Biostatistics
+
+---
+
+## Overview of Study Designs
+
+&lt;img src="introduction_to_biostatistics_files/figure-html/study-designs-1.png" width="95%" style="display: block; margin: auto;" /&gt;
+
+---
+
+## Comparison of Study Designs
+
+&lt;table class="table table-striped table-hover" style="font-size: 10px; margin-left: auto; margin-right: auto;"&gt;
+&lt;caption style="font-size: initial !important;"&gt;Comparison of Major Study Designs&lt;/caption&gt;
+ &lt;thead&gt;
+  &lt;tr&gt;
+   &lt;th style="text-align:left;"&gt; Study Design &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Evidence &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Timeline &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Cost &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Best Used For &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Rwanda Example &lt;/th&gt;
+  &lt;/tr&gt;
+ &lt;/thead&gt;
+&lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 3cm; font-weight: bold;"&gt; Cross-Sectional &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Low &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Point in time &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Low &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Prevalence, associations &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; DHS malaria prevalence &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 3cm; font-weight: bold;"&gt; Case-Control &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Moderate &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Retrospective &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Moderate &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Risk factors for rare diseases &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Cervical cancer risk factors &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 3cm; font-weight: bold;"&gt; Cohort Study &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; High &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Prospective &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; High &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Incidence, causation &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; CVD cohort study &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 3cm; font-weight: bold;"&gt; RCT &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Very High &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Prospective &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Very High &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Treatment efficacy &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Malaria vaccine trial &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 3cm; font-weight: bold;"&gt; Systematic Review &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Highest &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Synthesis &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Moderate &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Evidence synthesis &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Meta-analysis of HIV interventions &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+---
+
+## Case Study: Cross-Sectional Design
+
+### Example: Nutrition Survey in Rwanda
+
+.pull-left[
+**Study Question:**
+What is the prevalence of stunting among children under 5 in Rwanda?
+
+**Design:**
+- Single point in time
+- Representative sample
+- Measure height-for-age
+- Classify: stunted vs. not stunted
+
+**Sample Size:** 3,000 children
+
+**Biostatistical Methods:**
+- Descriptive statistics
+- Prevalence estimation
+- 95% confidence intervals
+- Stratification by province
+]
+
+.pull-right[
+&lt;img src="introduction_to_biostatistics_files/figure-html/cross-sectional-example-1.png" width="85%" style="display: block; margin: auto;" /&gt;
+]
+
+---
+
+## Case Study: Cohort Design
+
+### Example: Community Health Worker Impact Study
+
+&lt;img src="introduction_to_biostatistics_files/figure-html/cohort-example-1.png" width="85%" style="display: block; margin: auto;" /&gt;
+
+**Hazard Ratio:** HR = 0.53 (95% CI: 0.41-0.68), p &lt; 0.001
+
+**Interpretation:** Communities with CHWs have 47% lower child mortality
+
+---
+
+class: inverse, center, middle
+
+# Part 6: Practical Applications &amp; Tools
+
+---
+
+## Essential Statistical Software
+
+.pull-left[
+### R &amp; RStudio
+- Free, powerful, reproducible
+- Used by: RBC, universities
+
+### SPSS
+- User-friendly interface
+- Used in: Health facilities
+
+### Stata
+- Good for epidemiology
+- Used by: Research institutions
+]
+
+.pull-right[
+### Excel
+- Accessible, familiar
+- Widespread in Rwanda
+
+### DHIS2
+- Built for health data
+- National HMIS standard
+
+### Python
+- Versatile, modern
+- Emerging in health sector
+]
+
+---
+
+## R Code Example: Basic Analysis
+
+
+``` r
+# Load sample data: Malaria test results from 5 districts
+malaria_data &lt;- data.frame(
+  District = c("Gasabo", "Kicukiro", "Nyarugenge", "Bugesera", "Rwamagana"),
+  Tests_Conducted = c(1200, 950, 1100, 1450, 1300),
+  Positive_Cases = c(145, 98, 132, 289, 234)
+)
+
+# Calculate positivity rate
+malaria_data &lt;- malaria_data %&gt;%
+  mutate(Positivity_Rate = (Positive_Cases / Tests_Conducted) * 100)
+
+# Summary statistics
+summary_stats &lt;- malaria_data %&gt;%
+  summarise(
+    Mean_Positivity = mean(Positivity_Rate),
+    SD_Positivity = sd(Positivity_Rate),
+    Min_Positivity = min(Positivity_Rate),
+    Max_Positivity = max(Positivity_Rate)
+  )
+
+print(summary_stats)
+```
+
+```
+##   Mean_Positivity SD_Positivity Min_Positivity Max_Positivity
+## 1        14.46603      4.223099       10.31579       19.93103
+```
+
+---
+
+## Visualization of Results
+
+.pull-left[
+
+``` r
+# Create visualization
+ggplot(malaria_data,
+       aes(x = reorder(District,
+                      -Positivity_Rate),
+           y = Positivity_Rate,
+           fill = Positivity_Rate)) +
+  geom_col() +
+  geom_text(
+    aes(label = paste0(
+      round(Positivity_Rate, 1),
+      "%")),
+    vjust = -0.5) +
+  theme_minimal()
+```
+]
+
+.pull-right[
+&lt;img src="introduction_to_biostatistics_files/figure-html/r-viz-plot-1.png" width="85%" style="display: block; margin: auto;" /&gt;
+]
+
+---
+
+## Statistical Inference Example
+
+
+``` r
+# Hypothesis test: Are positivity rates different between urban and rural?
+urban_rural_data &lt;- data.frame(
+  Setting = c(rep("Urban", 3), rep("Rural", 2)),
+  Positivity = c(12.1, 10.3, 12.0, 19.9, 18.0)
+)
+
+# Perform t-test
+t_test_result &lt;- t.test(Positivity ~ Setting, data = urban_rural_data)
+
+# Display results
+cat("T-Test Results:\n")
+```
+
+```
+## T-Test Results:
+```
+
+``` r
+cat("Mean Urban:", round(t_test_result$estimate[2], 2), "%\n")
+```
+
+```
+## Mean Urban: 11.47 %
+```
+
+``` r
+cat("Mean Rural:", round(t_test_result$estimate[1], 2), "%\n")
+```
+
+```
+## Mean Rural: 18.95 %
+```
+
+``` r
+cat("P-value:", round(t_test_result$p.value, 4), "\n")
+```
+
+```
+## P-value: 0.029
+```
+
+``` r
+cat("95% CI:", round(t_test_result$conf.int[1], 2), "to",
+    round(t_test_result$conf.int[2], 2), "\n")
+```
+
+```
+## 95% CI: 2.04 to 12.92
+```
+
+``` r
+if(t_test_result$p.value &lt; 0.05) {
+  cat("\nConclusion: Significant difference exists (p &lt; 0.05)")
+} else {
+  cat("\nConclusion: No significant difference found (p ≥ 0.05)")
+}
+```
+
+```
+## 
+## Conclusion: Significant difference exists (p &lt; 0.05)
+```
+
+---
+
+## Key Health Indicators in Rwanda
+
+&lt;table class="table table-striped table-hover" style="font-size: 10px; margin-left: auto; margin-right: auto;"&gt;
+&lt;caption style="font-size: initial !important;"&gt;Rwanda's Key Health Indicators and Targets&lt;/caption&gt;
+ &lt;thead&gt;
+  &lt;tr&gt;
+   &lt;th style="text-align:left;"&gt; Health Indicator &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; 2020 Value &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; 2024 Target &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Status &lt;/th&gt;
+  &lt;/tr&gt;
+ &lt;/thead&gt;
+&lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 5cm; font-weight: bold;"&gt; Maternal Mortality Ratio &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; 203 per 100,000 &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; 150 per 100,000 &lt;/td&gt;
+   &lt;td style="text-align:left;color: white !important;background-color: rgba(46, 204, 113, 255) !important;"&gt; On track &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 5cm; font-weight: bold;"&gt; Under-5 Mortality Rate &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; 36 per 1,000 &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; 25 per 1,000 &lt;/td&gt;
+   &lt;td style="text-align:left;color: white !important;background-color: rgba(231, 76, 60, 255) !important;"&gt; Needs acceleration &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 5cm; font-weight: bold;"&gt; Infant Mortality Rate &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; 29 per 1,000 &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; 20 per 1,000 &lt;/td&gt;
+   &lt;td style="text-align:left;color: white !important;background-color: rgba(46, 204, 113, 255) !important;"&gt; On track &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 5cm; font-weight: bold;"&gt; Neonatal Mortality Rate &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; 19 per 1,000 &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; 12 per 1,000 &lt;/td&gt;
+   &lt;td style="text-align:left;color: white !important;background-color: rgba(231, 76, 60, 255) !important;"&gt; Needs acceleration &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 5cm; font-weight: bold;"&gt; Total Fertility Rate &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; 3.9 children &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; 3.5 children &lt;/td&gt;
+   &lt;td style="text-align:left;color: white !important;background-color: rgba(46, 204, 113, 255) !important;"&gt; On track &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 5cm; font-weight: bold;"&gt; Contraceptive Prevalence &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; 64% &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; 70% &lt;/td&gt;
+   &lt;td style="text-align:left;color: white !important;background-color: rgba(46, 204, 113, 255) !important;"&gt; On track &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 5cm; font-weight: bold;"&gt; Antenatal Care (4+ visits) &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; 56% &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; 80% &lt;/td&gt;
+   &lt;td style="text-align:left;color: white !important;background-color: rgba(231, 76, 60, 255) !important;"&gt; Needs acceleration &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 5cm; font-weight: bold;"&gt; Institutional Delivery &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; 94% &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; 98% &lt;/td&gt;
+   &lt;td style="text-align:left;color: white !important;background-color: rgba(46, 204, 113, 255) !important;"&gt; On track &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 5cm; font-weight: bold;"&gt; Stunting (&amp;lt;5 years) &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; 33% &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; 19% &lt;/td&gt;
+   &lt;td style="text-align:left;color: white !important;background-color: rgba(231, 76, 60, 255) !important;"&gt; Needs acceleration &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 5cm; font-weight: bold;"&gt; HIV Prevalence (15-49) &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; 3.0% &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; &amp;lt;2.5% &lt;/td&gt;
+   &lt;td style="text-align:left;color: white !important;background-color: rgba(46, 204, 113, 255) !important;"&gt; On track &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+---
+
+class: inverse, center, middle
+
+# Part 7: Ethical Considerations &amp; Data Quality
+
+---
+
+## Ethics in Biostatistics
+
+.pull-left[
+### Core Principles
+
+**1. Respect for Persons**
+- Informed consent
+- Confidentiality
+- Privacy protection
+
+**2. Beneficence**
+- Maximize benefits
+- Minimize risks
+- Ensure scientific validity
+
+**3. Justice**
+- Fair participant selection
+- Equitable distribution of benefits
+- Access to research results
+]
+
+.pull-right[
+### Practical Implications
+
+**Data Collection:**
+- Obtain ethical approval
+- Secure consent forms
+- Protect participant identity
+
+**Data Analysis:**
+- Honest reporting
+- No data manipulation
+- Transparent methods
+
+**Data Sharing:**
+- De-identification
+- Secure storage
+- Limited access
+
+**Rwanda Context:**
+- National Ethics Committee approval
+- Data protection law compliance
+]
+
+---
+
+## Data Quality Framework
+
+&lt;img src="introduction_to_biostatistics_files/figure-html/data-quality-1.png" width="88%" style="display: block; margin: auto;" /&gt;
+
+---
+
+## Common Data Quality Issues
+
+&lt;table class="table table-striped table-hover" style="font-size: 9px; margin-left: auto; margin-right: auto;"&gt;
+&lt;caption style="font-size: initial !important;"&gt;Common Data Quality Issues and Solutions&lt;/caption&gt;
+ &lt;thead&gt;
+  &lt;tr&gt;
+   &lt;th style="text-align:left;"&gt; Issue &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Description &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Detection &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Solution &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Example &lt;/th&gt;
+  &lt;/tr&gt;
+ &lt;/thead&gt;
+&lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 2.5cm; font-weight: bold;"&gt; Missing Values &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Incomplete records, blank fields &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Count missing, % complete &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Imputation, deletion, sensitivity &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Birth weight not recorded &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 2.5cm; font-weight: bold;"&gt; Outliers &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Extreme values beyond plausible range &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Box plots, Z-scores, IQR &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Verify, cap/truncate, transform &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Age recorded as 150 years &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 2.5cm; font-weight: bold;"&gt; Duplicates &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Same patient entered multiple times &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Unique ID checks, fuzzy matching &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Remove duplicates, merge records &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Same patient registered twice &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 2.5cm; font-weight: bold;"&gt; Inconsistent Formats &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Different date/naming conventions &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Regular expressions, validation &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Standardize using dictionary &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Date: 01/12/2023 vs 2023-12-01 &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 2.5cm; font-weight: bold;"&gt; Invalid Entries &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Values outside permitted range &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Range checks, logical rules &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Correction, deletion, follow-up &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Sex coded as '3' &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 2.5cm; font-weight: bold;"&gt; Temporal Issues &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Follow-up date before baseline &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Date sequence validation &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Re-check source, correct entry &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Death date before admission &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+---
+
+class: inverse, center, middle
+
+# Part 8: Real-World Case Studies
+
+---
+
+## Case Study 1: Malaria Elimination Strategy
+
+### Rwanda's Goal: Eliminate malaria by 2030
+
+.pull-left[
+**Data Sources:**
+- HMIS weekly surveillance
+- Household surveys
+- Meteorological data
+
+**Statistical Methods:**
+- Time series analysis
+- Spatial mapping (GIS)
+- Interrupted time series
+]
+
+.pull-right[
+&lt;img src="introduction_to_biostatistics_files/figure-html/malaria-case-1.png" width="85%" style="display: block; margin: auto;" /&gt;
+
+**Finding:** IRS reduced incidence by 50% (IRR: 0.50, 95% CI: 0.45-0.56)
+]
+
+---
+
+## Case Study 2: COVID-19 Vaccine Effectiveness
+
+### Rwanda Cohort Study (N=50,000), 2021-2023
+
+&lt;img src="introduction_to_biostatistics_files/figure-html/covid-vaccine-1.png" width="88%" style="display: block; margin: auto;" /&gt;
+
+**Design:** Prospective cohort | **Method:** Cox regression adjusted for age, comorbidities
+
+---
+
+## Case Study 3: Nutrition Intervention Impact
+
+### Does community-based nutrition education reduce child stunting?
+
+.pull-left[
+**Design:**
+- Cluster randomized trial
+- 40 sectors (20 vs. 20)
+- 2,400 children under 2
+- 18-month follow-up
+
+**Intervention:**
+- Monthly growth monitoring
+- Nutrition counseling
+- Recipe demonstrations
+]
+
+.pull-right[
+&lt;img src="introduction_to_biostatistics_files/figure-html/nutrition-rct-1.png" width="85%" style="display: block; margin: auto;" /&gt;
+
+**Result:** Difference-in-differences = -10% (95% CI: -14 to -6%, p&lt;0.001)
+]
+
+---
+
+class: inverse, center, middle
+
+# Part 9: Career Paths &amp; Resources
+
+---
+
+## Career Opportunities in Biostatistics
+
+.pull-left[
+### Rwanda-Specific Opportunities
+
+**Government:**
+- Rwanda Biomedical Center
+- Ministry of Health (M&amp;E units)
+- National Institute of Statistics Rwanda
+
+**Academia:**
+- University of Rwanda (SPH)
+- University of Global Health Equity
+- Research institutions
+
+**NGOs &amp; Partners:**
+- Clinton Health Access Initiative
+- Partners In Health
+- Management Sciences for Health
+]
+
+.pull-right[
+### Skills in Demand
+
+**Technical:**
+- Statistical software (R, SPSS, Stata)
+- Data visualization
+- GIS/spatial analysis
+- Machine learning basics
+
+**Domain Knowledge:**
+- Epidemiology
+- Public health systems
+- Clinical research
+- Health economics
+
+**Soft Skills:**
+- Communication
+- Collaboration
+- Critical thinking
+- Report writing
+]
+
+---
+
+## Learning Resources
+
+&lt;table class="table table-striped table-hover" style="font-size: 11px; margin-left: auto; margin-right: auto;"&gt;
+&lt;caption style="font-size: initial !important;"&gt;Recommended Learning Resources for Biostatistics&lt;/caption&gt;
+ &lt;thead&gt;
+  &lt;tr&gt;
+   &lt;th style="text-align:left;"&gt; Category &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Resource &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Author/Provider &lt;/th&gt;
+  &lt;/tr&gt;
+ &lt;/thead&gt;
+&lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 3cm; font-weight: bold;"&gt; Books &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Biostatistics for the Biological and Health Sciences &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Triola et al. &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 3cm; font-weight: bold;"&gt; Books &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Essential Medical Statistics &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Kirkwood &amp;amp; Sterne &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 3cm; font-weight: bold;"&gt; Books &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Fundamentals of Biostatistics &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Bernard Rosner &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 3cm; font-weight: bold;"&gt; Books &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; The Art of Statistics &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; David Spiegelhalter &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 3cm; font-weight: bold;"&gt; Online Courses &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Coursera: Biostatistics &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Johns Hopkins &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 3cm; font-weight: bold;"&gt; Online Courses &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; EdX: Principles of Biostatistics &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Harvard &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 3cm; font-weight: bold;"&gt; Online Courses &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Khan Academy: Statistics and Probability &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Khan Academy &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 3cm; font-weight: bold;"&gt; Online Courses &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; DataCamp: Statistics with R &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; DataCamp &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 3cm; font-weight: bold;"&gt; R Resources &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; R for Data Science (free) &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Hadley Wickham &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 3cm; font-weight: bold;"&gt; R Resources &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; R Graphics Cookbook &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Winston Chang &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 3cm; font-weight: bold;"&gt; R Resources &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Posit Cloud (free online) &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Posit &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+---
+
+## Recommended Practice Exercises
+
+&lt;table class="table table-striped table-hover" style="font-size: 10px; margin-left: auto; margin-right: auto;"&gt;
+&lt;caption style="font-size: initial !important;"&gt;8-Week Practice Schedule for Biostatistics Mastery&lt;/caption&gt;
+ &lt;thead&gt;
+  &lt;tr&gt;
+   &lt;th style="text-align:right;"&gt; Week &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Topic &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Hands-On Exercise &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Dataset &lt;/th&gt;
+  &lt;/tr&gt;
+ &lt;/thead&gt;
+&lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:right;width: 1.5cm; font-weight: bold;"&gt; 1 &lt;/td&gt;
+   &lt;td style="text-align:left;width: 3.5cm; font-weight: bold;background-color: rgba(236, 240, 241, 255) !important;"&gt; Data Types &amp;amp; Organization &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Classify variables from Rwanda DHS &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; DHS 2020 &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:right;width: 1.5cm; font-weight: bold;"&gt; 2 &lt;/td&gt;
+   &lt;td style="text-align:left;width: 3.5cm; font-weight: bold;background-color: rgba(236, 240, 241, 255) !important;"&gt; Descriptive Statistics &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Calculate mean, median, SD &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; HMIS extract &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:right;width: 1.5cm; font-weight: bold;"&gt; 3 &lt;/td&gt;
+   &lt;td style="text-align:left;width: 3.5cm; font-weight: bold;background-color: rgba(236, 240, 241, 255) !important;"&gt; Data Visualization &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Create bar, histogram, time series &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Malaria surveillance &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:right;width: 1.5cm; font-weight: bold;"&gt; 4 &lt;/td&gt;
+   &lt;td style="text-align:left;width: 3.5cm; font-weight: bold;background-color: rgba(236, 240, 241, 255) !important;"&gt; Probability Basics &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Calculate disease probabilities &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; COVID-19 data &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:right;width: 1.5cm; font-weight: bold;"&gt; 5 &lt;/td&gt;
+   &lt;td style="text-align:left;width: 3.5cm; font-weight: bold;background-color: rgba(236, 240, 241, 255) !important;"&gt; Hypothesis Testing &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Perform t-test comparing groups &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Clinical trial data &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:right;width: 1.5cm; font-weight: bold;"&gt; 6 &lt;/td&gt;
+   &lt;td style="text-align:left;width: 3.5cm; font-weight: bold;background-color: rgba(236, 240, 241, 255) !important;"&gt; Study Designs &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Design a study for research question &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Literature review &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:right;width: 1.5cm; font-weight: bold;"&gt; 7 &lt;/td&gt;
+   &lt;td style="text-align:left;width: 3.5cm; font-weight: bold;background-color: rgba(236, 240, 241, 255) !important;"&gt; Regression Analysis &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Analyze BMI and blood pressure &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; NCD survey &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:right;width: 1.5cm; font-weight: bold;"&gt; 8 &lt;/td&gt;
+   &lt;td style="text-align:left;width: 3.5cm; font-weight: bold;background-color: rgba(236, 240, 241, 255) !important;"&gt; Real-World Project &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Complete district health data analysis &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; District HMIS &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+---
+
+## Key Takeaways
+
+.pull-left[
+### Core Concepts
+1. Biostatistics transforms health data into evidence
+2. Proper study design is foundational
+3. Data quality determines analysis validity
+4. Visualization enhances understanding
+5. Ethics must guide all research
+
+### Rwanda Context
+- HMIS is backbone of health data
+- DHS provides population insights
+- Digital health is expanding
+- Evidence drives policy decisions
+]
+
+.pull-right[
+### Next Steps
+**As a Student:**
+- Practice with real datasets
+- Learn statistical software
+- Read health research papers
+- Join biostatistics communities
+- Apply concepts to local problems
+
+**Remember:**
+&gt; "Statistics is the grammar of science."
+&gt;
+&gt; — Karl Pearson
+
+&gt; "Without data, you're just another person with an opinion."
+&gt;
+&gt; — W. Edwards Deming
+]
+
+---
+
+## Summary: The Biostatistics Workflow
+
+&lt;img src="introduction_to_biostatistics_files/figure-html/workflow-1.png" width="95%" style="display: block; margin: auto;" /&gt;
+
+---
+
+## References &amp; Further Reading
+
+### Key Publications
+1. Rwanda Ministry of Health. (2020). *Rwanda Demographic and Health Survey 2019-20*.
+2. Rwanda Biomedical Center. (2023). *Health Management Information System Annual Report*.
+3. Farmer, P. E., et al. (2013). "Reduced premature mortality in Rwanda: lessons from success." *BMJ*, 346.
+4. Binagwaho, A., et al. (2014). "Rwanda 20 years on: investing in life." *The Lancet*, 384(9940).
+
+### Statistical Methods
+5. Kirkwood, B. R., &amp; Sterne, J. A. (2003). *Essential Medical Statistics*.
+6. Altman, D. G. (1991). *Practical Statistics for Medical Research*.
+
+### Online Resources
+- Rwanda DHS: https://www.statistics.gov.rw/
+- WHO Health Statistics: https://www.who.int/data/gho
+- Gapminder: https://www.gapminder.org/
+
+---
+
+## Appendix: Statistical Formulas
+
+&lt;table class="table table-striped table-hover" style="font-size: 12px; margin-left: auto; margin-right: auto;"&gt;
+&lt;caption style="font-size: initial !important;"&gt;Commonly Used Statistical Formulas&lt;/caption&gt;
+ &lt;thead&gt;
+  &lt;tr&gt;
+   &lt;th style="text-align:left;"&gt; Statistic &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Formula &lt;/th&gt;
+   &lt;th style="text-align:left;"&gt; Use Case &lt;/th&gt;
+  &lt;/tr&gt;
+ &lt;/thead&gt;
+&lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 4cm; font-weight: bold;"&gt; Mean &lt;/td&gt;
+   &lt;td style="text-align:left;font-family: monospace;"&gt; x̄ = Σxᵢ / n &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; |Central tendency &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 4cm; font-weight: bold;"&gt; Standard Deviation &lt;/td&gt;
+   &lt;td style="text-align:left;font-family: monospace;"&gt; SD = √[Σ(xᵢ - x̄)² / (n-1)] &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; |Variability measure &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 4cm; font-weight: bold;"&gt; Standard Error &lt;/td&gt;
+   &lt;td style="text-align:left;font-family: monospace;"&gt; SE = SD / √n &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Precision of mean &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 4cm; font-weight: bold;"&gt; Relative Risk &lt;/td&gt;
+   &lt;td style="text-align:left;font-family: monospace;"&gt; RR = P(Disease&amp;amp;#124;Exposed) / P(Disease&amp;amp;#124;Unexposed) &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Risk comparison &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 4cm; font-weight: bold;"&gt; Odds Ratio &lt;/td&gt;
+   &lt;td style="text-align:left;font-family: monospace;"&gt; OR = (a × d) / (b × c) &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; Case-control studies &lt;/td&gt;
+  &lt;/tr&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:left;width: 4cm; font-weight: bold;"&gt; Confidence Interval &lt;/td&gt;
+   &lt;td style="text-align:left;font-family: monospace;"&gt; CI₉₅% = x̄ ± 1.96 × SE &lt;/td&gt;
+   &lt;td style="text-align:left;"&gt; |Range of estimates &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+---
+
+## Appendix: Sample Size Calculations
+
+
+``` r
+# Sample size for prevalence estimation
+# Formula: n = (Z^2 * p * (1-p)) / e^2
+
+calculate_sample_size &lt;- function(prevalence, margin_of_error, confidence = 0.95) {
+  z &lt;- qnorm((1 + confidence) / 2)
+  n &lt;- (z^2 * prevalence * (1 - prevalence)) / (margin_of_error^2)
+  return(ceiling(n))
+}
+
+# Example: Estimating malaria prevalence
+# Expected: 15%, Margin: 3%, 95% confidence
+n_required &lt;- calculate_sample_size(prevalence = 0.15, margin_of_error = 0.03)
+cat("Required sample size:", n_required, "participants\n")
+```
+
+```
+## Required sample size: 545 participants
+```
+
+``` r
+# Adjust for design effect and non-response
+design_effect &lt;- 1.5
+response_rate &lt;- 0.85
+n_adjusted &lt;- ceiling(n_required * design_effect / response_rate)
+cat("Adjusted sample size:", n_adjusted, "participants")
+```
+
+```
+## Adjusted sample size: 962 participants
+```
+
+---
+
+class: center, middle, inverse
+
+# Questions &amp; Discussion
+
+### Contact Information
+**Email:** [your.email@institution.rw]
+
+**Office:** [Your Office Location]
+
+**Office Hours:** [Your Office Hours]
+
+### Course Materials
+All slides, datasets, and code available at:
+
+**[Your Course Website/GitHub Repository]**
+
+---
+
+class: center, middle
+
+# Thank You!
+
+### Remember:
+*"The best time to learn biostatistics was yesterday.*
+
+*The second best time is today."*
+
+**Let's transform health data into better lives for all Rwandans!**
+    </textarea>
+<style data-target="print-only">@media screen {.remark-slide-container{display:block;}.remark-slide-scaler{box-shadow:none;}}</style>
+<script src="https://remarkjs.com/downloads/remark-latest.min.js"></script>
+<script>var slideshow = remark.create({
+"highlightStyle": "github",
+"highlightLines": true,
+"countIncrementalSlides": false,
+"slideNumberFormat": "%current% / %total%",
+"ratio": "16:9"
+});
+if (window.HTMLWidgets) slideshow.on('afterShowSlide', function (slide) {
+  window.dispatchEvent(new Event('resize'));
+});
+(function(d) {
+  var s = d.createElement("style"), r = d.querySelector(".remark-slide-scaler");
+  if (!r) return;
+  s.type = "text/css"; s.innerHTML = "@page {size: " + r.style.width + " " + r.style.height +"; }";
+  d.head.appendChild(s);
+})(document);
+
+(function(d) {
+  var el = d.getElementsByClassName("remark-slides-area");
+  if (!el) return;
+  var slide, slides = slideshow.getSlides(), els = el[0].children;
+  for (var i = 1; i < slides.length; i++) {
+    slide = slides[i];
+    if (slide.properties.continued === "true" || slide.properties.count === "false") {
+      els[i - 1].className += ' has-continuation';
+    }
+  }
+  var s = d.createElement("style");
+  s.type = "text/css"; s.innerHTML = "@media print { .has-continuation { display: none; } }";
+  d.head.appendChild(s);
+})(document);
+// delete the temporary CSS (for displaying all slides initially) when the user
+// starts to view slides
+(function() {
+  var deleted = false;
+  slideshow.on('beforeShowSlide', function(slide) {
+    if (deleted) return;
+    var sheets = document.styleSheets, node;
+    for (var i = 0; i < sheets.length; i++) {
+      node = sheets[i].ownerNode;
+      if (node.dataset["target"] !== "print-only") continue;
+      node.parentNode.removeChild(node);
+    }
+    deleted = true;
+  });
+})();
+// add `data-at-shortcutkeys` attribute to <body> to resolve conflicts with JAWS
+// screen reader (see PR #262)
+(function(d) {
+  let res = {};
+  d.querySelectorAll('.remark-help-content table tr').forEach(tr => {
+    const t = tr.querySelector('td:nth-child(2)').innerText;
+    tr.querySelectorAll('td:first-child .key').forEach(key => {
+      const k = key.innerText;
+      if (/^[a-z]$/.test(k)) res[k] = t;  // must be a single letter (key)
+    });
+  });
+  d.body.setAttribute('data-at-shortcutkeys', JSON.stringify(res));
+})(document);
+(function() {
+  "use strict"
+  // Replace <script> tags in slides area to make them executable
+  var scripts = document.querySelectorAll(
+    '.remark-slides-area .remark-slide-container script'
+  );
+  if (!scripts.length) return;
+  for (var i = 0; i < scripts.length; i++) {
+    var s = document.createElement('script');
+    var code = document.createTextNode(scripts[i].textContent);
+    s.appendChild(code);
+    var scriptAttrs = scripts[i].attributes;
+    for (var j = 0; j < scriptAttrs.length; j++) {
+      s.setAttribute(scriptAttrs[j].name, scriptAttrs[j].value);
+    }
+    scripts[i].parentElement.replaceChild(s, scripts[i]);
+  }
+})();
+(function() {
+  var links = document.getElementsByTagName('a');
+  for (var i = 0; i < links.length; i++) {
+    if (/^(https?:)?\/\//.test(links[i].getAttribute('href'))) {
+      links[i].target = '_blank';
+    }
+  }
+})();
+// adds .remark-code-has-line-highlighted class to <pre> parent elements
+// of code chunks containing highlighted lines with class .remark-code-line-highlighted
+(function(d) {
+  const hlines = d.querySelectorAll('.remark-code-line-highlighted');
+  const preParents = [];
+  const findPreParent = function(line, p = 0) {
+    if (p > 1) return null; // traverse up no further than grandparent
+    const el = line.parentElement;
+    return el.tagName === "PRE" ? el : findPreParent(el, ++p);
+  };
+
+  for (let line of hlines) {
+    let pre = findPreParent(line);
+    if (pre && !preParents.includes(pre)) preParents.push(pre);
+  }
+  preParents.forEach(p => p.classList.add("remark-code-has-line-highlighted"));
+})(document);</script>
+
+<script>
+slideshow._releaseMath = function(el) {
+  var i, text, code, codes = el.getElementsByTagName('code');
+  for (i = 0; i < codes.length;) {
+    code = codes[i];
+    if (code.parentNode.tagName !== 'PRE' && code.childElementCount === 0) {
+      text = code.textContent;
+      if (/^\\\((.|\s)+\\\)$/.test(text) || /^\\\[(.|\s)+\\\]$/.test(text) ||
+          /^\$\$(.|\s)+\$\$$/.test(text) ||
+          /^\\begin\{([^}]+)\}(.|\s)+\\end\{[^}]+\}$/.test(text)) {
+        code.outerHTML = code.innerHTML;  // remove <code></code>
+        continue;
+      }
+    }
+    i++;
+  }
+};
+slideshow._releaseMath(document);
+</script>
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+(function () {
+  var script = document.createElement('script');
+  script.type = 'text/javascript';
+  script.src  = 'https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-MML-AM_CHTML';
+  if (location.protocol !== 'file:' && /^https?:/.test(script.src))
+    script.src  = script.src.replace(/^https?:/, '');
+  document.getElementsByTagName('head')[0].appendChild(script);
+})();
+</script>
+  </body>
+</html>
