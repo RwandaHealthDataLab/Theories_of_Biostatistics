@@ -1,0 +1,595 @@
+---
+title: "Problems 10.112-10.113: Health Promotion - BMI Comparison by Ethnicity"
+author: "Caucasian vs. African-American Women"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: cerulean
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  fig.align = 'center'
+)
+```
+
+# Introduction
+
+## Study Background
+
+This document analyzes **Body Mass Index (BMI)** differences between **Caucasian** and **African-American** women using data from the ESTRADL study.
+
+### BMI Classifications
+
+**Binary Classification (Problem 10.112):**
+- **Normal:** BMI < 25 kg/m²
+- **Overweight:** BMI ≥ 25 kg/m²
+
+**Three-Category Classification (Problem 10.113):**
+- **Normal:** BMI < 25 kg/m²
+- **Overweight:** 25 ≤ BMI < 30 kg/m²
+- **Obese:** BMI ≥ 30 kg/m²
+
+### Research Questions
+
+**Problem 10.112:** Compare the percentage of Caucasian and African-American women who are overweight (BMI ≥ 25). Report a two-tailed p-value.
+
+**Problem 10.113:** Compare the distribution of BMI between Caucasian and African-American women using the finer three-category classification. Report a two-tailed p-value.
+
+# Data Loading and Preparation
+
+```{r load-packages}
+# Load required libraries
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(DescTools)
+library(ggplot2)
+library(scales)
+
+# Set theme for plots
+theme_set(theme_minimal())
+```
+
+
+```{r load-data}
+# Load the ESTRADL.DAT dataset
+data_path <- "Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/ESTRADL.DAT.txt"
+
+# Read the data - handle quotes in column names
+estradl_data <- read.csv(data_path, header = TRUE, strip.white = TRUE, quote = "'\"")
+
+# Clean column names (remove any quotes)
+colnames(estradl_data) <- gsub("'", "", colnames(estradl_data))
+colnames(estradl_data) <- gsub("\"", "", colnames(estradl_data))
+
+# Display structure
+str(estradl_data)
+
+# Display column names for verification
+cat("\nColumn names in dataset:\n")
+print(colnames(estradl_data))
+```
+
+# Variable Definitions
+
+```{r variable-definitions}
+# Create variable definitions table
+var_definitions <- data.frame(
+  Variable = c("Id", "Estradl", "Ethnic", "Entage", "Numchild", "Agefbo",
+               "Anykids", "Agemenar", "BMI", "WHR"),
+  Description = c(
+    "Subject identification number",
+    "Estradiol level",
+    "Ethnicity (0 = Caucasian, 1 = African-American)",
+    "Age at entry",
+    "Number of children",
+    "Age at first birth",
+    "Any kids (0 = No, 1 = Yes, 9 = Unknown)",
+    "Age at menarche",
+    "Body Mass Index (kg/m²)",
+    "Waist-to-Hip Ratio"
+  )
+)
+
+kable(var_definitions,
+      caption = "Variable Definitions for ESTRADL Dataset") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+# Data Processing
+
+```{r data-processing}
+# Verify required columns exist
+required_cols <- c("Id", "Ethnic", "BMI")
+
+missing_cols <- setdiff(required_cols, colnames(estradl_data))
+if(length(missing_cols) > 0) {
+  stop(paste("Missing columns:", paste(missing_cols, collapse = ", ")))
+}
+
+cat("All required columns are present.\n")
+cat("Dataset has", nrow(estradl_data), "observations.\n\n")
+
+# Create factor variables and BMI classifications
+estradl_data <- estradl_data %>%
+  mutate(
+    # Ethnicity factor
+    Ethnic_Label = factor(Ethnic, levels = c(0, 1),
+                         labels = c("Caucasian", "African-American")),
+
+    # Binary BMI classification (Problem 10.112)
+    BMI_Binary = factor(ifelse(BMI >= 25, "Overweight (≥25)", "Normal (<25)"),
+                       levels = c("Normal (<25)", "Overweight (≥25)")),
+
+    # Three-category BMI classification (Problem 10.113)
+    BMI_Category = factor(case_when(
+      BMI < 25 ~ "Normal (<25)",
+      BMI >= 25 & BMI < 30 ~ "Overweight (25-<30)",
+      BMI >= 30 ~ "Obese (≥30)"
+    ), levels = c("Normal (<25)", "Overweight (25-<30)", "Obese (≥30)"))
+  )
+
+# Remove missing BMI values
+estradl_clean <- estradl_data %>%
+  filter(!is.na(BMI), !is.na(Ethnic))
+
+cat("After removing missing values:\n")
+cat("  Total observations:", nrow(estradl_clean), "\n")
+cat("  Caucasian:", sum(estradl_clean$Ethnic == 0), "\n")
+cat("  African-American:", sum(estradl_clean$Ethnic == 1), "\n\n")
+
+cat("Data processing completed successfully.\n")
+```
+
+# Exploratory Data Analysis
+
+## Overall Summary by Ethnicity
+
+```{r overall-summary}
+# Summary statistics by ethnicity
+summary_ethnic <- estradl_clean %>%
+  group_by(Ethnic_Label) %>%
+  summarise(
+    N = n(),
+    Mean_BMI = round(mean(BMI, na.rm = TRUE), 2),
+    SD_BMI = round(sd(BMI, na.rm = TRUE), 2),
+    Median_BMI = round(median(BMI, na.rm = TRUE), 2),
+    Min_BMI = round(min(BMI, na.rm = TRUE), 2),
+    Max_BMI = round(max(BMI, na.rm = TRUE), 2)
+  )
+
+kable(summary_ethnic,
+      caption = "BMI Summary Statistics by Ethnicity",
+      col.names = c("Ethnicity", "N", "Mean BMI", "SD", "Median", "Min", "Max")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+## BMI Distribution Visualization
+
+```{r bmi-distribution}
+# Histogram by ethnicity
+ggplot(estradl_clean, aes(x = BMI, fill = Ethnic_Label)) +
+  geom_histogram(alpha = 0.6, position = "identity", bins = 30) +
+  geom_vline(xintercept = 25, linetype = "dashed", color = "red", size = 1) +
+  geom_vline(xintercept = 30, linetype = "dashed", color = "darkred", size = 1) +
+  annotate("text", x = 25, y = Inf, label = "Overweight (25)",
+           vjust = 1.5, hjust = -0.1, color = "red") +
+  annotate("text", x = 30, y = Inf, label = "Obese (30)",
+           vjust = 1.5, hjust = -0.1, color = "darkred") +
+  scale_fill_manual(values = c("Caucasian" = "#3498db",
+                               "African-American" = "#e74c3c")) +
+  labs(title = "BMI Distribution by Ethnicity",
+       subtitle = "Vertical lines indicate BMI thresholds (25 and 30)",
+       x = "Body Mass Index (kg/m²)",
+       y = "Count",
+       fill = "Ethnicity") +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+# Box plot
+ggplot(estradl_clean, aes(x = Ethnic_Label, y = BMI, fill = Ethnic_Label)) +
+  geom_boxplot(alpha = 0.7, outlier.size = 2) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  geom_hline(yintercept = 25, linetype = "dashed", color = "red") +
+  geom_hline(yintercept = 30, linetype = "dashed", color = "darkred") +
+  annotate("text", x = 0.5, y = 25, label = "Overweight threshold",
+           hjust = -0.1, color = "red", size = 3.5) +
+  annotate("text", x = 0.5, y = 30, label = "Obese threshold",
+           hjust = -0.1, color = "darkred", size = 3.5) +
+  scale_fill_manual(values = c("Caucasian" = "#3498db",
+                               "African-American" = "#e74c3c")) +
+  labs(title = "BMI by Ethnicity (Box Plot)",
+       x = "Ethnicity",
+       y = "Body Mass Index (kg/m²)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+---
+
+# Problem 10.112: Binary Classification (Overweight vs Normal)
+
+## Question
+Compare the percentage of Caucasian and African-American women who are overweight (BMI ≥ 25 kg/m²). Report a two-tailed p-value.
+
+## Classification Distribution
+
+```{r problem-10.112-table}
+cat("=== BINARY BMI CLASSIFICATION ===\n\n")
+
+# Contingency table
+binary_table <- table(estradl_clean$Ethnic_Label, estradl_clean$BMI_Binary)
+
+kable(addmargins(binary_table),
+      caption = "BMI Binary Classification by Ethnicity") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+## Proportions by Ethnicity
+
+```{r problem-10.112-proportions}
+# Calculate proportions
+props_binary <- estradl_clean %>%
+  group_by(Ethnic_Label) %>%
+  summarise(
+    N = n(),
+    N_Overweight = sum(BMI >= 25),
+    Proportion_Overweight = round(mean(BMI >= 25), 4),
+    Percentage_Overweight = round(100 * mean(BMI >= 25), 1)
+  )
+
+kable(props_binary,
+      caption = "Percentage Overweight by Ethnicity",
+      col.names = c("Ethnicity", "Total N", "N Overweight",
+                   "Proportion", "Percentage (%)")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Calculate difference
+diff_pct <- props_binary$Percentage_Overweight[2] - props_binary$Percentage_Overweight[1]
+cat(sprintf("\nDifference in percentage overweight (African-American - Caucasian): %.1f%%\n",
+            diff_pct))
+```
+
+## Chi-square Test (Two-tailed)
+
+```{r problem-10.112-chisq}
+cat("\n=== CHI-SQUARE TEST (Two-tailed) ===\n\n")
+
+# Chi-square test
+chi_binary <- chisq.test(binary_table)
+
+cat(sprintf("Null Hypothesis: Proportion overweight is the same for both ethnic groups\n"))
+cat(sprintf("Alternative Hypothesis: Proportions differ between groups (two-tailed)\n\n"))
+
+cat(sprintf("Chi-square statistic: %.4f\n", chi_binary$statistic))
+cat(sprintf("Degrees of freedom: %d\n", chi_binary$parameter))
+cat(sprintf("P-value (two-tailed): %.4f\n", chi_binary$p.value))
+
+cat(sprintf("\nConclusion at α = 0.05: %s\n",
+            ifelse(chi_binary$p.value < 0.05,
+                   "REJECT H₀ - Significant difference in overweight percentages",
+                   "FAIL TO REJECT H₀ - No significant difference")))
+
+# Expected frequencies
+cat("\n--- Expected Frequencies ---\n")
+print(round(chi_binary$expected, 2))
+```
+
+## Fisher's Exact Test
+
+```{r problem-10.112-fisher}
+cat("\n=== FISHER'S EXACT TEST (Two-tailed) ===\n\n")
+
+# Fisher's exact test
+fisher_binary <- fisher.test(binary_table)
+
+cat(sprintf("P-value (two-tailed): %.4f\n", fisher_binary$p.value))
+cat(sprintf("Odds Ratio: %.3f\n", fisher_binary$estimate))
+cat(sprintf("95%% CI for OR: (%.3f, %.3f)\n",
+            fisher_binary$conf.int[1], fisher_binary$conf.int[2]))
+
+cat("\nInterpretation of Odds Ratio:\n")
+cat(sprintf("  Women in the African-American group have %.2fx the odds of being\n",
+            fisher_binary$estimate))
+cat(sprintf("  overweight compared to the Caucasian group.\n"))
+```
+
+## Visualization
+
+```{r problem-10.112-plot}
+# Bar plot
+ggplot(estradl_clean, aes(x = Ethnic_Label, fill = BMI_Binary)) +
+  geom_bar(position = "fill", alpha = 0.8) +
+  geom_text(stat = 'count', aes(label = after_stat(count)),
+            position = position_fill(vjust = 0.5), color = "white",
+            size = 5, fontface = "bold") +
+  scale_fill_manual(values = c("Normal (<25)" = "#2ecc71",
+                               "Overweight (≥25)" = "#e74c3c")) +
+  scale_y_continuous(labels = percent_format()) +
+  labs(title = "BMI Classification by Ethnicity (Binary)",
+       subtitle = paste0("P-value (two-tailed) = ",
+                        sprintf("%.4f", chi_binary$p.value)),
+       x = "Ethnicity",
+       y = "Proportion",
+       fill = "BMI Category") +
+  theme_minimal() +
+  theme(legend.position = "top",
+        plot.title = element_text(face = "bold", size = 14))
+```
+
+---
+
+# Problem 10.113: Three-Category Classification
+
+## Question
+Compare the distribution of BMI between Caucasian and African-American women using the finer classification: Normal (<25), Overweight (25-<30), Obese (≥30). Report a two-tailed p-value.
+
+## Three-Category Distribution
+
+```{r problem-10.113-table}
+cat("=== THREE-CATEGORY BMI CLASSIFICATION ===\n\n")
+
+# Contingency table
+category_table <- table(estradl_clean$Ethnic_Label, estradl_clean$BMI_Category)
+
+kable(addmargins(category_table),
+      caption = "BMI Three-Category Classification by Ethnicity") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+## Proportions by Category
+
+```{r problem-10.113-proportions}
+# Calculate proportions for each category
+props_category <- estradl_clean %>%
+  group_by(Ethnic_Label, BMI_Category) %>%
+  summarise(N = n(), .groups = 'drop') %>%
+  group_by(Ethnic_Label) %>%
+  mutate(
+    Total = sum(N),
+    Proportion = round(N / Total, 4),
+    Percentage = round(100 * N / Total, 1)
+  )
+
+kable(props_category,
+      caption = "Distribution of BMI Categories by Ethnicity",
+      col.names = c("Ethnicity", "BMI Category", "N", "Total",
+                   "Proportion", "Percentage (%)")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+
+# Summary table (wide format)
+props_wide <- props_category %>%
+  select(Ethnic_Label, BMI_Category, Percentage) %>%
+  pivot_wider(names_from = BMI_Category, values_from = Percentage)
+
+kable(props_wide,
+      caption = "Percentage Distribution Summary",
+      digits = 1) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+## Chi-square Test (Two-tailed)
+
+```{r problem-10.113-chisq}
+cat("\n=== CHI-SQUARE TEST (Two-tailed) ===\n\n")
+
+# Chi-square test
+chi_category <- chisq.test(category_table)
+
+cat(sprintf("Null Hypothesis: BMI distribution is the same for both ethnic groups\n"))
+cat(sprintf("Alternative Hypothesis: BMI distributions differ (two-tailed)\n\n"))
+
+cat(sprintf("Chi-square statistic: %.4f\n", chi_category$statistic))
+cat(sprintf("Degrees of freedom: %d\n", chi_category$parameter))
+cat(sprintf("P-value (two-tailed): %.4f\n", chi_category$p.value))
+
+cat(sprintf("\nConclusion at α = 0.05: %s\n",
+            ifelse(chi_category$p.value < 0.05,
+                   "REJECT H₀ - Significant difference in BMI distributions",
+                   "FAIL TO REJECT H₀ - No significant difference")))
+
+# Expected frequencies
+cat("\n--- Expected Frequencies ---\n")
+print(round(chi_category$expected, 2))
+
+# Check adequacy
+min_expected <- min(chi_category$expected)
+cat(sprintf("\nMinimum expected frequency: %.2f\n", min_expected))
+if(min_expected < 5) {
+  cat("WARNING: Some expected frequencies < 5. Results may not be reliable.\n")
+}
+```
+
+## Contribution to Chi-square
+
+```{r problem-10.113-contributions}
+# Calculate contribution of each cell to chi-square
+contributions <- (chi_category$observed - chi_category$expected)^2 / chi_category$expected
+
+cat("\n--- Contribution to Chi-square Statistic ---\n")
+print(round(contributions, 3))
+
+cat("\nCells with largest contributions:\n")
+contrib_df <- as.data.frame(as.table(contributions))
+colnames(contrib_df) <- c("Ethnicity", "BMI_Category", "Contribution")
+contrib_df <- contrib_df %>% arrange(desc(Contribution))
+
+kable(head(contrib_df, 6),
+      caption = "Top Contributors to Chi-square Statistic",
+      digits = 3) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+## Visualization
+
+```{r problem-10.113-plot}
+# Stacked bar plot
+ggplot(estradl_clean, aes(x = Ethnic_Label, fill = BMI_Category)) +
+  geom_bar(position = "fill", alpha = 0.8) +
+  geom_text(stat = 'count', aes(label = after_stat(count)),
+            position = position_fill(vjust = 0.5), color = "white",
+            size = 4, fontface = "bold") +
+  scale_fill_manual(values = c("Normal (<25)" = "#2ecc71",
+                               "Overweight (25-<30)" = "#f39c12",
+                               "Obese (≥30)" = "#e74c3c")) +
+  scale_y_continuous(labels = percent_format()) +
+  labs(title = "BMI Distribution by Ethnicity (Three Categories)",
+       subtitle = paste0("P-value (two-tailed) = ",
+                        sprintf("%.4f", chi_category$p.value)),
+       x = "Ethnicity",
+       y = "Proportion",
+       fill = "BMI Category") +
+  theme_minimal() +
+  theme(legend.position = "top",
+        plot.title = element_text(face = "bold", size = 14))
+
+# Side-by-side bar plot
+plot_data <- props_category %>%
+  select(Ethnic_Label, BMI_Category, Percentage)
+
+ggplot(plot_data, aes(x = BMI_Category, y = Percentage, fill = Ethnic_Label)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.8) +
+  geom_text(aes(label = paste0(Percentage, "%")),
+            position = position_dodge(width = 0.9),
+            vjust = -0.5, size = 3.5) +
+  scale_fill_manual(values = c("Caucasian" = "#3498db",
+                               "African-American" = "#e74c3c")) +
+  labs(title = "BMI Category Percentages by Ethnicity",
+       x = "BMI Category",
+       y = "Percentage (%)",
+       fill = "Ethnicity") +
+  theme_minimal() +
+  theme(legend.position = "top",
+        axis.text.x = element_text(angle = 0, hjust = 0.5))
+```
+
+---
+
+# Summary of Results
+
+```{r summary-results}
+# Create summary table
+summary_table <- data.frame(
+  Problem = c(
+    "10.112: Binary Classification",
+    "10.112: Binary (Fisher's Exact)",
+    "10.113: Three-Category Classification"
+  ),
+  Test = c(
+    "Chi-square",
+    "Fisher's Exact",
+    "Chi-square"
+  ),
+  Test_Statistic = c(
+    sprintf("χ² = %.3f", chi_binary$statistic),
+    "---",
+    sprintf("χ² = %.3f", chi_category$statistic)
+  ),
+  DF = c(
+    sprintf("%d", chi_binary$parameter),
+    "---",
+    sprintf("%d", chi_category$parameter)
+  ),
+  P_Value_Two_Tailed = c(
+    sprintf("%.4f", chi_binary$p.value),
+    sprintf("%.4f", fisher_binary$p.value),
+    sprintf("%.4f", chi_category$p.value)
+  ),
+  Conclusion = c(
+    ifelse(chi_binary$p.value < 0.05, "Significant**", "Not significant"),
+    ifelse(fisher_binary$p.value < 0.05, "Significant**", "Not significant"),
+    ifelse(chi_category$p.value < 0.05, "Significant**", "Not significant")
+  )
+)
+
+kable(summary_table,
+      caption = "Summary of Statistical Tests (α = 0.05, Two-tailed)",
+      col.names = c("Problem", "Test", "Statistic", "df", "P-value", "Result")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  row_spec(which(summary_table$Conclusion == "Significant**"),
+           bold = TRUE, background = "#ffffcc")
+```
+
+# Conclusions
+
+## Problem 10.112: Binary Classification
+
+**Research Question:** Do Caucasian and African-American women differ in the percentage who are overweight (BMI ≥ 25)?
+
+**Key Findings:**
+- **Caucasian:** `r props_binary$Percentage_Overweight[1]`% overweight
+- **African-American:** `r props_binary$Percentage_Overweight[2]`% overweight
+- **Difference:** `r sprintf("%.1f", diff_pct)` percentage points
+- **Chi-square p-value:** `r sprintf("%.4f", chi_binary$p.value)`
+- **Fisher's exact p-value:** `r sprintf("%.4f", fisher_binary$p.value)`
+
+**Conclusion:** `r ifelse(chi_binary$p.value < 0.05, "There is a statistically significant difference in the percentage of overweight women between the two ethnic groups.", "There is no statistically significant difference in the percentage of overweight women between the two ethnic groups.")`
+
+## Problem 10.113: Three-Category Classification
+
+**Research Question:** Does the distribution of BMI categories (Normal, Overweight, Obese) differ between Caucasian and African-American women?
+
+**Key Findings:**
+- **Chi-square statistic:** `r sprintf("%.4f", chi_category$statistic)` (df = `r chi_category$parameter`)
+- **P-value (two-tailed):** `r sprintf("%.4f", chi_category$p.value)`
+
+**Distribution Comparison:**
+```{r conclusion-table, echo=FALSE}
+kable(props_wide,
+      caption = "BMI Category Distribution by Ethnicity (%)",
+      digits = 1) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+**Conclusion:** `r ifelse(chi_category$p.value < 0.05, "There is a statistically significant difference in the distribution of BMI categories between Caucasian and African-American women.", "There is no statistically significant difference in the distribution of BMI categories between the two ethnic groups.")`
+
+## Clinical Implications
+
+The analysis reveals:
+
+1. **Binary vs. Three-Category:** The finer classification (Problem 10.113) provides more detailed information about the nature of BMI differences
+
+2. **Practical Significance:** Beyond statistical significance, the actual magnitude of differences should be considered for public health interventions
+
+3. **Sample Size Considerations:**
+   - Caucasian: `r sum(estradl_clean$Ethnic == 0)` women
+   - African-American: `r sum(estradl_clean$Ethnic == 1)` women
+
+## Statistical Methods Used
+
+- **Chi-square test for independence** (two-tailed)
+- **Fisher's exact test** (two-tailed)
+- **Odds ratios** with confidence intervals
+- **Contingency table analysis**
+- **Effect size assessment**
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
+
+---
+**End of Analysis**

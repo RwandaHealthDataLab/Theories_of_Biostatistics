@@ -1,0 +1,241 @@
+================================================================================
+CHAPTER 10: HEPATIC DISEASE ANALYSIS - QUICK START GUIDE
+================================================================================
+
+PROJECT FILES CREATED:
+----------------------
+1. Chapter_10_Hepatic_Disease_Analysis.Rmd  (Main analysis document)
+2. README_Chapter10.md                       (Detailed instructions)
+3. render_chapter10.R                        (Rendering script)
+4. QUICK_START_GUIDE.txt                     (This file)
+
+================================================================================
+HOW TO USE - THREE EASY OPTIONS:
+================================================================================
+
+OPTION 1: RStudio (EASIEST)
+---------------------------
+1. Open RStudio
+2. Open file: Chapter_10_Hepatic_Disease_Analysis.Rmd
+3. Click "Knit" button (or press Ctrl+Shift+K)
+4. Done! HTML file will open automatically
+
+OPTION 2: Using the Render Script
+----------------------------------
+1. Open RStudio
+2. Open file: render_chapter10.R
+3. Click "Source" button (or press Ctrl+Shift+S)
+4. The script will:
+   - Check for required packages
+   - Install missing packages
+   - Render the document
+   - Show success/error messages
+
+OPTION 3: R Console
+-------------------
+Type these commands in R:
+
+setwd("C:/Users/ValensRwema/Desktop/Theories of Biostatistics/Theories of Biostatistics/CHAPTER 10")
+source("render_chapter10.R")
+
+================================================================================
+PROBLEMS ANALYZED:
+================================================================================
+
+Problem 10.37: Test procedure selection for comparing proportions
+                 -> Chi-square test or Fisher's exact test
+
+Problem 10.38: Compare pancreatic secretion increases across 5 groups
+                 -> Includes contingency tables and hypothesis tests
+
+Problem 10.39: Compare biliary secretion increases across 5 groups
+                 -> Includes contingency tables and hypothesis tests
+
+Problem 10.40: Dose-response for pancreatic secretions
+                 -> Cochran-Armitage trend tests by hormone type
+                 -> Separate analysis for: Secretin, CCK, Gastrin, CCK+Secretin
+
+Problem 10.41: Dose-response for biliary secretions
+                 -> Cochran-Armitage trend tests by hormone type
+                 -> Separate analysis for: Secretin, CCK, Gastrin, CCK+Secretin
+
+Problems 10.42-10.46: Sample size calculations
+                       -> Two-proportion tests
+                       -> Accounting for non-compliance
+                       -> Power = 80%, alpha = 0.05 (one-sided)
+
+================================================================================
+DOCUMENT FEATURES:
+================================================================================
+
+1. COMPREHENSIVE DATA EXPLORATION
+   - Dataset structure and summary
+   - Variable definitions table
+   - Summary statistics by treatment group
+
+2. STATISTICAL ANALYSES
+   - Chi-square tests for independence
+   - Fisher's exact tests
+   - Cochran-Armitage trend tests
+   - Power analysis and sample size calculations
+
+3. VISUALIZATIONS
+   - Bar charts (percentage increases by group)
+   - Box plots (secretion changes by treatment)
+   - Dose-response scatter plots with trend lines
+   - Heatmaps (sample size vs. compliance rates)
+
+4. DETAILED INTERPRETATIONS
+   - Test results with p-values
+   - Contingency tables
+   - Effect sizes
+   - Statistical conclusions
+
+================================================================================
+REQUIRED R PACKAGES:
+================================================================================
+
+The following packages will be automatically installed if missing:
+
+- tidyverse      (data manipulation and visualization)
+- knitr          (dynamic report generation)
+- kableExtra     (enhanced tables)
+- DescTools      (Cochran-Armitage test)
+- pwr            (power analysis)
+- ggplot2        (visualizations)
+- scales         (scale functions for ggplot2)
+- gridExtra      (arranging multiple plots)
+- rmarkdown      (R Markdown rendering)
+
+================================================================================
+TROUBLESHOOTING:
+================================================================================
+
+PROBLEM: "object 'Hormone' not found" error
+SOLUTION: This means the data loading has an issue. Try this:
+          1. Run the test script: source("test_data_loading.R")
+          2. This will diagnose the exact problem
+          3. Check that column names are loaded correctly
+          4. The updated Rmd file has better error handling
+
+PROBLEM: "Data file not found"
+SOLUTION: Check that HORMONE.DAT.txt exists at:
+          Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-comma/HORMONE.DAT.txt
+
+PROBLEM: "Package installation failed"
+SOLUTION: 1. Check internet connection
+          2. Run: install.packages("PACKAGE_NAME")
+          3. Restart R and try again
+
+PROBLEM: "Permission denied"
+SOLUTION: 1. Run RStudio as Administrator
+          2. Or save to a different directory
+
+PROBLEM: Rendering takes too long
+SOLUTION: This is normal for first run. The document includes:
+          - Multiple statistical tests
+          - Complex visualizations
+          - Trend analysis for multiple groups
+          Expect 2-5 minutes depending on your system.
+
+PROBLEM: Column names have quotes or special characters
+SOLUTION: The updated code now handles this automatically:
+          - Strips quotes from column names
+          - Verifies all required columns exist
+          - Provides clear error messages
+
+================================================================================
+OUTPUT:
+================================================================================
+
+After successful rendering, you will have:
+
+Chapter_10_Hepatic_Disease_Analysis.html
+
+This HTML file contains:
+- Interactive table of contents
+- All statistical analyses
+- High-quality visualizations
+- Formatted tables
+- Complete interpretations
+
+You can open this file in any web browser (Chrome, Firefox, Edge, Safari)
+
+================================================================================
+DATASET INFORMATION:
+================================================================================
+
+Source: Rosner's Fundamentals of Biostatistics (8th Edition)
+Dataset: HORMONE.DAT
+Sample Size: 399 observations (hens)
+Variables: 11 variables
+
+Treatment Groups:
+1. Saline (Control)           - N = 31 hens
+2. Secretin                   - N = 35 hens
+3. Cholecystokinin (CCK)      - N = 165 hens
+4. Gastrin                    - N = 38 hens
+5. CCK + Secretin             - N = 130 hens
+
+Outcome Measures:
+- Pancreatic secretion (μL/10 min) - pre and post
+- Biliary secretion (μL/10 min) - pre and post
+- pH levels for both secretion types
+- Hormone doses (μg/kg body weight)
+
+================================================================================
+STATISTICAL METHODS SUMMARY:
+================================================================================
+
+1. CHI-SQUARE TEST FOR INDEPENDENCE
+   Purpose: Compare proportions across k groups
+   H0: Proportions are equal across all groups
+   H1: At least one proportion differs
+
+2. FISHER'S EXACT TEST
+   Purpose: Alternative when expected frequencies < 5
+   Provides: Exact p-value
+
+3. COCHRAN-ARMITAGE TREND TEST
+   Purpose: Assess linear dose-response relationships
+   H0: No linear trend across dose levels
+   H1: Linear trend exists
+
+4. TWO-PROPORTION Z-TEST (for sample size)
+   Purpose: Calculate required sample size
+   Inputs: Effect size, alpha, power
+   Output: n per group
+
+================================================================================
+NOTES FOR PROBLEMS 10.42-10.46:
+================================================================================
+
+The sample size calculations use HYPOTHETICAL values for demonstration:
+- p1_ideal = 0.10 (treatment group event rate)
+- p2_ideal = 0.15 (control group event rate)
+
+If your textbook provides different values for Problems 10.42-10.43, you should:
+1. Open Chapter_10_Hepatic_Disease_Analysis.Rmd
+2. Find the section "Problem Setup" under "Sample Size Calculations"
+3. Replace p1_ideal and p2_ideal with the actual values
+4. Re-render the document
+
+================================================================================
+ADDITIONAL RESOURCES:
+================================================================================
+
+For more details, see:
+- README_Chapter10.md (comprehensive documentation)
+- R Markdown Cheat Sheet: https://rstudio.com/resources/cheatsheets/
+- Rosner textbook Chapter 10
+
+For questions about statistical methods:
+- Chi-square test: Rosner Chapter 10, Section 10.2
+- Trend tests: Rosner Chapter 10, Section 10.5
+- Sample size: Rosner Chapter 10, Section 10.7
+
+================================================================================
+END OF QUICK START GUIDE
+================================================================================
+
+Last Updated: 2025-10-18
