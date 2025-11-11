@@ -1,0 +1,1751 @@
+---
+title: "Theories of Biostatistics "
+subtitle: "Unit 5: Advanced Statistical Data Analysis"
+author: "Semakula Muhammed, PhD - Senior Statistician"
+date: "05 Novemeber, 2025"
+output:
+  ioslides_presentation:
+    widescreen: true
+    smaller: true
+    transition: default
+    logo: NULL
+    css: custom.css
+  beamer_presentation:
+    theme: "Madrid"
+    colortheme: "default"
+    fonttheme: "structurebold"
+    keep_tex: true
+---
+
+<style>
+.two-column-left {
+  float: left;
+  width: 58%;
+  padding-right: 2%;
+}
+.two-column-right {
+  float: right;
+  width: 38%;
+}
+.clear {
+  clear: both;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, 
+                      fig.width = 7, fig.height = 4.5, fig.align = 'center')
+
+# Load packages with error handling
+load_package <- function(pkg) {
+  if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
+    message(paste("Package", pkg, "not available. Some features may be limited."))
+    return(FALSE)
+  }
+  return(TRUE)
+}
+
+# Essential packages
+library(ggplot2)
+library(dplyr)
+
+# Optional packages (won't stop if missing)
+has_rsm <- load_package("rsm")
+has_tidyr <- load_package("tidyr")
+has_gridExtra <- load_package("gridExtra")
+has_lme4 <- load_package("lme4")
+has_MASS <- load_package("MASS")
+
+set.seed(123)
+```
+
+# Fitting Regression Models
+
+## Introduction to Regression Models
+
+**Purpose:**
+
+- Develop **empirical models** from experimental data
+- Predict response at untested factor levels
+- Understand relationship between factors and response
+
+**Regression vs. ANOVA:**
+
+- ANOVA: Factors treated as categorical
+- Regression: Factors can be quantitative
+- Both are special cases of General Linear Model
+
+## Linear Regression Model
+
+**General Form:**
+
+$$y = \beta_0 + \beta_1 x_1 + \beta_2 x_2 + \cdots + \beta_k x_k + \epsilon$$
+
+where:
+
+- $y$ = response variable
+- $x_i$ = predictor/independent variables
+- $\beta_i$ = regression coefficients (parameters)
+- $\epsilon$ = random error $\sim N(0, \sigma^2)$
+
+**Matrix Form:**
+
+$$\mathbf{y} = \mathbf{X}\boldsymbol{\beta} + \boldsymbol{\epsilon}$$
+
+## Model Hierarchy
+
+**First-Order Model:**
+
+$$y = \beta_0 + \beta_1 x_1 + \beta_2 x_2 + \epsilon$$
+
+- Linear in parameters and variables
+- No interaction terms
+- No curvature
+
+**First-Order with Interaction:**
+
+$$y = \beta_0 + \beta_1 x_1 + \beta_2 x_2 + \beta_{12} x_1 x_2 + \epsilon$$
+
+- Includes two-way interaction
+- Still planar (no curvature)
+
+## Model Hierarchy (cont.)
+
+**Second-Order Model:**
+
+$$y = \beta_0 + \sum_{i=1}^k \beta_i x_i + \sum_{i=1}^k \beta_{ii} x_i^2 + \sum\sum_{i<j} \beta_{ij} x_i x_j + \epsilon$$
+
+**Components:**
+
+- **Linear terms:** Main effects
+- **Quadratic terms:** Pure curvature  
+- **Cross-product terms:** Interaction effects
+
+**Parameters:** $p = \frac{(k+1)(k+2)}{2}$
+
+For $k=2$: $p = 6$ parameters
+
+## Least Squares Estimation
+
+**Objective:** Minimize sum of squared errors
+
+$$SSE = \sum_{i=1}^n (y_i - \hat{y}_i)^2 = \sum_{i=1}^n e_i^2$$
+
+**Normal Equations:**
+
+$$\mathbf{X}'\mathbf{X}\boldsymbol{\beta} = \mathbf{X}'\mathbf{y}$$
+
+**Solution:**
+
+$$\hat{\boldsymbol{\beta}} = (\mathbf{X}'\mathbf{X})^{-1}\mathbf{X}'\mathbf{y}$$
+
+**Properties:** Best Linear Unbiased Estimator (BLUE)
+
+## Fitted Values and Residuals
+
+**Fitted Values:**
+
+$$\hat{\mathbf{y}} = \mathbf{X}\hat{\boldsymbol{\beta}} = \mathbf{X}(\mathbf{X}'\mathbf{X})^{-1}\mathbf{X}'\mathbf{y} = \mathbf{H}\mathbf{y}$$
+
+where $\mathbf{H}$ is the **hat matrix**
+
+**Residuals:**
+
+$$\mathbf{e} = \mathbf{y} - \hat{\mathbf{y}} = (\mathbf{I} - \mathbf{H})\mathbf{y}$$
+
+**Mean Squared Error:**
+
+$$MS_E = \frac{SSE}{n-p} = \frac{\sum e_i^2}{n-p}$$
+
+where $p$ = number of parameters
+
+## Hypothesis Testing
+
+**Test for Significance of Regression:**
+
+$$H_0: \beta_1 = \beta_2 = \cdots = \beta_k = 0$$
+
+vs.
+
+$$H_1: \text{At least one } \beta_j \neq 0$$
+
+**F-Test:**
+
+$$F_0 = \frac{SS_R/k}{SSE/(n-p)} = \frac{MS_R}{MS_E}$$
+
+## Hypothesis Testing (cont.)
+
+**Decision Rule:**
+
+Reject $H_0$ if: $F_0 > F_{\alpha, k, n-p}$
+
+**Interpretation:**
+
+- Significant F → Model is useful
+- Non-significant F → Model doesn't explain variation
+
+**P-value:** Probability of observing $F_0$ or larger if $H_0$ true
+
+## Regression ANOVA Table
+
+| Source | SS | df | MS | $F_0$ |
+|--------|----|----|----|----|
+| Regression | $SS_R$ | $k$ | $MS_R$ | $MS_R/MS_E$ |
+| Residual | $SS_E$ | $n-p$ | $MS_E$ | |
+| Total | $SS_T$ | $n-1$ | | |
+
+**Sums of Squares:**
+
+- $SS_T = \sum (y_i - \bar{y})^2$
+- $SS_R = \sum (\hat{y}_i - \bar{y})^2$  
+- $SS_E = \sum (y_i - \hat{y}_i)^2$
+
+**Identity:** $SS_T = SS_R + SS_E$
+
+## Coefficient of Determination
+
+**R-Squared:**
+
+$$R^2 = \frac{SS_R}{SS_T} = 1 - \frac{SSE}{SS_T}$$
+
+**Interpretation:**
+
+- Proportion of variation explained by model
+- $0 \leq R^2 \leq 1$
+- Higher is better, but can be misleading
+
+**Adjusted R-Squared:**
+
+$$R^2_{adj} = 1 - \frac{SSE/(n-p)}{SS_T/(n-1)} = 1 - \frac{MS_E}{MS_T}$$
+
+Penalizes for adding unnecessary variables
+
+## Tests on Individual Coefficients
+
+**Hypothesis:**
+
+$$H_0: \beta_j = 0 \quad \text{vs.} \quad H_1: \beta_j \neq 0$$
+
+**t-Test:**
+
+$$t_0 = \frac{\hat{\beta}_j}{SE(\hat{\beta}_j)}$$
+
+where $SE(\hat{\beta}_j) = \sqrt{MS_E \cdot C_{jj}}$
+
+and $C_{jj}$ is the $j$th diagonal element of $(\mathbf{X}'\mathbf{X})^{-1}$
+
+**Reject $H_0$ if:** $|t_0| > t_{\alpha/2, n-p}$
+
+## Confidence Intervals for Coefficients
+
+**For Regression Coefficients:**
+
+$$\hat{\beta}_j \pm t_{\alpha/2, n-p} \cdot SE(\hat{\beta}_j)$$
+
+where:
+
+$$SE(\hat{\beta}_j) = \sqrt{MS_E \cdot C_{jj}}$$
+
+$C_{jj}$ = $j$th diagonal element of $(\mathbf{X}'\mathbf{X})^{-1}$
+
+**Interpretation:** We are $(1-\alpha)100$% confident true $\beta_j$ is in this interval
+
+## Prediction Intervals
+
+**For Mean Response** at $\mathbf{x}_0$:
+
+$$\hat{y}_0 \pm t_{\alpha/2, n-p} \sqrt{MS_E \cdot \mathbf{x}_0'(\mathbf{X}'\mathbf{X})^{-1}\mathbf{x}_0}$$
+
+**For New Observation:**
+
+$$\hat{y}_0 \pm t_{\alpha/2, n-p} \sqrt{MS_E(1 + \mathbf{x}_0'(\mathbf{X}'\mathbf{X})^{-1}\mathbf{x}_0)}$$
+
+**Note:** Prediction interval is wider (includes $\sigma^2$ term)
+
+## Model Diagnostics
+
+<div class="two-column-left">
+
+**Four Key Tools:**
+
+1. **Residual plots** - check assumptions
+2. **Normal probability plot** - normality
+3. **Influence diagnostics** - influential points
+4. **Lack-of-fit test** - model adequacy
+
+**Check for:**
+
+- Non-constant variance
+- Non-normality
+- Outliers
+- Influential observations
+
+</div>
+
+<div class="two-column-right">
+
+```{r regression_diagnostics, echo=FALSE, fig.height=4, fig.width=4}
+# Generate example data
+set.seed(456)
+x <- runif(50, 0, 10)
+y <- 2 + 3*x + rnorm(50, 0, 2)
+model <- lm(y ~ x)
+par(mfrow = c(2, 2), mar = c(3, 3, 2, 1))
+plot(model, which = 1:4)
+par(mfrow = c(1, 1))
+```
+
+</div>
+
+<div class="clear"></div>
+
+## Standardized Residuals
+
+**Internally Studentized Residuals:**
+
+$$r_i = \frac{e_i}{\sqrt{MS_E(1-h_{ii})}}$$
+
+- $h_{ii}$ = $i$th diagonal element of $\mathbf{H}$ (hat matrix)
+- Used for quick checks of unusual observations
+
+**Externally Studentized Residuals:**
+
+$$t_i = \frac{e_i}{\sqrt{MS_{E(i)}(1-h_{ii})}}$$
+
+- $MS_{E(i)}$ = MSE computed with $i$th observation deleted
+- More reliable for outlier detection
+
+**Outlier Detection:** $|t_i| > t_{\alpha/(2n), n-p-1}$ (Bonferroni)
+
+## Leverage and Influence
+
+**Leverage:**
+
+$$h_{ii} = \mathbf{x}_i'(\mathbf{X}'\mathbf{X})^{-1}\mathbf{x}_i$$
+
+**High leverage if:** $h_{ii} > \frac{2p}{n}$
+
+- Measures distance from center of data
+- High leverage = unusual factor combination
+
+**Cook's Distance:**
+
+$$D_i = \frac{r_i^2}{p} \cdot \frac{h_{ii}}{1-h_{ii}}$$
+
+**Influential if:** $D_i > F_{0.5, p, n-p}$ or $D_i > 1$
+
+- Combines leverage and residual size
+- Measures impact on fitted values
+
+## PRESS Statistic
+
+**Prediction Error Sum of Squares:**
+
+$$PRESS = \sum_{i=1}^n (y_i - \hat{y}_{(i)})^2 = \sum_{i=1}^n \left(\frac{e_i}{1-h_{ii}}\right)^2$$
+
+- $\hat{y}_{(i)}$ = predicted value with $i$th observation deleted
+- Measures prediction accuracy
+
+**PRESS R-Squared:**
+
+$$R^2_{pred} = 1 - \frac{PRESS}{SS_T}$$
+
+**Use:** 
+- Model selection criterion (lower is better)
+- Should be close to $R^2_{adj}$
+- Large difference indicates overfitting
+
+## Lack of Fit Test
+
+**When replication exists:**
+
+$$SS_E = SS_{LOF} + SS_{PE}$$
+
+**F-Test:**
+
+$$F_0 = \frac{MS_{LOF}}{MS_{PE}} = \frac{SS_{LOF}/(m-p)}{SS_{PE}/(n-m)}$$
+
+where $m$ = number of distinct design points
+
+**Reject model if:** $F_0 > F_{\alpha, m-p, n-m}$
+
+---
+
+# Response Surface Methodology
+
+## Introduction to RSM
+
+**Response Surface Methodology:**
+
+Optimization technique using designed experiments to:
+
+- Find **optimal** settings
+- Model response as function of factors
+- Systematically move toward optimum
+
+**Two Phases:**
+
+1. **Screening** - First-order models, identify important factors
+2. **Optimization** - Second-order models, find optimum
+
+**Applications:** Process optimization, product design, quality improvement
+
+## Response Surface Concepts
+
+<div class="two-column-left">
+
+**True Response Function:**
+
+$$y = f(x_1, x_2, \ldots, x_k) + \epsilon$$
+
+**Approximation:**
+
+$$\hat{y} = \hat{f}(x_1, x_2, \ldots, x_k)$$
+
+**Goal:** Find settings that optimize $\hat{y}$
+
+**Key Idea:**
+
+- Model response surface
+- Find optimal region
+- Confirm experimentally
+
+</div>
+
+<div class="two-column-right">
+
+```{r response_surface, echo=FALSE, fig.height=4, fig.width=4}
+# Create visualization
+x1 <- seq(-2, 2, length.out = 50)
+x2 <- seq(-2, 2, length.out = 50)
+grid <- expand.grid(x1 = x1, x2 = x2)
+grid$y <- 80 - 2*(grid$x1-0.5)^2 - 3*(grid$x2-0.3)^2 + 
+          0.5*grid$x1*grid$x2
+
+ggplot(grid, aes(x1, x2, z = y)) +
+  geom_contour_filled(bins = 15) +
+  geom_contour(color = "white", alpha = 0.3, bins = 15) +
+  geom_point(data = data.frame(x1 = 0.5, x2 = 0.3), 
+             aes(x1, x2), color = "red", size = 4, inherit.aes = FALSE) +
+  labs(x = "Factor 1", y = "Factor 2") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+</div>
+
+<div class="clear"></div>
+
+## First-Order Model
+
+**Model:**
+
+$$y = \beta_0 + \beta_1 x_1 + \beta_2 x_2 + \cdots + \beta_k x_k + \epsilon$$
+
+**When to Use:**
+
+- Early stages of experimentation
+- Far from optimum
+- Screening designs
+
+**Designs:**
+
+- $2^k$ factorial
+- $2^{k-p}$ fractional factorials
+
+## Method of Steepest Ascent
+
+**Purpose:** Move toward optimum region
+
+**Path:** Direction of maximum increase in response
+
+**Steps along path:**
+
+$$\Delta x_i = \lambda \hat{\beta}_i$$
+
+where $\lambda$ is step size
+
+**Algorithm:**
+
+1. Fit first-order model
+2. Choose step size for one variable
+3. Calculate proportional steps for others
+4. Run experiments along path
+5. Stop when response decreases
+
+## Steepest Ascent Example
+
+<div class="two-column-left">
+
+**Path Direction:**
+
+Move along gradient of first-order model
+
+**Algorithm:**
+
+1. Fit first-order model
+2. Determine path: $\Delta x_i = \lambda \hat{\beta}_i$
+3. Run experiments along path
+4. Stop when response decreases
+
+**Key Point:**
+
+Direction proportional to regression coefficients
+
+</div>
+
+<div class="two-column-right">
+
+```{r steepest_ascent, echo=FALSE, fig.height=4, fig.width=4}
+# Visualize steepest ascent path
+x1 <- seq(-2, 3, length.out = 50)
+x2 <- seq(-2, 3, length.out = 50)
+grid <- expand.grid(x1 = x1, x2 = x2)
+grid$y <- 40 + 8*grid$x1 + 5*grid$x2 - 3*grid$x1^2 - 2*grid$x2^2
+
+path_x1 <- seq(0, 1.5, length.out = 8)
+path_x2 <- seq(0, 1, length.out = 8)
+
+ggplot(grid, aes(x1, x2, z = y)) +
+  geom_contour(aes(color = ..level..), bins = 12, size = 0.8) +
+  geom_point(data = data.frame(x1 = 0, x2 = 0), 
+             aes(x1, x2), color = "red", size = 3, inherit.aes = FALSE) +
+  geom_path(data = data.frame(x1 = path_x1, x2 = path_x2),
+            aes(x1, x2), arrow = arrow(length = unit(0.25, "cm")),
+            color = "red", size = 1, inherit.aes = FALSE) +
+  labs(x = "Factor 1", y = "Factor 2") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+</div>
+
+<div class="clear"></div>
+
+## Second-Order Model
+
+**Full Quadratic Model:**
+
+$$y = \beta_0 + \sum_{i=1}^k \beta_i x_i + \sum_{i=1}^k \beta_{ii} x_i^2 + \sum\sum_{i<j} \beta_{ij} x_i x_j + \epsilon$$
+
+**When to Use:**
+
+- Near optimum
+- Significant curvature detected
+- Optimization phase
+
+**Parameters:** $p = \frac{(k+1)(k+2)}{2}$
+
+For $k=2$: $p = 6$ parameters
+
+## Central Composite Design (CCD)
+
+**Structure:**
+
+1. **Factorial points:** $2^k$ or $2^{k-p}$ fraction
+2. **Axial/star points:** $2k$ points at distance $\alpha$ from center
+3. **Center points:** $n_c$ replicates at origin
+
+**Total runs:** $N = 2^k + 2k + n_c$
+
+**For $k=2$:** $N = 4 + 4 + n_c = 8 + n_c$
+
+## CCD Geometry
+
+<div class="two-column-left">
+
+**Design Points:**
+
+1. **Factorial** (blue): $2^k$ cube corners
+2. **Axial** (red): $2k$ star points
+3. **Center** (green): $n_c$ replicates
+
+**Axial Distance ($\alpha$):**
+
+- Rotatable: $\alpha = (2^k)^{1/4}$
+- Face-centered: $\alpha = 1$
+- Circumscribed: $\alpha = \sqrt{k}$
+
+For $k=2$: $\alpha = 1.414$ (rotatable)
+
+</div>
+
+<div class="two-column-right">
+
+```{r ccd_design, echo=FALSE, fig.height=4, fig.width=4}
+factorial <- data.frame(x1 = c(-1, 1, -1, 1), 
+                        x2 = c(-1, -1, 1, 1),
+                        type = "Factorial")
+axial <- data.frame(x1 = c(-1.414, 1.414, 0, 0),
+                    x2 = c(0, 0, -1.414, 1.414),
+                    type = "Axial")
+center <- data.frame(x1 = 0, x2 = 0, type = "Center")
+
+ccd <- rbind(factorial, axial, center)
+
+ggplot(ccd, aes(x1, x2, color = type, shape = type)) +
+  geom_point(size = 4, alpha = 0.8) +
+  geom_hline(yintercept = 0, linetype = "dashed", alpha = 0.3) +
+  geom_vline(xintercept = 0, linetype = "dashed", alpha = 0.3) +
+  scale_color_manual(values = c("Factorial" = "blue", 
+                                  "Axial" = "red", 
+                                  "Center" = "green")) +
+  scale_shape_manual(values = c(16, 17, 15)) +
+  xlim(-1.8, 1.8) + ylim(-1.8, 1.8) +
+  labs(x = "x₁", y = "x₂") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        legend.title = element_blank())
+```
+
+</div>
+
+<div class="clear"></div>
+
+## CCD Types
+
+**Based on $\alpha$ value:**
+
+1. **Circumscribed (CCC):** $\alpha = \sqrt{k}$
+   - All points inside hypersphere
+   
+2. **Face-Centered (CCF):** $\alpha = 1$
+   - Axial points on cube faces
+   - Good when factor range limited
+
+3. **Inscribed (CCI):** $\alpha < 1$
+   - All points inside cube
+
+**Rotatability:** $\alpha = (2^k)^{1/4}$ makes design rotatable
+
+## Box-Behnken Designs
+
+**Alternative to CCD:**
+
+- Three-level design
+- No $2^k$ factorial portion
+- Efficient for $k = 3, 4, 5$ factors
+
+**For $k=3$:**
+
+- 12 factorial-type runs (edges of cube)
+- 3-5 center points
+- Total: 15-17 runs
+
+**Advantage:** All points on sphere, no extreme points
+
+## Analysis of Second-Order Model
+
+**Stationary Point:** Where $\frac{\partial \hat{y}}{\partial x_i} = 0$ for all $i$
+
+**Matrix Form:**
+
+$$\hat{y} = \hat{\beta}_0 + \mathbf{x}'\mathbf{b} + \mathbf{x}'\mathbf{B}\mathbf{x}$$
+
+**Stationary Point:**
+
+$$\mathbf{x}_s = -\frac{1}{2}\mathbf{B}^{-1}\mathbf{b}$$
+
+**Response at Stationary Point:**
+
+$$\hat{y}_s = \hat{\beta}_0 + \frac{1}{2}\mathbf{x}_s'\mathbf{b}$$
+
+## Canonical Analysis
+
+**Canonical Form:**
+
+$$\hat{y} = \hat{y}_s + \lambda_1 w_1^2 + \lambda_2 w_2^2 + \cdots + \lambda_k w_k^2$$
+
+where:
+
+- $\lambda_i$ = eigenvalues of $\mathbf{B}$
+- $w_i$ = canonical variables (rotated axes)
+
+**Nature of Stationary Point:**
+
+- All $\lambda_i > 0$: **Minimum**
+- All $\lambda_i < 0$: **Maximum**
+- Mixed signs: **Saddle point**
+
+## Response Surface Types: Maximum
+
+<div class="two-column-left">
+
+**All $\lambda_i < 0$**
+
+**Characteristics:**
+
+- Eigenvalues all negative
+- Stationary point is maximum
+- Contours are concentric ellipses
+- Response decreases in all directions from optimum
+
+**Example:**
+
+$$\hat{y} = 100 - 2x_1^2 - 3x_2^2$$
+
+</div>
+
+<div class="two-column-right">
+
+```{r surface_max, echo=FALSE, fig.height=4, fig.width=4}
+x <- y <- seq(-2, 2, length.out = 30)
+grid <- expand.grid(x = x, y = y)
+grid$z_max <- 100 - 2*grid$x^2 - 3*grid$y^2
+
+ggplot(grid, aes(x, y, z = z_max)) +
+  geom_contour_filled(bins = 10) +
+  geom_point(aes(x = 0, y = 0), color = "red", size = 3) +
+  labs(x = "x₁", y = "x₂") +
+  theme_minimal() + theme(legend.position = "none")
+```
+
+</div>
+
+<div class="clear"></div>
+
+## Response Surface Types: Minimum
+
+<div class="two-column-left">
+
+**All $\lambda_i > 0$**
+
+**Characteristics:**
+
+- Eigenvalues all positive
+- Stationary point is minimum
+- Contours are concentric ellipses
+- Response increases in all directions from optimum
+
+**Example:**
+
+$$\hat{y} = 20 + 2x_1^2 + 3x_2^2$$
+
+</div>
+
+<div class="two-column-right">
+
+```{r surface_min, echo=FALSE, fig.height=4, fig.width=4}
+grid$z_min <- 20 + 2*grid$x^2 + 3*grid$y^2
+
+ggplot(grid, aes(x, y, z = z_min)) +
+  geom_contour_filled(bins = 10) +
+  geom_point(aes(x = 0, y = 0), color = "red", size = 3) +
+  labs(x = "x₁", y = "x₂") +
+  theme_minimal() + theme(legend.position = "none")
+```
+
+</div>
+
+<div class="clear"></div>
+
+## Response Surface Types: Saddle Point
+
+<div class="two-column-left">
+
+**Mixed Signs of $\lambda_i$**
+
+**Characteristics:**
+
+- Some eigenvalues positive, some negative
+- Stationary point is saddle
+- Hyperbolic contours
+- Maximum in one direction, minimum in another
+
+**Example:**
+
+$$\hat{y} = 50 + 3x_1^2 - 2x_2^2$$
+
+**Action:** Use ridge analysis
+
+</div>
+
+<div class="two-column-right">
+
+```{r surface_saddle, echo=FALSE, fig.height=4, fig.width=4}
+grid$z_saddle <- 50 + 3*grid$x^2 - 2*grid$y^2
+
+ggplot(grid, aes(x, y, z = z_saddle)) +
+  geom_contour_filled(bins = 10) +
+  geom_point(aes(x = 0, y = 0), color = "red", size = 3) +
+  labs(x = "x₁", y = "x₂") +
+  theme_minimal() + theme(legend.position = "none")
+```
+
+</div>
+
+<div class="clear"></div>
+
+## Ridge Analysis
+
+**When stationary point is outside region:**
+
+Use **ridge analysis** to find:
+
+- Direction of steepest ascent/descent
+- Maximum/minimum on spherical regions
+- Constrained optimization
+
+**Ridge System:**
+
+$$\max/\min \quad \hat{y} = \hat{\beta}_0 + \mathbf{x}'\mathbf{b} + \mathbf{x}'\mathbf{B}\mathbf{x}$$
+
+subject to: $\mathbf{x}'\mathbf{x} = R^2$
+
+---
+
+# Robust Parameter Design
+
+## Introduction to Robust Design
+
+**Goal:** Make products/processes **insensitive** to:
+
+- Environmental variation (noise factors)
+- Component variation
+- Deterioration over time
+
+**Taguchi's Approach:**
+
+- Parameter design
+- Robust design
+- Quality loss function
+
+**Key Concept:** Design for **robustness**, not just performance
+
+## Noise Factors
+
+**Three Types:**
+
+**1. External (Environmental):**
+
+- Temperature, humidity, altitude
+- User-to-user variation
+
+**2. Internal (Unit-to-Unit):**
+
+- Manufacturing variation
+- Material property variation
+
+**3. Deterioration:**
+
+- Wear over time
+- Aging effects
+- Degradation
+
+**Goal:** Design to be robust to all three types
+
+## Signal-to-Noise Ratios
+
+**Taguchi's S/N Ratios:**
+
+**Smaller-the-Better:**
+$$\eta = -10\log_{10}\left(\frac{1}{n}\sum y_i^2\right)$$
+
+**Larger-the-Better:**
+$$\eta = -10\log_{10}\left(\frac{1}{n}\sum \frac{1}{y_i^2}\right)$$
+
+**Nominal-the-Best:**
+$$\eta = 10\log_{10}\left(\frac{\bar{y}^2}{s^2}\right)$$
+
+Higher S/N is better
+
+## Crossed Array Designs
+
+**Structure:**
+
+- **Inner array:** Control factors (we can set)
+- **Outer array:** Noise factors (vary in field)
+
+**Crossed design:** Run each inner array combination at all outer array settings
+
+**Analysis:** 
+
+- Find control factor settings that minimize variation from noise
+- Adjust mean to target
+
+## Crossed Array Example
+
+```{r crossed_array, echo=FALSE}
+# Illustration of crossed array
+inner <- expand.grid(A = c(-1, 1), B = c(-1, 1))
+outer <- expand.grid(N1 = c(-1, 1), N2 = c(-1, 1))
+
+knitr::kable(
+  data.frame(
+    Run = 1:4,
+    A = inner$A,
+    B = inner$B,
+    `N1=-1,N2=-1` = c("y11", "y21", "y31", "y41"),
+    `N1=1,N2=-1` = c("y12", "y22", "y32", "y42"),
+    `N1=-1,N2=1` = c("y13", "y23", "y33", "y43"),
+    `N1=1,N2=1` = c("y14", "y24", "y34", "y44"),
+    check.names = FALSE
+  ),
+  caption = "Crossed Array Design Structure"
+)
+```
+
+## Problems with Crossed Arrays
+
+**Disadvantages:**
+
+1. **Inefficient** - requires many runs
+2. **Confounding** - location and dispersion effects mixed
+3. **Analysis** - S/N ratios problematic
+
+**Better Approach:**
+
+- **Combined array** designs
+- **Response model** approach
+- Model both mean and variance
+
+## Combined Array Approach
+
+**Single Design:**
+
+- Include both control and noise factors
+- Fewer runs than crossed array
+- Model response directly
+
+**Analysis:**
+
+$$y = f(\text{control factors}, \text{noise factors})$$
+
+**Goal:** Find control factor settings where:
+
+- Mean is on target
+- Response insensitive to noise
+
+## Response Model Method
+
+**Dual Response Approach:**
+
+1. **Model the mean:** $\hat{\mu} = f(\text{control factors})$
+2. **Model the variance:** $\hat{\sigma}^2 = g(\text{control factors})$
+
+**Optimization:**
+
+- Minimize variance
+- Adjust mean to target using adjustment factor
+
+**Example:**
+
+$$\min \quad \hat{\sigma}^2$$
+
+subject to: $\hat{\mu} = \text{target}$
+
+## Robust Design Strategy
+
+**Sequential Process:**
+
+1. **Screening:** Identify important control and noise factors
+2. **Modeling:** Build response models for mean and variance
+3. **Optimization:** Find robust operating conditions
+4. **Confirmation:** Verify results
+
+**Key:** Use **statistical design** principles throughout
+
+---
+
+# Random Effects Models
+
+## Fixed vs. Random Effects
+
+**Fixed Effects:**
+
+- Factor levels specifically chosen
+- Inference only for tested levels
+- Example: 3 specific temperatures
+
+**Random Effects:**
+
+- Factor levels randomly selected from population
+- Inference for entire population
+- Example: Random sample of operators
+
+**Model Difference:**
+
+- Fixed: $\tau_i$ are constants, $\sum \tau_i = 0$
+- Random: $\tau_i \sim N(0, \sigma_\tau^2)$
+
+## One-Way Random Effects Model
+
+**Model:**
+
+$$y_{ij} = \mu + \tau_i + \epsilon_{ij}$$
+
+where:
+
+- $\tau_i \sim N(0, \sigma_\tau^2)$ - random treatment effects
+- $\epsilon_{ij} \sim N(0, \sigma^2)$ - random errors
+- $\tau_i$ and $\epsilon_{ij}$ are independent
+
+**Variance Components:**
+
+- $\sigma_\tau^2$ = between-treatment variance
+- $\sigma^2$ = within-treatment (error) variance
+
+## Expected Mean Squares
+
+**ANOVA Table for Random Effects:**
+
+| Source | E(MS) |
+|--------|-------|
+| Treatments | $\sigma^2 + n\sigma_\tau^2$ |
+| Error | $\sigma^2$ |
+
+**Note:** Different from fixed effects!
+
+**F-Test still valid:**
+
+$$F_0 = \frac{MS_{Treatments}}{MS_E} \sim F_{a-1, a(n-1)}$$
+
+## Variance Component Estimation
+
+**Method of Moments (ANOVA Method):**
+
+$$\hat{\sigma}^2 = MS_E$$
+
+$$\hat{\sigma}_\tau^2 = \frac{MS_{Treatments} - MS_E}{n}$$
+
+**Important:** If $\hat{\sigma}_\tau^2 < 0$, set $\hat{\sigma}_\tau^2 = 0$
+
+**REML (Restricted Maximum Likelihood):**
+
+- Preferred modern method
+- Always gives non-negative estimates
+- Better for unbalanced data
+- Available in `lme4`, `nlme` packages
+
+## Two-Factor Random Model
+
+**Model:**
+
+$$y_{ijk} = \mu + \alpha_i + \beta_j + (\alpha\beta)_{ij} + \epsilon_{ijk}$$
+
+where all effects are random:
+
+- $\alpha_i \sim N(0, \sigma_\alpha^2)$
+- $\beta_j \sim N(0, \sigma_\beta^2)$
+- $(\alpha\beta)_{ij} \sim N(0, \sigma_{\alpha\beta}^2)$
+- $\epsilon_{ijk} \sim N(0, \sigma^2)$
+
+## Expected Mean Squares: Two-Factor Random
+
+| Source | E(MS) |
+|--------|-------|
+| A | $\sigma^2 + n\sigma_{\alpha\beta}^2 + bn\sigma_\alpha^2$ |
+| B | $\sigma^2 + n\sigma_{\alpha\beta}^2 + an\sigma_\beta^2$ |
+| AB | $\sigma^2 + n\sigma_{\alpha\beta}^2$ |
+| Error | $\sigma^2$ |
+
+**Test Statistics:**
+
+$$F_A = \frac{MS_A}{MS_{AB}}, \quad F_B = \frac{MS_B}{MS_{AB}}, \quad F_{AB} = \frac{MS_{AB}}{MS_E}$$
+
+**Note:** Different denominators than fixed effects!
+
+## Mixed Models
+
+**One factor fixed, one random:**
+
+$$y_{ijk} = \mu + \tau_i + \beta_j + (\tau\beta)_{ij} + \epsilon_{ijk}$$
+
+- $\tau_i$ fixed, $\sum \tau_i = 0$
+- $\beta_j \sim N(0, \sigma_\beta^2)$
+- $(\tau\beta)_{ij} \sim N(0, \sigma_{\tau\beta}^2)$
+
+**Expected Mean Squares differ from both fixed and random!**
+
+## Rules for Expected Mean Squares
+
+**General Algorithm:**
+
+1. Write model equation
+2. Identify random terms
+3. Apply EMS rules based on:
+   - Factor is fixed or random
+   - Subscripts in model terms
+   - Replication structure
+
+**Software:** Most packages compute EMS automatically
+
+---
+
+# Nested and Split-Plot Designs
+
+## Nested Designs
+
+**Structure:**
+
+- Levels of one factor **nested** within levels of another
+- Not all combinations occur
+
+**Example:**
+
+- Factor A: Suppliers (3 levels)
+- Factor B: Batches (4 per supplier)
+- Batches from supplier 1 are different from batches from supplier 2
+
+**Notation:** $B(A)$ means B nested in A
+
+## Two-Stage Nested Design
+
+**Model:**
+
+$$y_{ijk} = \mu + \tau_i + \beta_{j(i)} + \epsilon_{ijk}$$
+
+where:
+
+- $i = 1, \ldots, a$ (levels of factor A)
+- $j = 1, \ldots, b$ (levels of B nested within each A)
+- $k = 1, \ldots, n$ (replicates)
+- $\beta_{j(i)}$ means $j$th level of B within $i$th level of A
+
+**Not a Factorial!** 
+
+Total runs: $N = abn$
+
+Can't test A×B interaction (doesn't exist in nested design)
+
+## Nested ANOVA
+
+**ANOVA Table:**
+
+| Source | df | SS Formula |
+|--------|----|----|
+| A | $a-1$ | $bn\sum(\bar{y}_{i..} - \bar{y}_{...})^2$ |
+| B(A) | $a(b-1)$ | $n\sum\sum(\bar{y}_{ij.} - \bar{y}_{i..})^2$ |
+| Error | $ab(n-1)$ | $\sum\sum\sum(y_{ijk} - \bar{y}_{ij.})^2$ |
+| Total | $abn-1$ | |
+
+**Cannot test A×B interaction** (doesn't exist!)
+
+## Staggered Nested Designs
+
+**Unequal nesting:**
+
+- Different number of nested levels
+- Example: Different number of batches per supplier
+
+**Advantage:** More realistic
+
+**Analysis:** 
+
+- Unbalanced
+- Use REML or ML estimation
+
+## Three-Stage Nested Design
+
+**Model:**
+
+$$y_{ijkl} = \mu + \alpha_i + \beta_{j(i)} + \gamma_{k(ij)} + \epsilon_{ijkl}$$
+
+where:
+
+- $\alpha_i$ = effect of factor A (e.g., lots)
+- $\beta_{j(i)}$ = effect of B nested in A (e.g., wafers in lots)
+- $\gamma_{k(ij)}$ = effect of C nested in AB (e.g., sites on wafers)
+- $\epsilon_{ijkl}$ = error term
+
+**Variance Components:**
+
+$$\sigma_\alpha^2, \quad \sigma_\beta^2, \quad \sigma_\gamma^2, \quad \sigma^2$$
+
+Each represents variation at different hierarchy levels
+
+## Split-Plot Designs
+
+**Origin:** Agricultural experiments
+
+**Structure:**
+
+- **Whole-plot** factor: Hard to change
+- **Subplot** factor: Easy to change
+- Restriction on randomization
+
+**Example:**
+
+- Whole-plot: Temperature (oven)
+- Subplot: Time (multiple specimens per oven setting)
+
+## Split-Plot Model
+
+**Model:**
+
+$$y_{ijk} = \mu + \tau_i + \delta_{j(i)} + \beta_k + (\tau\beta)_{ik} + \epsilon_{ijk}$$
+
+where:
+
+- $\tau_i$ = whole-plot treatment effect (fixed)
+- $\delta_{j(i)}$ = whole-plot error (random), $\delta_{j(i)} \sim N(0, \sigma_\delta^2)$
+- $\beta_k$ = subplot treatment effect (fixed)
+- $(\tau\beta)_{ik}$ = interaction effect
+- $\epsilon_{ijk}$ = subplot error (random), $\epsilon_{ijk} \sim N(0, \sigma^2)$
+
+**Key Feature:** Two error terms with different properties
+
+## Split-Plot ANOVA Table
+
+| Source | df | F-test |
+|--------|----|----|
+| Whole-plot (A) | $a-1$ | $MS_A/MS_\delta$ |
+| WP Error ($\delta$) | $a(n-1)$ | — |
+| Subplot (B) | $b-1$ | $MS_B/MS_\epsilon$ |
+| A×B | $(a-1)(b-1)$ | $MS_{AB}/MS_\epsilon$ |
+| SP Error ($\epsilon$) | $a(n-1)(b-1)$ | — |
+
+**Critical Point:** Two different error terms!
+
+- Test A using whole-plot error
+- Test B and A×B using subplot error
+
+## Why Use Split-Plots?
+
+**Reasons:**
+
+1. **Hard-to-change factors**
+   - Temperature, pressure, machinery setup
+   
+2. **Cost/time efficiency**
+   - Expensive to reset factor levels
+   
+3. **Practical constraints**
+   - Physical limitations
+
+**Trade-off:** Less precision for whole-plot factor
+
+## Split-Plot vs. Completely Randomized
+
+```{r split_plot_comparison, echo=FALSE}
+knitr::kable(
+  data.frame(
+    Aspect = c("Randomization", "Error terms", "Precision", "When to use"),
+    `Completely Randomized` = c(
+      "Full randomization",
+      "One error term",
+      "Equal for all factors",
+      "All factors easy to change"
+    ),
+    `Split-Plot` = c(
+      "Restricted randomization",
+      "Two error terms",
+      "Lower for whole-plot",
+      "Some factors hard to change"
+    ),
+    check.names = FALSE
+  ),
+  caption = "CRD vs. Split-Plot Comparison"
+)
+```
+
+## Strip-Plot Design
+
+**Structure:**
+
+- Two factors in strips (rows and columns)
+- Both factors hard to change
+- Interaction easier to estimate than main effects
+
+**Example:**
+
+- Row factor: Irrigation method
+- Column factor: Fertilizer type
+- Plots at intersections
+
+**Three error terms!**
+
+---
+
+# Other Topics
+
+## Nonnormality of Response
+
+**When normality assumption violated:**
+
+1. **Transformations**
+   - Log, square root, reciprocal
+   
+2. **Nonparametric methods**
+   - Rank-based tests
+   - Distribution-free
+   
+3. **Generalized Linear Models (GLM)**
+   - Link functions
+   - Alternative distributions
+
+## Box-Cox Transformation
+
+**Power Transformation:**
+
+$$y^{(\lambda)} = \begin{cases}
+\frac{y^\lambda - 1}{\lambda} & \lambda \neq 0 \\
+\log(y) & \lambda = 0
+\end{cases}$$
+
+**Estimate $\lambda$:**
+
+Maximize log-likelihood or minimize SSE
+
+**Common values:**
+
+- $\lambda = 1$: No transformation
+- $\lambda = 0.5$: Square root
+- $\lambda = 0$: Log
+- $\lambda = -1$: Reciprocal
+
+## Box-Cox Example
+
+<div class="two-column-left">
+
+**Power Transformation:**
+
+$$y^{(\lambda)} = \begin{cases}
+\frac{y^\lambda - 1}{\lambda} & \lambda \neq 0 \\
+\log(y) & \lambda = 0
+\end{cases}$$
+
+**Selection Method:**
+
+- Maximize log-likelihood
+- Or minimize SSE
+
+**Common Values:**
+
+- $\lambda = 1$: No transform
+- $\lambda = 0.5$: Square root
+- $\lambda = 0$: Log
+- $\lambda = -1$: Reciprocal
+
+</div>
+
+<div class="two-column-right">
+
+```{r boxcox, echo=FALSE, fig.height=4, fig.width=4, message=FALSE}
+if (require("MASS", quietly = TRUE)) {
+  set.seed(789)
+  x <- rep(1:4, each = 5)
+  y <- exp(1 + 0.5*x + rnorm(20, 0, 0.3))
+  bc <- boxcox(y ~ x, plotit = FALSE)
+  
+  ggplot(data.frame(lambda = bc$x, loglik = bc$y), 
+         aes(lambda, loglik)) +
+    geom_line(size = 1, color = "blue") +
+    geom_vline(xintercept = bc$x[which.max(bc$y)], 
+               linetype = "dashed", color = "red") +
+    annotate("text", x = bc$x[which.max(bc$y)] + 0.3, 
+             y = min(bc$y) + 1,
+             label = paste("λ =", round(bc$x[which.max(bc$y)], 2)),
+             color = "red") +
+    labs(x = "λ", y = "Log-Likelihood") +
+    theme_minimal()
+} else {
+  ggplot() + 
+    annotate("text", x = 0.5, y = 0.5, 
+             label = "Install MASS\npackage", size = 5) +
+    theme_void()
+}
+```
+
+</div>
+
+<div class="clear"></div>
+
+## Unbalanced Data
+
+**Causes:**
+
+- Missing observations
+- Unequal replication by design
+- Data loss during experiment
+
+**Problems:**
+
+- Non-orthogonal designs
+- Type I vs. Type III SS
+- Interpretation complexity
+
+**Solutions:**
+
+- Use Type III SS (for unbalanced factorial)
+- REML for random/mixed models
+- Careful interpretation
+
+## Analysis of Covariance (ANCOVA)
+
+**Purpose:**
+
+- Adjust for **concomitant variable** (covariate)
+- Increase precision
+- Remove bias
+
+**Model:**
+
+$$y_{ij} = \mu + \tau_i + \beta(x_{ij} - \bar{x}) + \epsilon_{ij}$$
+
+where:
+
+- $x_{ij}$ = covariate
+- $\beta$ = regression coefficient
+- $\tau_i$ = adjusted treatment effects
+
+## ANCOVA in Factorial Designs
+
+**Include covariate in factorial:**
+
+$$y = \mu + \tau_i + \beta_j + (\tau\beta)_{ij} + \beta x + \epsilon$$
+
+**Benefits:**
+
+- Reduced error variance
+- Adjusted treatment effects
+- Control for confounder
+
+**Assumptions:**
+
+- Linear relationship with covariate
+- Homogeneous slopes (equal $\beta$ across treatments)
+- Covariate measured without error
+
+## Repeated Measures
+
+**Structure:**
+
+- Same experimental unit measured multiple times
+- Temporal correlation
+- Within-subject design
+
+**Example:**
+
+- Subjects measured at multiple time points
+- Patients receiving multiple treatments
+
+**Analysis:**
+
+- Account for correlation structure
+- Mixed models
+- Multivariate approach
+
+## Repeated Measures ANOVA
+
+**Model:**
+
+$$y_{ijk} = \mu + \alpha_i + \delta_k + (\alpha\delta)_{ik} + \epsilon_{ijk}$$
+
+where:
+
+- $\alpha_i$ = subject effect (random), $\alpha_i \sim N(0, \sigma_\alpha^2)$
+- $\delta_k$ = time/condition effect (within-subject factor)
+- $(\alpha\delta)_{ik}$ = subject × time interaction
+
+**Sphericity Assumption:** 
+
+$$Var(y_{ijk} - y_{ijk'}) = \text{constant}$$ for all pairs $k, k'$
+
+If violated: Use **Greenhouse-Geisser** or **Huynh-Feldt** correction
+
+## Design for Computer Experiments
+
+**Computer simulations:**
+
+- Deterministic (no random error)
+- Can be expensive to run
+- Different design objectives
+
+**Space-Filling Designs:**
+
+- Latin hypercube sampling
+- Uniform design
+- Maximin distance
+
+**Kriging/Gaussian Process Models:**
+
+- Interpolation
+- Prediction with uncertainty
+
+---
+
+# Summary: Unit 5: Advanced Statistical Data Analysis
+
+## Key Concepts Review
+
+**Chapter 10: Regression**
+- Least squares: $\hat{\boldsymbol{\beta}} = (\mathbf{X}'\mathbf{X})^{-1}\mathbf{X}'\mathbf{y}$
+- Diagnostics: residuals, leverage, Cook's D, PRESS
+
+**RSM**
+- Steepest ascent for screening
+- CCD for optimization
+- Canonical analysis: $\hat{y} = \hat{y}_s + \sum \lambda_i w_i^2$
+
+## Key Concepts Review (cont.)
+
+**Chapter 12: Robust Design**
+- S/N ratios for robustness
+- Combined arrays more efficient
+
+**Random Effects**
+- Variance components: $\sigma_\tau^2, \sigma^2$
+- Expected mean squares determine F-tests
+
+**Nested & Split-Plot**
+- Multiple error terms
+- Restrictions on randomization
+
+**Advanced**
+- Box-Cox transformations
+- ANCOVA, repeated measures
+
+## Experimental Design Strategy
+
+**Complete Process:**
+
+1. **Define objectives** clearly
+2. **Select appropriate design**
+   - Screening: Fractional factorials
+   - Optimization: RSM designs
+   - Robustness: Combined arrays
+3. **Fit appropriate model**
+4. **Check assumptions** (diagnostics)
+5. **Interpret and optimize**
+6. **Confirm results**
+
+## Software Tools
+
+**Recommended Packages:**
+
+- **R packages:** rsm, lme4, nlme, FrF2
+- **Commercial:** Design-Expert, JMP, Minitab
+- **Python:** pyDOE, scipy.optimize
+
+**Key Features:**
+
+- Design generation
+- Model fitting
+- Diagnostic plots
+- Optimization tools
+
+## Best Practices
+
+**Design Phase:**
+
+✓ Use blocking when appropriate
+
+✓ Include center points
+
+✓ Plan for model hierarchy
+
+✓ Consider follow-up experiments
+
+**Analysis Phase:**
+
+✓ Check residual plots
+
+✓ Test for lack of fit
+
+✓ Use appropriate error terms
+
+✓ Report confidence intervals
+
+## Common Pitfalls to Avoid
+
+❌ Ignoring restrictions on randomization
+
+❌ Using wrong error term (split-plots)
+
+❌ Over-fitting models
+
+❌ Ignoring practical constraints
+
+❌ Not confirming results
+
+## Advanced Topics
+
+**Beyond this course:**
+
+- Optimal design theory
+- Bayesian design
+- Computer experiments
+- Definitive screening designs
+- Split-plot response surfaces
+- Mixture designs
+
+## Final Thoughts
+
+**Design of Experiments is:**
+
+- Essential for efficient research
+- Applicable across disciplines
+- Both science and art
+- Requires iteration and learning
+
+**Key to Success:**
+
+- Understand your process
+- Choose appropriate designs
+- Use statistical thinking
+- Validate conclusions
+
+**Practice makes perfect!**
+
+---
+
+# Appendix: R Code Examples
+
+## RSM Example with CCD
+
+```{r rsm_example, eval=FALSE}
+# Note: Requires 'rsm' package
+# Install with: install.packages("rsm")
+
+if (require("rsm", quietly = TRUE)) {
+  library(rsm)
+  
+  # Create Central Composite Design
+  ccd_design <- ccd(
+    basis = 2,  # 2 factors
+    n0 = 5,     # 5 center points
+    alpha = "rotatable",
+    coding = list(
+      x1 ~ (Time - 85)/5,
+      x2 ~ (Temp - 175)/5
+    )
+  )
+  
+  # Fit second-order model
+  rsm_model <- rsm(yield ~ SO(x1, x2), data = ccd_design)
+  
+  # Canonical analysis
+  summary(rsm_model)
+  
+  # Contour plot
+  contour(rsm_model, ~ x1 + x2, image = TRUE)
+  
+  # Find stationary point
+  canonical(rsm_model)
+} else {
+  message("Install 'rsm' package: install.packages('rsm')")
+}
+```
+
+## Mixed Model Example
+
+```{r mixed_model, eval=FALSE}
+# Note: Requires 'lme4' package
+# Install with: install.packages("lme4")
+
+if (require("lme4", quietly = TRUE)) {
+  library(lme4)
+  
+  # Fit mixed model with random effects
+  mixed_model <- lmer(
+    response ~ treatment + (1|batch) + (1|operator),
+    data = mydata
+  )
+  
+  # Summary
+  summary(mixed_model)
+  
+  # Variance components
+  VarCorr(mixed_model)
+  
+  # Random effects
+  ranef(mixed_model)
+} else {
+  message("Install 'lme4' package: install.packages('lme4')")
+}
+```
+
+## Split-Plot Analysis
+
+```{r split_plot, eval=FALSE}
+# Note: Requires 'lme4' package
+# Install with: install.packages("lme4")
+
+if (require("lme4", quietly = TRUE)) {
+  library(lme4)
+  
+  # Split-plot model
+  # whole_plot is hard-to-change factor
+  # sub_plot is easy-to-change factor
+  
+  sp_model <- lmer(
+    response ~ whole_plot * sub_plot + (1|replicate/whole_plot),
+    data = split_plot_data
+  )
+  
+  # ANOVA-like table
+  anova(sp_model)
+  
+  # Emmeans for comparisons (if emmeans package available)
+  if (require("emmeans", quietly = TRUE)) {
+    library(emmeans)
+    emmeans(sp_model, pairwise ~ whole_plot | sub_plot)
+  }
+} else {
+  message("Install 'lme4' package: install.packages('lme4')")
+}
+```
+
+---
+
+# References and Resources
+
+## Primary Textbook
+
+Montgomery, D. C. (2012). *Design and Analysis of Experiments* (8th ed.). 
+John Wiley & Sons.
+
+**Covered:Unit 5: Advanced Statistical Data Analysis**
+
+## Additional References
+
+**Response Surface Methodology:**
+
+- Myers, R. H., Montgomery, D. C., & Anderson-Cook, C. M. (2016). 
+  *Response Surface Methodology* (4th ed.).
+  
+**Mixed Models:**
+
+- Pinheiro, J. C., & Bates, D. M. (2000). 
+  *Mixed-Effects Models in S and S-PLUS*.
+
+**Robust Design:**
+
+- Wu, C. F. J., & Hamada, M. S. (2009). 
+  *Experiments: Planning, Analysis, and Optimization* (2nd ed.).
+
+## R Packages
+
+- **rsm:** Response surface methods
+- **lme4:** Linear mixed-effects models
+- **nlme:** Nonlinear mixed-effects models
+- **FrF2:** Fractional factorial designs
+- **AlgDesign:** Algorithmic optimal designs
+- **emmeans:** Estimated marginal means
+
+## Online Resources
+
+- **R-bloggers:** Statistical design posts
+- **CrossValidated:** Q&A on experimental design
+- **NIST Engineering Statistics Handbook**
+- **JMP Learning Library**
+
+---
+
+# Thank You!
+
+## Questions?
+
+**Key Takeaways from Unit 5: Advanced Statistical Data Analysis:**
+
+1. **Regression** provides the foundation for modeling
+2. **RSM** systematically finds optimal conditions
+3. **Robust design** creates insensitive processes
+4. **Random effects** handle hierarchical structure
+5. **Split-plots** accommodate practical constraints
+6. **Advanced methods** extend basic principles
+
+**Remember:** Good experimental design saves time, money, and provides better insights!
+
+**Practice designing experiments for your own problems!**
