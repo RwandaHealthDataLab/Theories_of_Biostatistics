@@ -1,0 +1,619 @@
+---
+title: "Environmental Health & Pediatrics: Lead Exposure - Nonparametric Analysis"
+subtitle: "Problems 12.44 - 12.46"
+author: "Your Name"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 10, fig.height = 6)
+```
+
+# Overview
+
+This analysis uses **nonparametric methods** to examine the relationship between lead exposure and:
+- MAXFWT (Maximum Finger-Wrist Tapping score)
+- IQF (Full-scale IQ)
+
+The study includes three exposure groups:
+
+1. **Control group** (lead_grp = 1): No lead exposure
+2. **Currently exposed group** (lead_grp = 2): Children with current lead exposure
+3. **Previously exposed group** (lead_grp = 3): Children with past lead exposure
+
+## Research Questions
+
+**Problem 12.44**: Use nonparametric methods to compare MAXFWT among the three exposure groups.
+
+**Problem 12.45**: Use nonparametric methods to compare IQF (full-scale IQ) among the three exposure groups.
+
+**Problem 12.46**: Compare the nonparametric results with the corresponding parametric ANOVA results from Table 12.9 (for MAXFWT) and Problem 12.40 (for IQF).
+
+# Load Required Libraries
+
+```{r load-libraries}
+library(tidyverse)
+library(knitr)
+library(ggplot2)
+library(FSA)         # For Dunn's test (post-hoc for Kruskal-Wallis)
+library(coin)        # For exact tests
+library(DescTools)   # For additional nonparametric tests
+```
+
+# Load and Prepare Data
+
+```{r load-data}
+# Read the LEAD.DAT file from the data sets folder
+lead_data <- read.table("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-tab/LEAD.DAT.txt",
+                        header = TRUE,
+                        sep = "\t",
+                        quote = "'\"",
+                        strip.white = TRUE)
+
+# Check column names
+cat("Checking for required variables:\n")
+cat("MAXFWT present:", "maxfwt" %in% names(lead_data), "\n")
+cat("IQF present:", "iqf" %in% names(lead_data), "\n")
+cat("lead_grp present:", "lead_grp" %in% names(lead_data), "\n\n")
+
+# Create clean dataset
+lead_analysis <- lead_data %>%
+  dplyr::select(id, maxfwt, iqf, lead_grp) %>%
+  dplyr::mutate(
+    # Create factor with descriptive labels
+    exposure_group = factor(lead_grp,
+                           levels = c(1, 2, 3),
+                           labels = c("Control",
+                                     "Currently Exposed",
+                                     "Previously Exposed"))
+  )
+
+# Display structure
+str(lead_analysis)
+
+cat("\nSample sizes by group:\n")
+table(lead_analysis$exposure_group)
+
+cat("\nMissing data summary:\n")
+cat("MAXFWT missing:", sum(is.na(lead_analysis$maxfwt)), "\n")
+cat("IQF missing:", sum(is.na(lead_analysis$iqf)), "\n")
+```
+
+# Descriptive Statistics
+
+## MAXFWT Summary
+
+```{r maxfwt-descriptive}
+maxfwt_stats <- lead_analysis %>%
+  dplyr::filter(!is.na(maxfwt)) %>%
+  dplyr::group_by(exposure_group) %>%
+  dplyr::summarise(
+    N = n(),
+    Mean = mean(maxfwt),
+    SD = sd(maxfwt),
+    Median = median(maxfwt),
+    Q1 = quantile(maxfwt, 0.25),
+    Q3 = quantile(maxfwt, 0.75),
+    IQR = IQR(maxfwt),
+    Min = min(maxfwt),
+    Max = max(maxfwt),
+    .groups = 'drop'
+  )
+
+kable(maxfwt_stats, digits = 2,
+      caption = "Descriptive Statistics for MAXFWT by Lead Exposure Group")
+```
+
+## IQF Summary
+
+```{r iqf-descriptive}
+iqf_stats <- lead_analysis %>%
+  dplyr::filter(!is.na(iqf)) %>%
+  dplyr::group_by(exposure_group) %>%
+  dplyr::summarise(
+    N = n(),
+    Mean = mean(iqf),
+    SD = sd(iqf),
+    Median = median(iqf),
+    Q1 = quantile(iqf, 0.25),
+    Q3 = quantile(iqf, 0.75),
+    IQR = IQR(iqf),
+    Min = min(iqf),
+    Max = max(iqf),
+    .groups = 'drop'
+  )
+
+kable(iqf_stats, digits = 2,
+      caption = "Descriptive Statistics for Full-Scale IQ by Lead Exposure Group")
+```
+
+# Visualizations
+
+## MAXFWT Distribution by Group
+
+```{r maxfwt-plots, fig.height=8}
+# Remove missing values for MAXFWT
+maxfwt_data <- lead_analysis %>% dplyr::filter(!is.na(maxfwt))
+
+par(mfrow = c(2, 1))
+
+# Boxplot
+boxplot(maxfwt ~ exposure_group, data = maxfwt_data,
+        main = "MAXFWT by Lead Exposure Group",
+        xlab = "Exposure Group",
+        ylab = "Maximum Finger-Wrist Tapping Score",
+        col = c("lightblue", "lightcoral", "lightgreen"),
+        notch = TRUE)
+
+# Violin plot with ggplot
+p1 <- ggplot(maxfwt_data, aes(x = exposure_group, y = maxfwt, fill = exposure_group)) +
+  geom_violin(alpha = 0.6, trim = FALSE) +
+  geom_boxplot(width = 0.2, alpha = 0.8, outlier.shape = NA) +
+  geom_jitter(width = 0.1, alpha = 0.3, size = 1) +
+  stat_summary(fun = median, geom = "point",
+               shape = 18, size = 4, color = "red") +
+  labs(title = "MAXFWT Distribution by Lead Exposure Group",
+       subtitle = "Red diamonds indicate medians",
+       x = "Lead Exposure Group",
+       y = "Maximum Finger-Wrist Tapping Score") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+par(mfrow = c(1, 1))
+print(p1)
+```
+
+## IQF Distribution by Group
+
+```{r iqf-plots, fig.height=8}
+# Remove missing values for IQF
+iqf_data <- lead_analysis %>% dplyr::filter(!is.na(iqf))
+
+par(mfrow = c(2, 1))
+
+# Boxplot
+boxplot(iqf ~ exposure_group, data = iqf_data,
+        main = "Full-Scale IQ by Lead Exposure Group",
+        xlab = "Exposure Group",
+        ylab = "Full-Scale IQ",
+        col = c("lightblue", "lightcoral", "lightgreen"),
+        notch = TRUE)
+
+# Violin plot with ggplot
+p2 <- ggplot(iqf_data, aes(x = exposure_group, y = iqf, fill = exposure_group)) +
+  geom_violin(alpha = 0.6, trim = FALSE) +
+  geom_boxplot(width = 0.2, alpha = 0.8, outlier.shape = NA) +
+  geom_jitter(width = 0.1, alpha = 0.3, size = 1) +
+  stat_summary(fun = median, geom = "point",
+               shape = 18, size = 4, color = "red") +
+  labs(title = "Full-Scale IQ Distribution by Lead Exposure Group",
+       subtitle = "Red diamonds indicate medians",
+       x = "Lead Exposure Group",
+       y = "Full-Scale IQ") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+par(mfrow = c(1, 1))
+print(p2)
+```
+
+# Problem 12.44: Nonparametric Test for MAXFWT
+
+## Kruskal-Wallis Test
+
+The Kruskal-Wallis test is a nonparametric alternative to one-way ANOVA. It tests whether the distributions differ across groups without assuming normality.
+
+```{r problem-12-44-kw}
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("PROBLEM 12.44: KRUSKAL-WALLIS TEST FOR MAXFWT\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Remove missing values
+maxfwt_data <- lead_analysis %>% dplyr::filter(!is.na(maxfwt))
+
+# Kruskal-Wallis test
+kw_maxfwt <- kruskal.test(maxfwt ~ exposure_group, data = maxfwt_data)
+
+print(kw_maxfwt)
+
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("INTERPRETATION:\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("Chi-squared statistic:", round(kw_maxfwt$statistic, 4), "\n")
+cat("Degrees of freedom:", kw_maxfwt$parameter, "\n")
+cat("p-value:", format.pval(kw_maxfwt$p.value, digits = 4), "\n\n")
+
+if (kw_maxfwt$p.value < 0.05) {
+  cat("CONCLUSION: There ARE statistically significant differences in MAXFWT\n")
+  cat("distributions among the three lead exposure groups (p < 0.05).\n")
+} else {
+  cat("CONCLUSION: There are NO statistically significant differences in MAXFWT\n")
+  cat("distributions among the three lead exposure groups (p >= 0.05).\n")
+}
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+```
+
+## Post-hoc Pairwise Comparisons (Dunn's Test)
+
+When the Kruskal-Wallis test is significant, we perform pairwise comparisons using Dunn's test with Bonferroni correction.
+
+```{r problem-12-44-dunn}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("POST-HOC PAIRWISE COMPARISONS: Dunn's Test for MAXFWT\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Dunn's test with Bonferroni adjustment
+dunn_maxfwt <- dunnTest(maxfwt ~ exposure_group,
+                        data = maxfwt_data,
+                        method = "bonferroni")
+
+print(dunn_maxfwt)
+
+# Create a nice summary table
+dunn_maxfwt_table <- dunn_maxfwt$res
+kable(dunn_maxfwt_table, digits = 4, row.names = FALSE,
+      caption = "Dunn's Test Pairwise Comparisons for MAXFWT (Bonferroni adjusted)")
+
+cat("\n\nInterpretation of Pairwise Comparisons:\n")
+cat("---------------------------------------\n")
+for (i in 1:nrow(dunn_maxfwt_table)) {
+  comp <- dunn_maxfwt_table$Comparison[i]
+  z_val <- dunn_maxfwt_table$Z[i]
+  p_val <- dunn_maxfwt_table$P.adj[i]
+
+  cat("\n", comp, ":\n", sep = "")
+  cat("  Z-statistic:", round(z_val, 3), "\n")
+  cat("  Adjusted p-value:", format.pval(p_val, digits = 4), "\n")
+
+  if (p_val < 0.05) {
+    cat("  Result: STATISTICALLY SIGNIFICANT difference (p < 0.05)\n")
+  } else {
+    cat("  Result: NO statistically significant difference (p >= 0.05)\n")
+  }
+}
+```
+
+## Median Differences and 95% CIs
+
+```{r maxfwt-medians}
+cat("\n\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("MEDIAN COMPARISONS FOR MAXFWT\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Calculate medians and use Wilcoxon rank-sum test for pairwise comparisons
+groups <- levels(maxfwt_data$exposure_group)
+pairwise_results_maxfwt <- data.frame()
+
+for (i in 1:(length(groups)-1)) {
+  for (j in (i+1):length(groups)) {
+    group1 <- groups[i]
+    group2 <- groups[j]
+
+    data1 <- maxfwt_data %>% dplyr::filter(exposure_group == group1) %>% dplyr::pull(maxfwt)
+    data2 <- maxfwt_data %>% dplyr::filter(exposure_group == group2) %>% dplyr::pull(maxfwt)
+
+    median1 <- median(data1)
+    median2 <- median(data2)
+    median_diff <- median1 - median2
+
+    # Wilcoxon test with confidence interval
+    wilcox_test <- wilcox.test(data1, data2, conf.int = TRUE)
+
+    pairwise_results_maxfwt <- rbind(pairwise_results_maxfwt, data.frame(
+      Comparison = paste(group1, "vs", group2),
+      Median_1 = median1,
+      Median_2 = median2,
+      Median_Diff = median_diff,
+      Hodges_Lehmann = wilcox_test$estimate,
+      CI_Lower = wilcox_test$conf.int[1],
+      CI_Upper = wilcox_test$conf.int[2],
+      p_value = wilcox_test$p.value
+    ))
+  }
+}
+
+kable(pairwise_results_maxfwt, digits = 3, row.names = FALSE,
+      caption = "Pairwise Median Comparisons for MAXFWT (Hodges-Lehmann estimates and 95% CIs)")
+```
+
+# Problem 12.45: Nonparametric Test for IQF
+
+## Kruskal-Wallis Test
+
+```{r problem-12-45-kw}
+cat("\n\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("PROBLEM 12.45: KRUSKAL-WALLIS TEST FOR IQF (Full-Scale IQ)\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Remove missing values
+iqf_data <- lead_analysis %>% dplyr::filter(!is.na(iqf))
+
+# Kruskal-Wallis test
+kw_iqf <- kruskal.test(iqf ~ exposure_group, data = iqf_data)
+
+print(kw_iqf)
+
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("INTERPRETATION:\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("Chi-squared statistic:", round(kw_iqf$statistic, 4), "\n")
+cat("Degrees of freedom:", kw_iqf$parameter, "\n")
+cat("p-value:", format.pval(kw_iqf$p.value, digits = 4), "\n\n")
+
+if (kw_iqf$p.value < 0.05) {
+  cat("CONCLUSION: There ARE statistically significant differences in IQF\n")
+  cat("distributions among the three lead exposure groups (p < 0.05).\n")
+} else {
+  cat("CONCLUSION: There are NO statistically significant differences in IQF\n")
+  cat("distributions among the three lead exposure groups (p >= 0.05).\n")
+}
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+```
+
+## Post-hoc Pairwise Comparisons (Dunn's Test)
+
+```{r problem-12-45-dunn}
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("POST-HOC PAIRWISE COMPARISONS: Dunn's Test for IQF\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Dunn's test with Bonferroni adjustment
+dunn_iqf <- dunnTest(iqf ~ exposure_group,
+                     data = iqf_data,
+                     method = "bonferroni")
+
+print(dunn_iqf)
+
+# Create a nice summary table
+dunn_iqf_table <- dunn_iqf$res
+kable(dunn_iqf_table, digits = 4, row.names = FALSE,
+      caption = "Dunn's Test Pairwise Comparisons for IQF (Bonferroni adjusted)")
+
+cat("\n\nInterpretation of Pairwise Comparisons:\n")
+cat("---------------------------------------\n")
+for (i in 1:nrow(dunn_iqf_table)) {
+  comp <- dunn_iqf_table$Comparison[i]
+  z_val <- dunn_iqf_table$Z[i]
+  p_val <- dunn_iqf_table$P.adj[i]
+
+  cat("\n", comp, ":\n", sep = "")
+  cat("  Z-statistic:", round(z_val, 3), "\n")
+  cat("  Adjusted p-value:", format.pval(p_val, digits = 4), "\n")
+
+  if (p_val < 0.05) {
+    cat("  Result: STATISTICALLY SIGNIFICANT difference (p < 0.05)\n")
+  } else {
+    cat("  Result: NO statistically significant difference (p >= 0.05)\n")
+  }
+}
+```
+
+## Median Differences and 95% CIs
+
+```{r iqf-medians}
+cat("\n\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("MEDIAN COMPARISONS FOR IQF\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Calculate medians and use Wilcoxon rank-sum test for pairwise comparisons
+pairwise_results_iqf <- data.frame()
+
+for (i in 1:(length(groups)-1)) {
+  for (j in (i+1):length(groups)) {
+    group1 <- groups[i]
+    group2 <- groups[j]
+
+    data1 <- iqf_data %>% dplyr::filter(exposure_group == group1) %>% dplyr::pull(iqf)
+    data2 <- iqf_data %>% dplyr::filter(exposure_group == group2) %>% dplyr::pull(iqf)
+
+    median1 <- median(data1)
+    median2 <- median(data2)
+    median_diff <- median1 - median2
+
+    # Wilcoxon test with confidence interval
+    wilcox_test <- wilcox.test(data1, data2, conf.int = TRUE)
+
+    pairwise_results_iqf <- rbind(pairwise_results_iqf, data.frame(
+      Comparison = paste(group1, "vs", group2),
+      Median_1 = median1,
+      Median_2 = median2,
+      Median_Diff = median_diff,
+      Hodges_Lehmann = wilcox_test$estimate,
+      CI_Lower = wilcox_test$conf.int[1],
+      CI_Upper = wilcox_test$conf.int[2],
+      p_value = wilcox_test$p.value
+    ))
+  }
+}
+
+kable(pairwise_results_iqf, digits = 3, row.names = FALSE,
+      caption = "Pairwise Median Comparisons for IQF (Hodges-Lehmann estimates and 95% CIs)")
+```
+
+# Problem 12.46: Comparison of Parametric vs Nonparametric Methods
+
+## Run Parametric Tests for Comparison
+
+### ANOVA for MAXFWT
+
+```{r parametric-maxfwt}
+cat("\n\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("PARAMETRIC ANOVA FOR MAXFWT (for comparison)\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# One-way ANOVA for MAXFWT
+anova_maxfwt <- aov(maxfwt ~ exposure_group, data = maxfwt_data)
+anova_maxfwt_summary <- summary(anova_maxfwt)
+print(anova_maxfwt_summary)
+
+# Tukey's HSD
+tukey_maxfwt <- TukeyHSD(anova_maxfwt)
+print(tukey_maxfwt)
+```
+
+### ANOVA for IQF
+
+```{r parametric-iqf}
+cat("\n\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("PARAMETRIC ANOVA FOR IQF (for comparison)\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# One-way ANOVA for IQF
+anova_iqf <- aov(iqf ~ exposure_group, data = iqf_data)
+anova_iqf_summary <- summary(anova_iqf)
+print(anova_iqf_summary)
+
+# Tukey's HSD
+tukey_iqf <- TukeyHSD(anova_iqf)
+print(tukey_iqf)
+```
+
+## Comparison Summary Table
+
+```{r comparison-table}
+cat("\n\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("PROBLEM 12.46: COMPARISON OF PARAMETRIC vs NONPARAMETRIC METHODS\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+# Create comparison table
+comparison_table <- data.frame(
+  Variable = c("MAXFWT", "IQF"),
+
+  Parametric_Test = c("One-way ANOVA", "One-way ANOVA"),
+  Parametric_Statistic = c(
+    paste("F =", round(anova_maxfwt_summary[[1]]$`F value`[1], 3)),
+    paste("F =", round(anova_iqf_summary[[1]]$`F value`[1], 3))
+  ),
+  Parametric_p = c(
+    format.pval(anova_maxfwt_summary[[1]]$`Pr(>F)`[1], digits = 4),
+    format.pval(anova_iqf_summary[[1]]$`Pr(>F)`[1], digits = 4)
+  ),
+
+  Nonparametric_Test = c("Kruskal-Wallis", "Kruskal-Wallis"),
+  Nonparametric_Statistic = c(
+    paste("χ² =", round(kw_maxfwt$statistic, 3)),
+    paste("χ² =", round(kw_iqf$statistic, 3))
+  ),
+  Nonparametric_p = c(
+    format.pval(kw_maxfwt$p.value, digits = 4),
+    format.pval(kw_iqf$p.value, digits = 4)
+  ),
+
+  Agreement = c(
+    ifelse((anova_maxfwt_summary[[1]]$`Pr(>F)`[1] < 0.05) == (kw_maxfwt$p.value < 0.05),
+           "Yes", "No"),
+    ifelse((anova_iqf_summary[[1]]$`Pr(>F)`[1] < 0.05) == (kw_iqf$p.value < 0.05),
+           "Yes", "No")
+  )
+)
+
+kable(comparison_table,
+      caption = "Comparison of Parametric (ANOVA) vs Nonparametric (Kruskal-Wallis) Results",
+      col.names = c("Variable", "Parametric Test", "Statistic", "p-value",
+                    "Nonparametric Test", "Statistic", "p-value", "Agreement"))
+
+cat("\n\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("DETAILED COMPARISON AND INTERPRETATION\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+cat("1. MAXFWT Results:\n")
+cat("   Parametric (ANOVA): p =", format.pval(anova_maxfwt_summary[[1]]$`Pr(>F)`[1], digits = 4), "\n")
+cat("   Nonparametric (K-W): p =", format.pval(kw_maxfwt$p.value, digits = 4), "\n")
+cat("   Conclusion:", ifelse((anova_maxfwt_summary[[1]]$`Pr(>F)`[1] < 0.05) == (kw_maxfwt$p.value < 0.05),
+                            "Both methods agree on statistical significance.",
+                            "Methods disagree on statistical significance."), "\n\n")
+
+cat("2. IQF Results:\n")
+cat("   Parametric (ANOVA): p =", format.pval(anova_iqf_summary[[1]]$`Pr(>F)`[1], digits = 4), "\n")
+cat("   Nonparametric (K-W): p =", format.pval(kw_iqf$p.value, digits = 4), "\n")
+cat("   Conclusion:", ifelse((anova_iqf_summary[[1]]$`Pr(>F)`[1] < 0.05) == (kw_iqf$p.value < 0.05),
+                            "Both methods agree on statistical significance.",
+                            "Methods disagree on statistical significance."), "\n\n")
+
+cat("3. General Observations:\n")
+cat("   - Parametric tests (ANOVA) assume normality and equal variances\n")
+cat("   - Nonparametric tests (Kruskal-Wallis) are distribution-free\n")
+cat("   - When assumptions are met, parametric tests have more power\n")
+cat("   - When assumptions are violated, nonparametric tests are more robust\n")
+cat("   - Agreement between methods suggests results are reliable\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+```
+
+# Summary and Conclusions
+
+```{r final-summary}
+cat("\n\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+cat("OVERALL SUMMARY OF FINDINGS\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+cat("PROBLEM 12.44 - MAXFWT (Nonparametric Analysis):\n")
+cat("------------------------------------------------\n")
+cat("Kruskal-Wallis Test: χ² =", round(kw_maxfwt$statistic, 3),
+    ", p =", format.pval(kw_maxfwt$p.value, digits = 4), "\n")
+if (kw_maxfwt$p.value < 0.05) {
+  cat("Result: SIGNIFICANT differences among groups\n")
+  cat("Significant pairwise differences (Dunn's test):\n")
+  sig_comps <- dunn_maxfwt_table %>% dplyr::filter(P.adj < 0.05)
+  if (nrow(sig_comps) > 0) {
+    for (i in 1:nrow(sig_comps)) {
+      cat("  -", sig_comps$Comparison[i], "(p =",
+          format.pval(sig_comps$P.adj[i], digits = 4), ")\n")
+    }
+  }
+} else {
+  cat("Result: NO significant differences among groups\n")
+}
+
+cat("\n\nPROBLEM 12.45 - IQF (Nonparametric Analysis):\n")
+cat("----------------------------------------------\n")
+cat("Kruskal-Wallis Test: χ² =", round(kw_iqf$statistic, 3),
+    ", p =", format.pval(kw_iqf$p.value, digits = 4), "\n")
+if (kw_iqf$p.value < 0.05) {
+  cat("Result: SIGNIFICANT differences among groups\n")
+  cat("Significant pairwise differences (Dunn's test):\n")
+  sig_comps <- dunn_iqf_table %>% dplyr::filter(P.adj < 0.05)
+  if (nrow(sig_comps) > 0) {
+    for (i in 1:nrow(sig_comps)) {
+      cat("  -", sig_comps$Comparison[i], "(p =",
+          format.pval(sig_comps$P.adj[i], digits = 4), ")\n")
+    }
+  }
+} else {
+  cat("Result: NO significant differences among groups\n")
+}
+
+cat("\n\nPROBLEM 12.46 - Parametric vs Nonparametric Comparison:\n")
+cat("--------------------------------------------------------\n")
+cat("MAXFWT: Parametric and nonparametric methods",
+    ifelse((anova_maxfwt_summary[[1]]$`Pr(>F)`[1] < 0.05) == (kw_maxfwt$p.value < 0.05),
+           "AGREE", "DISAGREE"), "\n")
+cat("IQF: Parametric and nonparametric methods",
+    ifelse((anova_iqf_summary[[1]]$`Pr(>F)`[1] < 0.05) == (kw_iqf$p.value < 0.05),
+           "AGREE", "DISAGREE"), "\n")
+
+cat("\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n")
+```
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
