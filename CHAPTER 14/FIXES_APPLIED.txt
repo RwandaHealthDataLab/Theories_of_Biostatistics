@@ -1,0 +1,67 @@
+=================================================================
+CANCER BREAST PMH ANALYSIS - SYNTAX FIXES APPLIED
+=================================================================
+
+File: Cancer_Breast_PMH_Incidence_Survival_Analysis_Problems_14.63-14.67.Rmd
+
+=================================================================
+FIX #1: VARIABLE NAME CORRECTIONS (Lines 128-148)
+=================================================================
+
+Corrected variable names to match actual BREAST.DAT dataset:
+
+Original (Incorrect)  →  Fixed (Correct)
+--------------------     ----------------
+ID                   →  Id
+agefb                →  afb
+height               →  hgt
+pmhstat              →  pmh
+estrdur              →  dur3
+estprdur             →  dur4
+cursmoke             →  csmk
+pastsmok             →  psmk
+followup             →  foluptm
+
+Added missing variable: parity
+
+=================================================================
+FIX #2: SYNTAX ERROR - INLINE P-VALUE EXTRACTION (Lines 907-912)
+=================================================================
+
+Problem: Attempting to extract p-value inline within cat(sprintf(...))
+caused syntax error due to nested quotes and special characters.
+
+BEFORE (Incorrect - Line 909):
+-------------------
+cat(sprintf("  P-value: %.4f\n", summary(cox_adjusted)$coefficients["pmh_groupCurrent User", "Pr(>|z|)"]))
+                                                                                                   ^
+                                                                                    Syntax error here
+
+AFTER (Correct - Lines 907-912):
+------------------
+# Extract p-value first
+p_adj <- summary(cox_adjusted)$coefficients["pmh_groupCurrent User", "Pr(>|z|)"]
+
+cat("Adjusted Hazard Ratio (Current vs Never PMH):\n")
+cat(sprintf("  HR = %.3f (95%% CI: %.3f - %.3f)\n", hr_adj, ci_adj[1], ci_adj[2]))
+cat(sprintf("  P-value: %.4f\n", p_adj))
+
+Solution: Extract p-value into variable FIRST, then use variable in sprintf.
+
+=================================================================
+FIX #3: REMOVED DUPLICATE CODE (Line 925 - deleted)
+=================================================================
+
+Removed duplicate p_adj assignment that was later in the file.
+
+=================================================================
+VERIFICATION
+=================================================================
+
+✓ All variable names match BREAST.DAT structure
+✓ No syntax errors in cat(sprintf(...)) calls
+✓ All p-value extractions use proper syntax
+✓ No duplicate code
+✓ File ready to render
+
+=================================================================

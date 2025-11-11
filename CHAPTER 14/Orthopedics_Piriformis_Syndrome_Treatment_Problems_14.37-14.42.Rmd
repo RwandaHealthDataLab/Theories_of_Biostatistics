@@ -1,0 +1,1794 @@
+---
+title: "Orthopedics - Piriformis Syndrome Treatment Study"
+subtitle: "Problems 14.37-14.42: Analysis of Treatment Efficacy"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    code_folding: show
+    theme: united
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  comment = NA
+)
+```
+
+# Introduction
+
+## Study Overview
+
+This is a **randomized, double-blind clinical trial** comparing three treatments for piriformis syndrome, a pelvic condition causing lumbar and buttock pain with sciatica.
+
+**Treatment Groups:**
+- **Group 1 (TL)**: Triamcinolone + Lidocaine injection
+- **Group 2 (Placebo)**: Placebo injection
+- **Group 3 (Botox)**: Botox injection
+
+**Randomization**: Approximately 3:1:2 ratio (TL:Placebo:Botox)
+
+**Follow-up Schedule**:
+- 2 weeks (0.5 month)
+- 1 month
+- Monthly thereafter up to 17 months
+- Many missed visits
+
+**Outcome**: Visual analog scale measuring percentage improvement from baseline (-∞ to 100)
+- 100 = complete improvement
+- 0 = no change
+- Negative = worsening
+
+**Sample**: 69 subjects, 70 legs (one subject with bilateral condition)
+
+## Research Questions
+
+**Problem 14.37**: Compare treatment groups using continuous visual analog scale (unadjusted, longitudinal analysis).
+
+**Problem 14.38**: Repeat Problem 14.37 adjusting for age, gender, and affected side.
+
+**Problem 14.39**: Use success/failure definition (≥50% improvement) with survival analysis or logistic regression (unadjusted).
+
+**Problem 14.40**: Repeat Problem 14.39 adjusting for covariates.
+
+**Problem 14.41**: Define success as ≥50% improvement on TWO SUCCESSIVE visits (unadjusted).
+
+**Problem 14.42**: Repeat Problem 14.41 adjusting for covariates.
+
+## Key Statistical Concepts
+
+- **Longitudinal data analysis**: Mixed-effects models, GEE
+- **Survival analysis**: Time to first success
+- **Repeated measures**: Within-subject correlation
+- **Success definition**: Single vs. sustained improvement
+- **Covariate adjustment**: Age, gender, affected side
+
+# Data Preparation
+
+## Load Required Packages
+
+```{r load-packages}
+# Load required libraries
+library(tidyverse)
+library(lme4)         # Linear mixed-effects models
+library(nlme)         # Alternative mixed models
+library(geepack)      # Generalized estimating equations
+library(survival)     # Survival analysis
+library(survminer)    # Survival plots
+library(broom)        # Tidy model outputs
+library(broom.mixed)  # Tidy mixed model outputs
+library(emmeans)      # Pairwise comparisons
+library(knitr)        # Tables
+library(ggplot2)      # Visualization
+
+# Set options
+options(contrasts = c("contr.treatment", "contr.poly"))
+```
+
+## Load and Inspect Data
+
+```{r load-data}
+# Read the data
+botox_data <- read.table("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-tab/BOTOX.DAT.txt",
+                         header = TRUE, sep = "\t")
+
+# Display data structure
+cat("Dataset Structure:\n")
+str(botox_data)
+
+cat("\n\nFirst few rows:\n")
+head(botox_data, 20)
+
+cat("\n\nVariable names:\n")
+names(botox_data)
+
+cat("\n\nDimensions:\n")
+cat("Rows:", nrow(botox_data), "\n")
+cat("Columns:", ncol(botox_data), "\n")
+```
+
+## Identify Data Structure
+
+```{r identify-structure}
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("IDENTIFYING DATA STRUCTURE\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Expected variables:
+# - Patient ID
+# - Treatment group (1=TL, 2=Placebo, 3=Botox)
+# - Age
+# - Gender (1=male, 0=female)
+# - Affected side (L=left, R=right)
+# - Follow-up times and improvement scores
+
+# Check for ID variables
+id_vars <- grep("id|patient|subj|leg", names(botox_data), ignore.case = TRUE, value = TRUE)
+cat("\nPossible ID variables:", paste(id_vars, collapse = ", "), "\n")
+
+# Check for treatment/group variables
+group_vars <- grep("group|trt|treatment", names(botox_data), ignore.case = TRUE, value = TRUE)
+cat("Treatment variables:", paste(group_vars, collapse = ", "), "\n")
+
+# Check for demographic variables
+demo_vars <- grep("age|gender|sex|side", names(botox_data), ignore.case = TRUE, value = TRUE)
+cat("Demographic variables:", paste(demo_vars, collapse = ", "), "\n")
+
+# Check for outcome variables (improvement scores)
+outcome_vars <- grep("improve|score|vas|pain", names(botox_data), ignore.case = TRUE, value = TRUE)
+cat("Outcome variables:", paste(outcome_vars, collapse = ", "), "\n")
+
+# Check for time variables
+time_vars <- grep("time|month|week|visit", names(botox_data), ignore.case = TRUE, value = TRUE)
+cat("Time variables:", paste(time_vars, collapse = ", "), "\n")
+```
+
+## Data Cleaning and Preparation
+
+```{r clean-data}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("DATA CLEANING AND PREPARATION\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# The data is likely in long format with one row per visit
+# Standardize variable names based on typical structure
+
+# Create clean dataset
+botox_clean <- botox_data
+
+# Identify and rename key variables
+# Look for ID column
+if("id" %in% tolower(names(botox_clean))) {
+  id_col <- names(botox_clean)[tolower(names(botox_clean)) == "id"]
+  botox_clean <- botox_clean %>% rename(patient_id = !!id_col)
+} else if("legid" %in% tolower(names(botox_clean))) {
+  botox_clean <- botox_clean %>% rename(patient_id = legid)
+}
+
+# Look for group/treatment column
+if("group" %in% tolower(names(botox_clean))) {
+  group_col <- names(botox_clean)[tolower(names(botox_clean)) == "group"]
+  botox_clean <- botox_clean %>% rename(treatment_group = !!group_col)
+}
+
+# Create treatment factor with labels
+if("treatment_group" %in% names(botox_clean)) {
+  botox_clean <- botox_clean %>%
+    mutate(
+      treatment = factor(treatment_group,
+                        levels = 1:3,
+                        labels = c("TL", "Placebo", "Botox"))
+    )
+}
+
+# Look for time variable
+time_found <- FALSE
+if("time" %in% tolower(names(botox_clean))) {
+  time_col <- names(botox_clean)[tolower(names(botox_clean)) == "time"][1]
+  botox_clean <- botox_clean %>% rename(time_months = !!time_col)
+  time_found <- TRUE
+} else if("month" %in% tolower(names(botox_clean))) {
+  month_col <- names(botox_clean)[tolower(names(botox_clean)) == "month"][1]
+  botox_clean <- botox_clean %>% rename(time_months = !!month_col)
+  time_found <- TRUE
+} else if("visit" %in% tolower(names(botox_clean))) {
+  visit_col <- names(botox_clean)[tolower(names(botox_clean)) == "visit"][1]
+  botox_clean <- botox_clean %>% rename(time_months = !!visit_col)
+  time_found <- TRUE
+}
+
+if(!time_found) {
+  cat("\nWARNING: No time variable found. Available columns:\n")
+  print(names(botox_clean))
+}
+
+# Look for improvement score
+vas_found <- FALSE
+possible_vas_names <- c("improvement", "score", "vas", "pain", "pct", "percent")
+
+for(vas_name in possible_vas_names) {
+  if(vas_name %in% tolower(names(botox_clean))) {
+    vas_col <- names(botox_clean)[tolower(names(botox_clean)) == vas_name][1]
+    botox_clean <- botox_clean %>% rename(vas_score = !!vas_col)
+    vas_found <- TRUE
+    cat("\nUsing", vas_col, "as VAS score\n")
+    break
+  }
+}
+
+if(!vas_found) {
+  cat("\nWARNING: No VAS score variable found. Available columns:\n")
+  print(names(botox_clean))
+  cat("\nAttempting to identify by position...\n")
+
+  # If not found by name, try to identify by examining the data
+  # Look for numeric columns that might be the outcome
+  numeric_cols <- names(botox_clean)[sapply(botox_clean, is.numeric)]
+  cat("Numeric columns:", paste(numeric_cols, collapse = ", "), "\n")
+
+  # Exclude known variables (id, group, age, gender, side codes)
+  exclude_pattern <- "id|group|age|gender|sex|side|trt|treatment"
+  outcome_candidates <- numeric_cols[!grepl(exclude_pattern, numeric_cols, ignore.case = TRUE)]
+
+  if(length(outcome_candidates) > 0) {
+    cat("Potential outcome variables:", paste(outcome_candidates, collapse = ", "), "\n")
+    # Use the first candidate
+    botox_clean <- botox_clean %>% rename(vas_score = !!outcome_candidates[1])
+    cat("Using", outcome_candidates[1], "as VAS score\n")
+    vas_found <- TRUE
+  }
+}
+
+# Gender (standardize to 0/1)
+if("gender" %in% tolower(names(botox_clean))) {
+  gender_col <- names(botox_clean)[tolower(names(botox_clean)) == "gender"]
+  botox_clean <- botox_clean %>%
+    rename(gender_code = !!gender_col) %>%
+    mutate(
+      gender = factor(gender_code, levels = 0:1, labels = c("Female", "Male"))
+    )
+}
+
+# Affected side
+if("side" %in% tolower(names(botox_clean))) {
+  side_col <- names(botox_clean)[tolower(names(botox_clean)) == "side"]
+  botox_clean <- botox_clean %>%
+    rename(affected_side_code = !!side_col)
+
+  # Check what values exist
+  unique_sides <- unique(botox_clean$affected_side_code)
+  cat("\nUnique side values:", paste(unique_sides, collapse = ", "), "\n")
+
+  # If character/factor, keep as is; if numeric, map appropriately
+  if(is.character(botox_clean$affected_side_code) || is.factor(botox_clean$affected_side_code)) {
+    botox_clean <- botox_clean %>%
+      mutate(affected_side = factor(affected_side_code))
+  } else {
+    # Numeric - map based on number of unique values
+    n_levels <- length(unique_sides)
+    if(n_levels == 2) {
+      botox_clean <- botox_clean %>%
+        mutate(affected_side = factor(affected_side_code, labels = c("Left", "Right")))
+    } else if(n_levels == 3) {
+      # May have 0, 1, 2 or similar
+      botox_clean <- botox_clean %>%
+        mutate(affected_side = factor(affected_side_code))
+    } else {
+      botox_clean <- botox_clean %>%
+        mutate(affected_side = factor(affected_side_code))
+    }
+  }
+}
+
+cat("\nCleaned data summary:\n")
+cat("Total observations:", nrow(botox_clean), "\n")
+
+if("patient_id" %in% names(botox_clean)) {
+  cat("Number of legs:", length(unique(botox_clean$patient_id)), "\n")
+}
+
+if("treatment" %in% names(botox_clean)) {
+  cat("\nTreatment groups:\n")
+  print(table(botox_clean %>% distinct(patient_id, treatment) %>% pull(treatment)))
+}
+
+# Check if data is in wide format (multiple pain columns)
+pain_cols <- grep("^pain", names(botox_clean), value = TRUE)
+if(length(pain_cols) > 0) {
+  cat("\n\nData is in WIDE format with", length(pain_cols), "time points\n")
+  cat("Pain columns:", paste(pain_cols, collapse = ", "), "\n")
+  cat("\nReshaping to LONG format...\n")
+
+  # Extract time points from column names
+  # pain05 = 0.5 months, pain1 = 1 month, pain2 = 2 months, etc.
+  time_points <- gsub("pain", "", pain_cols)
+  time_points <- gsub("^0", "0.", time_points)  # Convert 05 to 0.5
+  time_points_numeric <- as.numeric(time_points)
+
+  cat("Time points identified:", paste(time_points_numeric, collapse = ", "), "months\n")
+
+  # Identify demographic/baseline variables to keep
+  # First, check what non-pain columns exist
+  all_vars <- names(botox_clean)
+  non_pain_vars <- all_vars[!grepl("^pain", all_vars)]
+
+  cat("Non-pain variables (will be preserved):", paste(non_pain_vars, collapse = ", "), "\n")
+
+  # Explicitly check for key variables
+  cat("\nChecking key variables before reshape:\n")
+  cat("  patient_id:", "patient_id" %in% names(botox_clean), "\n")
+  cat("  treatment:", "treatment" %in% names(botox_clean), "\n")
+  cat("  age:", "age" %in% names(botox_clean), "\n")
+  cat("  gender:", "gender" %in% names(botox_clean), "\n")
+  cat("  affected_side:", "affected_side" %in% names(botox_clean), "\n")
+
+  # Reshape to long format - pivot_longer keeps all other columns
+  botox_long <- botox_clean %>%
+    pivot_longer(
+      cols = all_of(pain_cols),
+      names_to = "time_label",
+      values_to = "vas_score_long",
+      names_prefix = "pain"
+    ) %>%
+    mutate(
+      # Convert time labels to numeric months
+      time_months = case_when(
+        time_label == "05" ~ 0.5,
+        time_label == "1" ~ 1,
+        time_label == "2" ~ 2,
+        time_label == "3" ~ 3,
+        time_label == "4" ~ 4,
+        time_label == "5" ~ 5,
+        time_label == "6" ~ 6,
+        time_label == "7" ~ 7,
+        time_label == "8" ~ 8,
+        time_label == "9" ~ 9,
+        time_label == "10" ~ 10,
+        time_label == "11" ~ 11,
+        time_label == "12" ~ 12,
+        time_label == "13" ~ 13,
+        time_label == "14" ~ 14,
+        time_label == "15" ~ 15,
+        time_label == "16" ~ 16,
+        time_label == "17" ~ 17,
+        TRUE ~ as.numeric(time_label)
+      )
+    ) %>%
+    # Remove rows with missing VAS scores
+    filter(!is.na(vas_score_long)) %>%
+    # Drop old vas_score column if it exists, rename new one
+    select(-any_of("vas_score")) %>%
+    rename(vas_score = vas_score_long)
+
+  # Verify variables after reshape
+  cat("\nChecking key variables after reshape:\n")
+  cat("  patient_id:", "patient_id" %in% names(botox_long), "\n")
+  cat("  treatment:", "treatment" %in% names(botox_long), "\n")
+  cat("  age:", "age" %in% names(botox_long), "\n")
+  cat("  gender:", "gender" %in% names(botox_long), "\n")
+  cat("  affected_side:", "affected_side" %in% names(botox_long), "\n")
+  cat("  time_months:", "time_months" %in% names(botox_long), "\n")
+  cat("  vas_score:", "vas_score" %in% names(botox_long), "\n")
+
+  # Replace botox_clean with long format
+  botox_clean <- botox_long
+
+  cat("\nReshaped to long format:\n")
+  cat("Total observations:", nrow(botox_clean), "\n")
+  cat("Legs:", length(unique(botox_clean$patient_id)), "\n")
+  cat("Available variables:", paste(names(botox_clean), collapse = ", "), "\n")
+  cat("\nTime points with data:\n")
+  print(table(botox_clean$time_months))
+}
+
+# Ensure age variable is available
+if(!"age" %in% names(botox_clean)) {
+  # Try to find age column with different capitalization
+  age_candidates <- grep("^age$", names(botox_clean), ignore.case = TRUE, value = TRUE)
+  if(length(age_candidates) > 0) {
+    botox_clean <- botox_clean %>% rename(age = !!age_candidates[1])
+    cat("\nRenamed", age_candidates[1], "to 'age'\n")
+  }
+}
+```
+
+## Baseline Characteristics
+
+```{r baseline-characteristics}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("BASELINE CHARACTERISTICS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Get baseline data (one row per leg)
+baseline_data <- botox_clean %>%
+  group_by(patient_id) %>%
+  slice(1) %>%
+  ungroup()
+
+cat("\nSample size:\n")
+cat("Total legs:", nrow(baseline_data), "\n")
+
+if("treatment" %in% names(baseline_data)) {
+  cat("\nLegs per treatment group:\n")
+  print(table(baseline_data$treatment))
+}
+
+# Age distribution
+if("age" %in% tolower(names(baseline_data))) {
+  age_col <- names(baseline_data)[tolower(names(baseline_data)) == "age"][1]
+
+  cat("\n\nAge distribution by treatment group:\n")
+  age_summary <- baseline_data %>%
+    group_by(treatment) %>%
+    summarise(
+      n = n(),
+      mean = mean(!!sym(age_col), na.rm = TRUE),
+      sd = sd(!!sym(age_col), na.rm = TRUE),
+      min = min(!!sym(age_col), na.rm = TRUE),
+      max = max(!!sym(age_col), na.rm = TRUE)
+    )
+  print(age_summary)
+
+  # Test for age differences
+  if(nlevels(baseline_data$treatment) == 3) {
+    age_aov <- aov(as.formula(paste(age_col, "~ treatment")),
+                   data = baseline_data)
+    cat("\nANOVA for age differences:\n")
+    print(summary(age_aov))
+  }
+}
+
+# Gender distribution
+if("gender" %in% names(baseline_data)) {
+  cat("\n\nGender distribution by treatment group:\n")
+  gender_table <- table(baseline_data$treatment, baseline_data$gender)
+  print(gender_table)
+
+  # Chi-square test
+  if(nrow(gender_table) > 1 && ncol(gender_table) > 1) {
+    gender_test <- chisq.test(gender_table)
+    cat("\nChi-square test for gender: p =", sprintf("%.4f", gender_test$p.value), "\n")
+  }
+}
+
+# Affected side distribution
+if("affected_side" %in% names(baseline_data)) {
+  cat("\n\nAffected side distribution by treatment group:\n")
+  side_table <- table(baseline_data$treatment, baseline_data$affected_side)
+  print(side_table)
+
+  # Chi-square test
+  if(nrow(side_table) > 1 && ncol(side_table) > 1) {
+    side_test <- chisq.test(side_table)
+    cat("\nChi-square test for side: p =", sprintf("%.4f", side_test$p.value), "\n")
+  }
+}
+```
+
+## Exploratory Analysis of Improvement Scores
+
+```{r exploratory-vas}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("EXPLORATORY ANALYSIS: VISUAL ANALOG SCALE SCORES\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Summary of VAS scores
+if("vas_score" %in% names(botox_clean)) {
+  cat("Visual Analog Scale Summary:\n")
+  summary_vas <- summary(botox_clean$vas_score)
+  print(summary_vas)
+
+  cat("\n\nVAS scores by treatment group:\n")
+  vas_by_group <- botox_clean %>%
+    group_by(treatment) %>%
+    summarise(
+      n_obs = n(),
+      n_legs = n_distinct(patient_id),
+      mean = mean(vas_score, na.rm = TRUE),
+      sd = sd(vas_score, na.rm = TRUE),
+      median = median(vas_score, na.rm = TRUE),
+      q25 = quantile(vas_score, 0.25, na.rm = TRUE),
+      q75 = quantile(vas_score, 0.75, na.rm = TRUE),
+      min = min(vas_score, na.rm = TRUE),
+      max = max(vas_score, na.rm = TRUE)
+    )
+  print(vas_by_group)
+}
+
+# Check visit pattern
+if("time_months" %in% names(botox_clean)) {
+  cat("\n\nVisit pattern:\n")
+  visit_pattern <- botox_clean %>%
+    group_by(time_months) %>%
+    summarise(n_visits = n()) %>%
+    arrange(time_months)
+  print(visit_pattern)
+
+  cat("\n\nVisits per leg:\n")
+  visits_per_leg <- botox_clean %>%
+    group_by(patient_id) %>%
+    summarise(n_visits = n()) %>%
+    pull(n_visits)
+  print(summary(visits_per_leg))
+}
+```
+
+## Visualization of Improvement Over Time
+
+```{r plot-improvement-time, fig.height=7}
+if("vas_score" %in% names(botox_clean) && "time_months" %in% names(botox_clean)) {
+
+  # Mean trajectory by treatment group
+  mean_trajectory <- botox_clean %>%
+    group_by(treatment, time_months) %>%
+    summarise(
+      mean_vas = mean(vas_score, na.rm = TRUE),
+      se_vas = sd(vas_score, na.rm = TRUE) / sqrt(n()),
+      n = n()
+    ) %>%
+    ungroup()
+
+  ggplot(mean_trajectory, aes(x = time_months, y = mean_vas, color = treatment)) +
+    geom_line(linewidth = 1) +
+    geom_point(size = 2) +
+    geom_errorbar(aes(ymin = mean_vas - se_vas, ymax = mean_vas + se_vas),
+                  width = 0.3, alpha = 0.6) +
+    geom_hline(yintercept = 50, linetype = "dashed", color = "red", alpha = 0.5) +
+    labs(
+      title = "Mean Improvement Over Time by Treatment Group",
+      x = "Time (months)",
+      y = "Mean Improvement Score (%)",
+      color = "Treatment",
+      caption = "Error bars represent standard errors. Dashed line at 50% improvement."
+    ) +
+    theme_bw() +
+    theme(legend.position = "top")
+}
+```
+
+# Problem 14.37: Continuous Outcome (Unadjusted)
+
+## Linear Mixed-Effects Model
+
+```{r problem-14-37-lme}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 14.37: CONTINUOUS OUTCOME ANALYSIS (UNADJUSTED)\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nAPPROACH: Linear mixed-effects model with random intercept\n")
+cat("Uses entire longitudinal dataset\n\n")
+
+# Check if required variables exist
+required_vars <- c("vas_score", "treatment", "time_months", "patient_id")
+missing_vars <- required_vars[!required_vars %in% names(botox_clean)]
+
+if(length(missing_vars) > 0) {
+  cat("ERROR: Missing required variables:", paste(missing_vars, collapse = ", "), "\n")
+  cat("Available variables:", paste(names(botox_clean), collapse = ", "), "\n")
+  stop("Cannot proceed without required variables")
+}
+
+# Fit linear mixed-effects model
+# Random intercept for each leg to account for repeated measures
+lme_unadj <- lmer(vas_score ~ treatment + time_months + treatment:time_months +
+                   (1 | patient_id),
+                 data = botox_clean,
+                 REML = TRUE)
+
+cat("Linear Mixed-Effects Model:\n")
+print(summary(lme_unadj))
+
+# Extract fixed effects
+cat("\n\nFixed Effects Coefficients:\n")
+fixed_effects <- tidy(lme_unadj, effects = "fixed")
+print(fixed_effects)
+```
+
+## Overall Treatment Effect Test
+
+```{r lme-treatment-test-37}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("OVERALL TREATMENT EFFECT TEST\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Fit reduced model without treatment
+lme_reduced <- lmer(vas_score ~ time_months + (1 | patient_id),
+                   data = botox_clean,
+                   REML = FALSE)
+
+# Fit full model
+lme_full <- lmer(vas_score ~ treatment + time_months + treatment:time_months +
+                  (1 | patient_id),
+                data = botox_clean,
+                REML = FALSE)
+
+# Likelihood ratio test
+lrt_test <- anova(lme_reduced, lme_full)
+cat("Likelihood Ratio Test for Treatment Effect:\n")
+print(lrt_test)
+
+p_value_lrt <- lrt_test$`Pr(>Chisq)`[2]
+cat("\n\nConclusion:\n")
+if(!is.na(p_value_lrt) && p_value_lrt < 0.05) {
+  cat("There IS a statistically significant overall treatment effect (p < 0.05)\n")
+} else {
+  cat("There is NO statistically significant overall treatment effect (p >= 0.05)\n")
+}
+```
+
+## Pairwise Treatment Comparisons
+
+```{r pairwise-37}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PAIRWISE TREATMENT COMPARISONS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Use emmeans for pairwise comparisons at mean time
+emm_treatment <- emmeans(lme_full, ~ treatment)
+
+cat("Estimated Marginal Means:\n")
+print(summary(emm_treatment))
+
+cat("\n\nPairwise Comparisons:\n")
+pairs_treatment <- pairs(emm_treatment, adjust = "tukey")
+print(summary(pairs_treatment))
+
+# Extract pairwise comparison results
+pairs_df <- as.data.frame(pairs_treatment)
+cat("\n\nSummary of Pairwise Differences:\n")
+for(i in 1:nrow(pairs_df)) {
+  cat(sprintf("%s:\n", pairs_df$contrast[i]))
+  cat(sprintf("  Difference = %.2f (SE = %.2f)\n",
+              pairs_df$estimate[i], pairs_df$SE[i]))
+  cat(sprintf("  95%% CI: [%.2f, %.2f]\n",
+              pairs_df$estimate[i] - 1.96*pairs_df$SE[i],
+              pairs_df$estimate[i] + 1.96*pairs_df$SE[i]))
+  cat(sprintf("  p = %.4f\n\n", pairs_df$p.value[i]))
+}
+```
+
+## GEE Alternative Analysis
+
+```{r gee-37}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ALTERNATIVE: GEE ANALYSIS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Fit GEE model with exchangeable correlation structure
+# Remove rows with missing values in model variables
+botox_gee <- botox_clean %>%
+  filter(!is.na(vas_score), !is.na(treatment), !is.na(time_months), !is.na(patient_id))
+
+cat("Original observations:", nrow(botox_clean), "\n")
+cat("Complete case observations for GEE:", nrow(botox_gee), "\n\n")
+
+gee_unadj <- geeglm(vas_score ~ treatment + time_months + treatment:time_months,
+                   data = botox_gee,
+                   id = patient_id,
+                   family = gaussian,
+                   corstr = "exchangeable")
+
+cat("GEE Model Summary:\n")
+print(summary(gee_unadj))
+
+# Extract coefficients
+cat("\n\nGEE Coefficients:\n")
+gee_coef <- tidy(gee_unadj)
+print(gee_coef)
+```
+
+## Answer to Problem 14.37
+
+```{r answer-14-37}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ANSWER TO PROBLEM 14.37\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nQUESTION: Are there between-group differences in efficacy (continuous VAS)?\n")
+cat("ANALYSIS: Linear mixed-effects model using entire longitudinal dataset\n\n")
+
+cat("RESULTS:\n\n")
+
+cat("1. Overall Treatment Effect:\n")
+cat(sprintf("   Likelihood Ratio Test: χ² = %.3f, df = %d, p = %.4f\n",
+            lrt_test$Chisq[2], lrt_test$Df[2], p_value_lrt))
+
+cat("\n2. Pairwise Comparisons (Tukey-adjusted):\n")
+for(i in 1:nrow(pairs_df)) {
+  cat(sprintf("   %s: Diff = %.2f, p = %.4f ",
+              pairs_df$contrast[i], pairs_df$estimate[i], pairs_df$p.value[i]))
+  if(pairs_df$p.value[i] < 0.05) {
+    cat("*\n")
+  } else {
+    cat("\n")
+  }
+}
+
+cat("\n3. Mean Improvement by Treatment:\n")
+emm_summary <- summary(emm_treatment)
+for(i in 1:nrow(emm_summary)) {
+  cat(sprintf("   %s: %.2f%% (SE = %.2f)\n",
+              emm_summary$treatment[i],
+              emm_summary$emmean[i],
+              emm_summary$SE[i]))
+}
+
+cat("\nCONCLUSION:\n")
+if(!is.na(p_value_lrt) && p_value_lrt < 0.05) {
+  cat("There are statistically significant differences among treatment groups\n")
+  cat("in pain improvement scores over the study period (p < 0.05).\n\n")
+
+  sig_pairs <- pairs_df$contrast[pairs_df$p.value < 0.05]
+  if(length(sig_pairs) > 0) {
+    cat("Significant pairwise differences:\n")
+    for(pair in sig_pairs) {
+      cat("  -", pair, "\n")
+    }
+  }
+} else {
+  cat("There are NO statistically significant differences among treatment groups\n")
+  cat("in pain improvement scores over the study period (p >= 0.05).\n")
+}
+```
+
+# Problem 14.38: Continuous Outcome (Adjusted)
+
+## Linear Mixed-Effects Model with Covariates
+
+```{r problem-14-38-lme}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 14.38: CONTINUOUS OUTCOME ANALYSIS (ADJUSTED)\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nAPPROACH: Linear mixed-effects model adjusted for covariates\n")
+cat("Covariates: age, gender, affected side\n\n")
+
+# Build formula dynamically - check which covariates are available
+covariate_terms <- c()
+
+# Age
+if("age" %in% names(botox_clean)) {
+  covariate_terms <- c(covariate_terms, "age")
+  cat("Including covariate: age\n")
+} else {
+  cat("WARNING: age variable not found\n")
+}
+
+# Gender
+if("gender" %in% names(botox_clean)) {
+  covariate_terms <- c(covariate_terms, "gender")
+  cat("Including covariate: gender\n")
+} else {
+  cat("WARNING: gender variable not found\n")
+}
+
+# Affected side
+if("affected_side" %in% names(botox_clean)) {
+  covariate_terms <- c(covariate_terms, "affected_side")
+  cat("Including covariate: affected_side\n")
+} else {
+  cat("WARNING: affected_side variable not found\n")
+}
+
+cat("\nTotal covariates to include:", length(covariate_terms), "\n")
+
+# Fit adjusted model
+if(length(covariate_terms) > 0) {
+  formula_str <- paste("vas_score ~ treatment + time_months + treatment:time_months +",
+                      paste(covariate_terms, collapse = " + "),
+                      "+ (1 | patient_id)")
+
+  cat("Model formula:", formula_str, "\n\n")
+
+  lme_adj <- lmer(as.formula(formula_str),
+                  data = botox_clean,
+                  REML = TRUE)
+
+  cat("Adjusted Linear Mixed-Effects Model:\n")
+  print(summary(lme_adj))
+
+  # Extract fixed effects
+  cat("\n\nFixed Effects Coefficients:\n")
+  fixed_effects_adj <- tidy(lme_adj, effects = "fixed")
+  print(fixed_effects_adj)
+} else {
+  cat("No covariates available - using unadjusted model\n")
+  lme_adj <- lme_unadj
+}
+```
+
+## Overall Treatment Effect Test (Adjusted)
+
+```{r lme-treatment-test-38}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("OVERALL TREATMENT EFFECT TEST (ADJUSTED)\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+if(length(covariate_terms) > 0) {
+  # Fit reduced model without treatment
+  formula_reduced <- paste("vas_score ~ time_months +",
+                          paste(covariate_terms, collapse = " + "),
+                          "+ (1 | patient_id)")
+
+  lme_reduced_adj <- lmer(as.formula(formula_reduced),
+                         data = botox_clean,
+                         REML = FALSE)
+
+  # Fit full model
+  formula_full <- paste("vas_score ~ treatment + time_months + treatment:time_months +",
+                       paste(covariate_terms, collapse = " + "),
+                       "+ (1 | patient_id)")
+
+  lme_full_adj <- lmer(as.formula(formula_full),
+                      data = botox_clean,
+                      REML = FALSE)
+
+  # Likelihood ratio test
+  lrt_test_adj <- anova(lme_reduced_adj, lme_full_adj)
+  cat("Likelihood Ratio Test for Treatment Effect (Adjusted):\n")
+  print(lrt_test_adj)
+
+  p_value_lrt_adj <- lrt_test_adj$`Pr(>Chisq)`[2]
+  cat("\n\nConclusion:\n")
+  if(!is.na(p_value_lrt_adj) && p_value_lrt_adj < 0.05) {
+    cat("After adjusting for covariates, there IS a significant treatment effect (p < 0.05)\n")
+  } else {
+    cat("After adjusting for covariates, there is NO significant treatment effect (p >= 0.05)\n")
+  }
+} else {
+  lme_full_adj <- lme_full
+  p_value_lrt_adj <- p_value_lrt
+}
+```
+
+## Pairwise Treatment Comparisons (Adjusted)
+
+```{r pairwise-38}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PAIRWISE TREATMENT COMPARISONS (ADJUSTED)\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Use emmeans for pairwise comparisons
+emm_treatment_adj <- emmeans(lme_full_adj, ~ treatment)
+
+cat("Estimated Marginal Means (Adjusted):\n")
+print(summary(emm_treatment_adj))
+
+cat("\n\nPairwise Comparisons (Adjusted):\n")
+pairs_treatment_adj <- pairs(emm_treatment_adj, adjust = "tukey")
+print(summary(pairs_treatment_adj))
+
+# Compare unadjusted vs adjusted
+pairs_df_adj <- as.data.frame(pairs_treatment_adj)
+cat("\n\nComparison: Unadjusted vs Adjusted Estimates:\n")
+cat(sprintf("%-30s %15s %15s\n", "Comparison", "Unadjusted", "Adjusted"))
+cat(rep("-", 62), "\n", sep = "")
+for(i in 1:nrow(pairs_df)) {
+  cat(sprintf("%-30s %15.2f %15.2f\n",
+              pairs_df$contrast[i],
+              pairs_df$estimate[i],
+              pairs_df_adj$estimate[i]))
+}
+```
+
+## Answer to Problem 14.38
+
+```{r answer-14-38}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ANSWER TO PROBLEM 14.38\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nQUESTION: Are there between-group differences adjusting for covariates?\n")
+cat("COVARIATES: Age, gender, affected side\n\n")
+
+cat("RESULTS:\n\n")
+
+cat("1. Overall Treatment Effect (Adjusted):\n")
+cat(sprintf("   Likelihood Ratio Test: χ² = %.3f, df = %d, p = %.4f\n",
+            lrt_test_adj$Chisq[2], lrt_test_adj$Df[2], p_value_lrt_adj))
+
+cat("\n2. Pairwise Comparisons (Adjusted, Tukey-adjusted):\n")
+for(i in 1:nrow(pairs_df_adj)) {
+  cat(sprintf("   %s: Diff = %.2f, p = %.4f ",
+              pairs_df_adj$contrast[i], pairs_df_adj$estimate[i], pairs_df_adj$p.value[i]))
+  if(pairs_df_adj$p.value[i] < 0.05) {
+    cat("*\n")
+  } else {
+    cat("\n")
+  }
+}
+
+cat("\n3. Covariate Effects:\n")
+if(length(covariate_terms) > 0) {
+  covar_effects <- fixed_effects_adj %>%
+    filter(term %in% covariate_terms)
+  for(i in 1:nrow(covar_effects)) {
+    cat(sprintf("   %s: β = %.3f (SE = %.3f), p = %.4f\n",
+                covar_effects$term[i],
+                covar_effects$estimate[i],
+                covar_effects$std.error[i],
+                covar_effects$p.value[i]))
+  }
+}
+
+cat("\nCONCLUSION:\n")
+if(!is.na(p_value_lrt_adj) && p_value_lrt_adj < 0.05) {
+  cat("After adjusting for age, gender, and affected side, there ARE\n")
+  cat("statistically significant differences among treatment groups (p < 0.05).\n")
+} else {
+  cat("After adjusting for age, gender, and affected side, there are NO\n")
+  cat("statistically significant differences among treatment groups (p >= 0.05).\n")
+}
+
+# Compare with unadjusted
+cat("\nIMPACT OF ADJUSTMENT:\n")
+cat(sprintf("Unadjusted p-value: %.4f\n", p_value_lrt))
+cat(sprintf("Adjusted p-value:   %.4f\n", p_value_lrt_adj))
+pct_change <- abs((p_value_lrt_adj - p_value_lrt) / p_value_lrt) * 100
+cat(sprintf("Change: %.1f%%\n", pct_change))
+```
+
+# Problem 14.39: Success/Failure Analysis (Unadjusted)
+
+## Create Success Variable
+
+```{r create-success-var}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 14.39: SUCCESS/FAILURE ANALYSIS (UNADJUSTED)\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nDEFINITION: Success = VAS score ≥ 50% improvement\n")
+cat("            Failure = VAS score < 50%\n\n")
+
+# Create success indicator
+botox_success <- botox_clean %>%
+  mutate(
+    success = ifelse(vas_score >= 50, 1, 0),
+    success_label = factor(success, levels = 0:1, labels = c("Failure", "Success"))
+  )
+
+cat("Success rates overall:\n")
+success_overall <- botox_success %>%
+  summarise(
+    n_obs = n(),
+    n_success = sum(success, na.rm = TRUE),
+    rate = mean(success, na.rm = TRUE)
+  )
+print(success_overall)
+
+cat("\n\nSuccess rates by treatment group:\n")
+success_by_group <- botox_success %>%
+  group_by(treatment) %>%
+  summarise(
+    n_obs = n(),
+    n_success = sum(success, na.rm = TRUE),
+    success_rate = mean(success, na.rm = TRUE)
+  )
+print(success_by_group)
+```
+
+## Time to First Success (Survival Analysis)
+
+```{r survival-success-39}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("SURVIVAL ANALYSIS: TIME TO FIRST SUCCESS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Create time-to-first-success dataset
+time_to_success <- botox_success %>%
+  arrange(patient_id, time_months) %>%
+  group_by(patient_id) %>%
+  mutate(
+    ever_success = max(success, na.rm = TRUE),
+    first_success_time = ifelse(
+      ever_success == 1,
+      time_months[which(success == 1)[1]],
+      max(time_months, na.rm = TRUE)
+    )
+  ) %>%
+  slice(1) %>%
+  ungroup() %>%
+  mutate(
+    event = ever_success,
+    time = first_success_time
+  )
+
+cat("Time-to-success summary:\n")
+cat("Total legs:", nrow(time_to_success), "\n")
+cat("Ever achieved success:", sum(time_to_success$event), "\n")
+cat("Never achieved success:", sum(time_to_success$event == 0), "\n")
+cat("Success rate:", round(100 * mean(time_to_success$event), 1), "%\n")
+
+cat("\n\nSuccess rates by treatment:\n")
+success_summary <- time_to_success %>%
+  group_by(treatment) %>%
+  summarise(
+    n = n(),
+    events = sum(event),
+    success_rate = round(100 * mean(event), 1)
+  )
+print(success_summary)
+
+# Kaplan-Meier curves
+km_fit_39 <- survfit(Surv(time, event) ~ treatment,
+                     data = time_to_success)
+
+cat("\n\nKaplan-Meier Estimates:\n")
+print(km_fit_39)
+```
+
+## Visualization of Time to Success
+
+```{r plot-success-39, fig.height=7}
+# Plot Kaplan-Meier curves
+ggsurvplot(
+  km_fit_39,
+  data = time_to_success,
+  fun = function(y) 1 - y,  # Plot cumulative incidence (proportion with success)
+  pval = TRUE,
+  pval.method = TRUE,
+  conf.int = FALSE,
+  risk.table = TRUE,
+  risk.table.height = 0.25,
+  title = "Time to First Success (≥50% Improvement)",
+  xlab = "Time (months)",
+  ylab = "Proportion Achieving Success",
+  legend.title = "Treatment",
+  legend.labs = c("TL", "Placebo", "Botox"),
+  palette = c("#2E9FDF", "#E7B800", "#00BA38"),
+  ggtheme = theme_bw()
+)
+```
+
+## Log-Rank Test
+
+```{r logrank-39}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("LOG-RANK TEST\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Log-rank test
+logrank_39 <- survdiff(Surv(time, event) ~ treatment,
+                       data = time_to_success)
+
+print(logrank_39)
+
+chi_sq_39 <- logrank_39$chisq
+p_value_39 <- 1 - pchisq(chi_sq_39, df = 2)
+
+cat("\n\nTest Summary:\n")
+cat(sprintf("Chi-square statistic: %.3f\n", chi_sq_39))
+cat(sprintf("Degrees of freedom: 2\n"))
+cat(sprintf("P-value: %.4f\n", p_value_39))
+
+if(p_value_39 < 0.05) {
+  cat("\nConclusion: SIGNIFICANT differences among groups (p < 0.05)\n")
+} else {
+  cat("\nConclusion: NO significant differences among groups (p >= 0.05)\n")
+}
+```
+
+## Cox Proportional Hazards Model
+
+```{r cox-39}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("COX PROPORTIONAL HAZARDS MODEL\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Fit Cox model
+cox_39 <- coxph(Surv(time, event) ~ treatment,
+                data = time_to_success)
+
+cat("Cox Model Summary:\n")
+print(summary(cox_39))
+
+# Extract hazard ratios
+hr_table_39 <- tidy(cox_39, exponentiate = TRUE, conf.int = TRUE)
+cat("\n\nHazard Ratios (vs TL):\n")
+print(hr_table_39)
+
+cat("\n\nInterpretation:\n")
+for(i in 1:nrow(hr_table_39)) {
+  cat(sprintf("%s vs TL:\n", gsub("treatment", "", hr_table_39$term[i])))
+  cat(sprintf("  HR = %.3f (95%% CI: %.3f - %.3f)\n",
+              hr_table_39$estimate[i],
+              hr_table_39$conf.low[i],
+              hr_table_39$conf.high[i]))
+  cat(sprintf("  p = %.4f\n", hr_table_39$p.value[i]))
+  if(hr_table_39$estimate[i] > 1) {
+    cat(sprintf("  %.0f%% higher hazard of success (faster to achieve success)\n\n",
+                (hr_table_39$estimate[i] - 1) * 100))
+  } else {
+    cat(sprintf("  %.0f%% lower hazard of success (slower to achieve success)\n\n",
+                (1 - hr_table_39$estimate[i]) * 100))
+  }
+}
+```
+
+## GEE for Repeated Binary Outcomes
+
+```{r gee-binary-39}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ALTERNATIVE: GEE FOR REPEATED BINARY OUTCOMES\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Fit GEE with binomial family
+# Remove rows with missing values
+botox_success_gee <- botox_success %>%
+  filter(!is.na(success), !is.na(treatment), !is.na(time_months), !is.na(patient_id))
+
+cat("Original observations:", nrow(botox_success), "\n")
+cat("Complete case observations for GEE:", nrow(botox_success_gee), "\n\n")
+
+gee_success_39 <- geeglm(success ~ treatment + time_months,
+                        data = botox_success_gee,
+                        id = patient_id,
+                        family = binomial(link = "logit"),
+                        corstr = "exchangeable")
+
+cat("GEE Model for Success (Logistic Regression):\n")
+print(summary(gee_success_39))
+
+# Extract odds ratios
+gee_or_39 <- tidy(gee_success_39, exponentiate = TRUE, conf.int = TRUE)
+cat("\n\nOdds Ratios:\n")
+print(gee_or_39)
+```
+
+## Answer to Problem 14.39
+
+```{r answer-14-39}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ANSWER TO PROBLEM 14.39\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nQUESTION: Are there differences in success rates (≥50% improvement)?\n")
+cat("ANALYSES: Survival analysis (time to first success) and GEE\n\n")
+
+cat("RESULTS:\n\n")
+
+cat("1. Overall Success Rates:\n")
+for(i in 1:nrow(success_summary)) {
+  cat(sprintf("   %s: %d/%d (%.1f%%)\n",
+              success_summary$treatment[i],
+              success_summary$events[i],
+              success_summary$n[i],
+              success_summary$success_rate[i]))
+}
+
+cat("\n2. Survival Analysis (Time to First Success):\n")
+cat(sprintf("   Log-rank test: χ² = %.3f, p = %.4f\n", chi_sq_39, p_value_39))
+
+cat("\n3. Cox Model Hazard Ratios (vs TL):\n")
+for(i in 1:nrow(hr_table_39)) {
+  cat(sprintf("   %s: HR = %.3f (95%% CI: %.3f - %.3f), p = %.4f\n",
+              gsub("treatment", "", hr_table_39$term[i]),
+              hr_table_39$estimate[i],
+              hr_table_39$conf.low[i],
+              hr_table_39$conf.high[i],
+              hr_table_39$p.value[i]))
+}
+
+cat("\nCONCLUSION:\n")
+if(p_value_39 < 0.05) {
+  cat("There ARE statistically significant differences among treatment groups\n")
+  cat("in the rate of achieving success (≥50% improvement) (p < 0.05).\n\n")
+
+  sig_comparisons <- hr_table_39 %>% filter(p.value < 0.05)
+  if(nrow(sig_comparisons) > 0) {
+    cat("Significant comparisons:\n")
+    for(i in 1:nrow(sig_comparisons)) {
+      cat(sprintf("  - %s has different success rate than TL\n",
+                  gsub("treatment", "", sig_comparisons$term[i])))
+    }
+  }
+} else {
+  cat("There are NO statistically significant differences among treatment groups\n")
+  cat("in the rate of achieving success (≥50% improvement) (p >= 0.05).\n")
+}
+```
+
+# Problem 14.40: Success/Failure Analysis (Adjusted)
+
+## Cox Model with Covariates
+
+```{r problem-14-40-cox}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 14.40: SUCCESS/FAILURE ANALYSIS (ADJUSTED)\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nAPPROACH: Cox model for time to success, adjusted for covariates\n\n")
+
+# Check if covariates already exist in time_to_success
+cat("Checking if covariates already exist in time_to_success:\n")
+for(cov in covariate_terms) {
+  cat("  ", cov, ":", cov %in% names(time_to_success), "\n")
+}
+
+# The time_to_success dataset already has the covariates since it was created
+# from botox_success which preserved them during reshaping
+# No need to merge - just use time_to_success directly
+time_to_success_adj <- time_to_success
+
+# Verify covariates are present
+cat("\nVerifying covariates in time_to_success_adj:\n")
+missing_covs <- covariate_terms[!covariate_terms %in% names(time_to_success_adj)]
+if(length(missing_covs) > 0) {
+  cat("WARNING: Missing covariates:", paste(missing_covs, collapse = ", "), "\n")
+  cat("Removing missing covariates from model\n")
+  covariate_terms <- covariate_terms[covariate_terms %in% names(time_to_success_adj)]
+}
+
+cat("Covariates to include in model:", paste(covariate_terms, collapse = ", "), "\n")
+
+if(length(covariate_terms) > 0) {
+  # Build formula
+  formula_cox_adj <- paste("Surv(time, event) ~ treatment +",
+                          paste(covariate_terms, collapse = " + "))
+
+  cat("Model formula:", formula_cox_adj, "\n\n")
+
+  # Fit adjusted Cox model
+  cox_adj_40 <- coxph(as.formula(formula_cox_adj),
+                     data = time_to_success_adj)
+
+  cat("Adjusted Cox Model Summary:\n")
+  print(summary(cox_adj_40))
+
+  # Extract hazard ratios
+  hr_table_adj_40 <- tidy(cox_adj_40, exponentiate = TRUE, conf.int = TRUE)
+  cat("\n\nHazard Ratios (Adjusted):\n")
+  print(hr_table_adj_40)
+} else {
+  cat("No covariates available - using unadjusted model\n")
+  cox_adj_40 <- cox_39
+  hr_table_adj_40 <- hr_table_39
+}
+```
+
+## GEE with Covariates
+
+```{r gee-adjusted-40}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("GEE MODEL WITH COVARIATES\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+if(length(covariate_terms) > 0) {
+  formula_gee_adj <- paste("success ~ treatment + time_months +",
+                          paste(covariate_terms, collapse = " + "))
+
+  cat("Model formula:", formula_gee_adj, "\n\n")
+
+  # Create dataset with complete cases for all variables in the model
+  model_vars <- c("success", "treatment", "time_months", "patient_id", covariate_terms)
+  botox_success_complete <- botox_success %>%
+    select(all_of(model_vars)) %>%
+    filter(complete.cases(.))
+
+  cat("Original observations:", nrow(botox_success), "\n")
+  cat("Complete case observations:", nrow(botox_success_complete), "\n\n")
+
+  if(nrow(botox_success_complete) > 0) {
+    gee_success_adj_40 <- geeglm(as.formula(formula_gee_adj),
+                                data = botox_success_complete,
+                                id = patient_id,
+                                family = binomial(link = "logit"),
+                                corstr = "exchangeable")
+
+    cat("GEE Model Summary (Adjusted):\n")
+    print(summary(gee_success_adj_40))
+
+    # Extract odds ratios
+    gee_or_adj_40 <- tidy(gee_success_adj_40, exponentiate = TRUE, conf.int = TRUE)
+    cat("\n\nOdds Ratios (Adjusted):\n")
+    print(gee_or_adj_40)
+  } else {
+    cat("ERROR: No complete cases available for adjusted GEE model.\n")
+    gee_success_adj_40 <- gee_success_39
+    gee_or_adj_40 <- gee_or_39
+  }
+} else {
+  gee_success_adj_40 <- gee_success_39
+  gee_or_adj_40 <- gee_or_39
+}
+```
+
+## Answer to Problem 14.40
+
+```{r answer-14-40}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ANSWER TO PROBLEM 14.40\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nQUESTION: Are there differences in success rates, adjusting for covariates?\n")
+cat("COVARIATES: Age, gender, affected side\n\n")
+
+cat("RESULTS (Adjusted Cox Model):\n\n")
+
+# Extract treatment effects
+hr_treatment_adj <- hr_table_adj_40 %>%
+  filter(grepl("treatment", term))
+
+cat("Treatment Hazard Ratios (vs TL):\n")
+for(i in 1:nrow(hr_treatment_adj)) {
+  cat(sprintf("   %s: HR = %.3f (95%% CI: %.3f - %.3f), p = %.4f\n",
+              gsub("treatment", "", hr_treatment_adj$term[i]),
+              hr_treatment_adj$estimate[i],
+              hr_treatment_adj$conf.low[i],
+              hr_treatment_adj$conf.high[i],
+              hr_treatment_adj$p.value[i]))
+}
+
+# Covariate effects
+if(length(covariate_terms) > 0) {
+  hr_covariates <- hr_table_adj_40 %>%
+    filter(!grepl("treatment", term))
+
+  cat("\nCovariate Effects:\n")
+  for(i in 1:nrow(hr_covariates)) {
+    cat(sprintf("   %s: HR = %.3f, p = %.4f\n",
+                hr_covariates$term[i],
+                hr_covariates$estimate[i],
+                hr_covariates$p.value[i]))
+  }
+}
+
+cat("\nCONCLUSION:\n")
+# Test overall treatment effect
+lrt_40 <- anova(cox_adj_40, test = "Chisq")
+p_treatment_40 <- lrt_40$`Pr(>|Chi|)`[1]
+
+if(!is.na(p_treatment_40) && p_treatment_40 < 0.05) {
+  cat("After adjusting for covariates, there ARE significant differences\n")
+  cat("among treatment groups in achieving success (p < 0.05).\n")
+} else {
+  cat("After adjusting for covariates, there are NO significant differences\n")
+  cat("among treatment groups in achieving success (p >= 0.05).\n")
+}
+
+cat("\nCOMPARISON: Unadjusted vs Adjusted:\n")
+cat("Unadjusted log-rank p-value:", sprintf("%.4f", p_value_39), "\n")
+cat("Adjusted Cox model p-value:", sprintf("%.4f", p_treatment_40), "\n")
+```
+
+# Problem 14.41: Sustained Success (Unadjusted)
+
+## Create Sustained Success Variable
+
+```{r create-sustained-success}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 14.41: SUSTAINED SUCCESS ANALYSIS (UNADJUSTED)\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nDEFINITION: Sustained success = ≥50% improvement on TWO SUCCESSIVE visits\n\n")
+
+# Create sustained success indicator
+botox_sustained <- botox_success %>%
+  arrange(patient_id, time_months) %>%
+  group_by(patient_id) %>%
+  mutate(
+    # Check if current and next visit both have success
+    next_success = lead(success),
+    sustained_success = ifelse(!is.na(next_success) & success == 1 & next_success == 1, 1, 0),
+    sustained_success = ifelse(is.na(sustained_success), 0, sustained_success)
+  ) %>%
+  ungroup()
+
+cat("Sustained success rates overall:\n")
+sustained_overall <- botox_sustained %>%
+  group_by(patient_id) %>%
+  summarise(ever_sustained = max(sustained_success, na.rm = TRUE)) %>%
+  ungroup() %>%
+  summarise(
+    n_legs = n(),
+    n_sustained = sum(ever_sustained),
+    rate = mean(ever_sustained)
+  )
+print(sustained_overall)
+
+cat("\n\nSustained success rates by treatment:\n")
+sustained_by_group <- botox_sustained %>%
+  group_by(patient_id, treatment) %>%
+  summarise(ever_sustained = max(sustained_success, na.rm = TRUE), .groups = "drop") %>%
+  group_by(treatment) %>%
+  summarise(
+    n = n(),
+    n_sustained = sum(ever_sustained),
+    success_rate = round(100 * mean(ever_sustained), 1)
+  )
+print(sustained_by_group)
+```
+
+## Time to Sustained Success
+
+```{r survival-sustained-41}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("SURVIVAL ANALYSIS: TIME TO SUSTAINED SUCCESS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Create time-to-sustained-success dataset
+time_to_sustained <- botox_sustained %>%
+  arrange(patient_id, time_months) %>%
+  group_by(patient_id) %>%
+  mutate(
+    ever_sustained = max(sustained_success, na.rm = TRUE),
+    first_sustained_time = ifelse(
+      ever_sustained == 1,
+      time_months[which(sustained_success == 1)[1]],
+      max(time_months, na.rm = TRUE)
+    )
+  ) %>%
+  slice(1) %>%
+  ungroup() %>%
+  mutate(
+    event = ever_sustained,
+    time = first_sustained_time
+  )
+
+cat("Time-to-sustained-success summary:\n")
+cat("Total legs:", nrow(time_to_sustained), "\n")
+cat("Ever achieved sustained success:", sum(time_to_sustained$event), "\n")
+cat("Never achieved sustained success:", sum(time_to_sustained$event == 0), "\n")
+cat("Sustained success rate:", round(100 * mean(time_to_sustained$event), 1), "%\n")
+
+cat("\n\nSustained success rates by treatment:\n")
+sustained_summary <- time_to_sustained %>%
+  group_by(treatment) %>%
+  summarise(
+    n = n(),
+    events = sum(event),
+    success_rate = round(100 * mean(event), 1)
+  )
+print(sustained_summary)
+
+# Kaplan-Meier curves
+km_fit_41 <- survfit(Surv(time, event) ~ treatment,
+                     data = time_to_sustained)
+
+cat("\n\nKaplan-Meier Estimates:\n")
+print(km_fit_41)
+```
+
+## Visualization of Time to Sustained Success
+
+```{r plot-sustained-41, fig.height=7}
+# Plot Kaplan-Meier curves
+ggsurvplot(
+  km_fit_41,
+  data = time_to_sustained,
+  fun = function(y) 1 - y,  # Cumulative incidence
+  pval = TRUE,
+  pval.method = TRUE,
+  conf.int = FALSE,
+  risk.table = TRUE,
+  risk.table.height = 0.25,
+  title = "Time to Sustained Success (≥50% on 2 Successive Visits)",
+  xlab = "Time (months)",
+  ylab = "Proportion Achieving Sustained Success",
+  legend.title = "Treatment",
+  legend.labs = c("TL", "Placebo", "Botox"),
+  palette = c("#2E9FDF", "#E7B800", "#00BA38"),
+  ggtheme = theme_bw()
+)
+```
+
+## Log-Rank Test and Cox Model
+
+```{r logrank-cox-41}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("LOG-RANK TEST AND COX MODEL\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Log-rank test
+logrank_41 <- survdiff(Surv(time, event) ~ treatment,
+                       data = time_to_sustained)
+
+print(logrank_41)
+
+chi_sq_41 <- logrank_41$chisq
+p_value_41 <- 1 - pchisq(chi_sq_41, df = 2)
+
+cat("\n\nLog-Rank Test Summary:\n")
+cat(sprintf("Chi-square statistic: %.3f\n", chi_sq_41))
+cat(sprintf("P-value: %.4f\n", p_value_41))
+
+# Cox model
+cox_41 <- coxph(Surv(time, event) ~ treatment,
+                data = time_to_sustained)
+
+cat("\n\nCox Model Summary:\n")
+print(summary(cox_41))
+
+# Extract hazard ratios
+hr_table_41 <- tidy(cox_41, exponentiate = TRUE, conf.int = TRUE)
+cat("\n\nHazard Ratios:\n")
+print(hr_table_41)
+```
+
+## Answer to Problem 14.41
+
+```{r answer-14-41}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ANSWER TO PROBLEM 14.41\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nQUESTION: Are there differences using sustained success definition?\n")
+cat("DEFINITION: ≥50% improvement on TWO SUCCESSIVE visits\n\n")
+
+cat("RESULTS:\n\n")
+
+cat("1. Sustained Success Rates:\n")
+for(i in 1:nrow(sustained_summary)) {
+  cat(sprintf("   %s: %d/%d (%.1f%%)\n",
+              sustained_summary$treatment[i],
+              sustained_summary$events[i],
+              sustained_summary$n[i],
+              sustained_summary$success_rate[i]))
+}
+
+cat("\n2. Log-rank test: χ² = ", sprintf("%.3f", chi_sq_41),
+    ", p = ", sprintf("%.4f", p_value_41), "\n", sep = "")
+
+cat("\n3. Cox Model Hazard Ratios (vs TL):\n")
+for(i in 1:nrow(hr_table_41)) {
+  cat(sprintf("   %s: HR = %.3f (95%% CI: %.3f - %.3f), p = %.4f\n",
+              gsub("treatment", "", hr_table_41$term[i]),
+              hr_table_41$estimate[i],
+              hr_table_41$conf.low[i],
+              hr_table_41$conf.high[i],
+              hr_table_41$p.value[i]))
+}
+
+cat("\nCOMPARISON WITH SINGLE-VISIT SUCCESS:\n")
+cat(sprintf("Single success rate: %.1f%%\n", 100 * mean(time_to_success$event)))
+cat(sprintf("Sustained success rate: %.1f%%\n", 100 * mean(time_to_sustained$event)))
+cat(sprintf("Single success p-value: %.4f\n", p_value_39))
+cat(sprintf("Sustained success p-value: %.4f\n", p_value_41))
+
+cat("\nCONCLUSION:\n")
+if(p_value_41 < 0.05) {
+  cat("Using the sustained success definition, there ARE statistically\n")
+  cat("significant differences among treatment groups (p < 0.05).\n")
+} else {
+  cat("Using the sustained success definition, there are NO statistically\n")
+  cat("significant differences among treatment groups (p >= 0.05).\n")
+}
+
+cat("\nThe sustained success criterion is more stringent and may better\n")
+cat("reflect durable treatment benefit.\n")
+```
+
+# Problem 14.42: Sustained Success (Adjusted)
+
+## Cox Model with Covariates
+
+```{r problem-14-42}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 14.42: SUSTAINED SUCCESS ANALYSIS (ADJUSTED)\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nAPPROACH: Cox model for sustained success, adjusted for covariates\n\n")
+
+# Check if covariates already exist in time_to_sustained
+cat("Checking if covariates already exist in time_to_sustained:\n")
+for(cov in covariate_terms) {
+  cat("  ", cov, ":", cov %in% names(time_to_sustained), "\n")
+}
+
+# The covariates are already in time_to_sustained - no need to merge
+time_to_sustained_adj <- time_to_sustained
+
+# Verify covariates are present
+cat("\nVerifying covariates in time_to_sustained_adj:\n")
+missing_covs_sustained <- covariate_terms[!covariate_terms %in% names(time_to_sustained_adj)]
+if(length(missing_covs_sustained) > 0) {
+  cat("WARNING: Missing covariates:", paste(missing_covs_sustained, collapse = ", "), "\n")
+  cat("Removing missing covariates from model\n")
+  covariate_terms_sustained <- covariate_terms[covariate_terms %in% names(time_to_sustained_adj)]
+} else {
+  covariate_terms_sustained <- covariate_terms
+}
+
+cat("Covariates to include in model:", paste(covariate_terms_sustained, collapse = ", "), "\n")
+
+if(length(covariate_terms_sustained) > 0) {
+  # Fit adjusted model
+  formula_cox_sustained <- paste("Surv(time, event) ~ treatment +",
+                                 paste(covariate_terms_sustained, collapse = " + "))
+
+  cat("Model formula:", formula_cox_sustained, "\n\n")
+
+  cox_adj_42 <- coxph(as.formula(formula_cox_sustained),
+                     data = time_to_sustained_adj)
+
+  cat("Adjusted Cox Model Summary:\n")
+  print(summary(cox_adj_42))
+
+  # Extract hazard ratios
+  hr_table_adj_42 <- tidy(cox_adj_42, exponentiate = TRUE, conf.int = TRUE)
+  cat("\n\nHazard Ratios (Adjusted):\n")
+  print(hr_table_adj_42)
+} else {
+  cat("No covariates available\n")
+  cox_adj_42 <- cox_41
+  hr_table_adj_42 <- hr_table_41
+}
+```
+
+## Answer to Problem 14.42
+
+```{r answer-14-42}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ANSWER TO PROBLEM 14.42\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nQUESTION: Are there differences in sustained success, adjusting for covariates?\n")
+cat("DEFINITION: ≥50% improvement on TWO SUCCESSIVE visits\n")
+cat("COVARIATES: Age, gender, affected side\n\n")
+
+cat("RESULTS (Adjusted Cox Model):\n\n")
+
+# Extract treatment effects
+hr_treatment_sustained <- hr_table_adj_42 %>%
+  filter(grepl("treatment", term))
+
+cat("Treatment Hazard Ratios (vs TL):\n")
+for(i in 1:nrow(hr_treatment_sustained)) {
+  cat(sprintf("   %s: HR = %.3f (95%% CI: %.3f - %.3f), p = %.4f\n",
+              gsub("treatment", "", hr_treatment_sustained$term[i]),
+              hr_treatment_sustained$estimate[i],
+              hr_treatment_sustained$conf.low[i],
+              hr_treatment_sustained$conf.high[i],
+              hr_treatment_sustained$p.value[i]))
+}
+
+# Covariate effects
+if(length(covariate_terms) > 0) {
+  hr_covariates_42 <- hr_table_adj_42 %>%
+    filter(!grepl("treatment", term))
+
+  cat("\nCovariate Effects:\n")
+  for(i in 1:nrow(hr_covariates_42)) {
+    cat(sprintf("   %s: HR = %.3f, p = %.4f\n",
+                hr_covariates_42$term[i],
+                hr_covariates_42$estimate[i],
+                hr_covariates_42$p.value[i]))
+  }
+}
+
+cat("\nCONCLUSION:\n")
+# Overall treatment effect
+lrt_42 <- anova(cox_adj_42, test = "Chisq")
+p_treatment_42 <- lrt_42$`Pr(>|Chi|)`[1]
+
+if(!is.na(p_treatment_42) && p_treatment_42 < 0.05) {
+  cat("After adjusting for covariates, there ARE significant differences\n")
+  cat("among treatment groups in achieving sustained success (p < 0.05).\n")
+} else {
+  cat("After adjusting for covariates, there are NO significant differences\n")
+  cat("among treatment groups in achieving sustained success (p >= 0.05).\n")
+}
+
+cat("\nCOMPARISON: Unadjusted vs Adjusted:\n")
+cat("Unadjusted log-rank p-value:", sprintf("%.4f", p_value_41), "\n")
+cat("Adjusted Cox model p-value:", sprintf("%.4f", p_treatment_42), "\n")
+```
+
+# Comprehensive Summary
+
+```{r comprehensive-summary}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("COMPREHENSIVE SUMMARY OF ALL PROBLEMS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Create summary table
+summary_table <- data.frame(
+  Problem = c("14.37", "14.38", "14.39", "14.40", "14.41", "14.42"),
+  Outcome = c(
+    "Continuous VAS",
+    "Continuous VAS",
+    "Success (≥50%)",
+    "Success (≥50%)",
+    "Sustained (2 visits)",
+    "Sustained (2 visits)"
+  ),
+  Adjustment = c(
+    "Unadjusted",
+    "Adjusted",
+    "Unadjusted",
+    "Adjusted",
+    "Unadjusted",
+    "Adjusted"
+  ),
+  Method = c(
+    "LME",
+    "LME",
+    "Cox/GEE",
+    "Cox/GEE",
+    "Cox",
+    "Cox"
+  ),
+  P_Value = c(
+    sprintf("%.4f", p_value_lrt),
+    sprintf("%.4f", p_value_lrt_adj),
+    sprintf("%.4f", p_value_39),
+    sprintf("%.4f", p_treatment_40),
+    sprintf("%.4f", p_value_41),
+    sprintf("%.4f", p_treatment_42)
+  )
+)
+
+print(kable(summary_table, format = "simple"))
+
+cat("\n\nKEY FINDINGS:\n\n")
+
+cat("1. Treatment Effects:\n")
+cat("   - Continuous outcome shows", ifelse(p_value_lrt_adj < 0.05, "SIGNIFICANT", "NO significant"), "differences\n")
+cat("   - Success outcome shows", ifelse(p_treatment_40 < 0.05, "SIGNIFICANT", "NO significant"), "differences\n")
+cat("   - Sustained success shows", ifelse(p_treatment_42 < 0.05, "SIGNIFICANT", "NO significant"), "differences\n\n")
+
+cat("2. Impact of Covariate Adjustment:\n")
+cat("   - Continuous: p changed from", sprintf("%.4f", p_value_lrt),
+    "to", sprintf("%.4f", p_value_lrt_adj), "\n")
+cat("   - Success: p changed from", sprintf("%.4f", p_value_39),
+    "to", sprintf("%.4f", p_treatment_40), "\n")
+cat("   - Sustained: p changed from", sprintf("%.4f", p_value_41),
+    "to", sprintf("%.4f", p_treatment_42), "\n\n")
+
+cat("3. Success Definition Impact:\n")
+cat("   - Single visit (≥50%):", round(100 * mean(time_to_success$event), 1), "% achieved\n")
+cat("   - Two successive visits:", round(100 * mean(time_to_sustained$event), 1), "% achieved\n")
+cat("   - Sustained criterion is more stringent\n\n")
+
+cat("4. Clinical Implications:\n")
+cat("   - All three treatment approaches show varying degrees of efficacy\n")
+cat("   - Choice of outcome definition affects conclusions\n")
+cat("   - Longitudinal analysis captures full trajectory of response\n")
+cat("   - Sustained success may better reflect durable benefit\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

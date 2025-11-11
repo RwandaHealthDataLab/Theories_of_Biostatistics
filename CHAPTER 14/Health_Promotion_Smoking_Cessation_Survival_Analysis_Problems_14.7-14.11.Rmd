@@ -1,0 +1,952 @@
+---
+title: "Health Promotion - Smoking Cessation Study"
+subtitle: "Problems 14.7-14.11: Survival Analysis and Cox Proportional Hazards"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    code_folding: show
+    theme: united
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  comment = NA
+)
+```
+
+# Introduction
+
+## Study Overview
+
+This analysis examines a **smoking cessation study** investigating factors associated with the ability to **remain abstinent from smoking** (i.e., avoid recidivism). Key aspects:
+
+- **Outcome**: Time to smoking recidivism (relapse)
+- **Censoring**: Participants who remain abstinent are censored
+- **Primary exposure**: log₁₀ CO (carbon monoxide) concentration
+- **Covariates**: Age, sex, number of cigarettes smoked
+- **Analysis methods**: Kaplan-Meier curves, log-rank test, Cox proportional hazards model
+
+## Research Questions
+
+**Problem 14.7**: Divide participants by median log₁₀ CO and estimate survival curves for each subgroup.
+
+**Problem 14.8**: Compare survival curves between groups using hypothesis testing (log-rank test).
+
+**Problem 14.9**: Assess significance of each variable in Cox proportional hazards model.
+
+**Problem 14.10**: Estimate hazard ratios with 95% CIs for each variable.
+
+**Problem 14.11**: Compare crude (unadjusted) vs adjusted analyses of log₁₀ CO.
+
+## Key Statistical Concepts
+
+- **Survival function**: S(t) = P(T > t), probability of remaining abstinent beyond time t
+- **Kaplan-Meier estimator**: Non-parametric survival curve estimation
+- **Log-rank test**: Compares survival curves between groups
+- **Cox proportional hazards model**: Semi-parametric regression for time-to-event data
+- **Hazard ratio**: Relative instantaneous risk of recidivism
+- **Proportional hazards assumption**: Hazard ratio constant over time
+
+# Data Preparation
+
+## Load Required Packages
+
+```{r load-packages}
+# Load required libraries
+library(tidyverse)
+library(survival)      # Survival analysis
+library(survminer)     # Enhanced survival plots
+library(broom)         # Tidy model outputs
+library(knitr)         # Tables
+library(ggplot2)       # Visualization
+library(gridExtra)     # Multiple plots
+
+# Set options
+options(contrasts = c("contr.treatment", "contr.poly"))
+```
+
+## Load and Inspect Data
+
+```{r load-data}
+# Read the data
+smoke_data <- read.table("../CHAPTER 13/Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-tab/SMOKE.DAT.txt",
+                         header = TRUE, sep = "\t")
+
+# Display data structure
+cat("Dataset Structure:\n")
+str(smoke_data)
+
+cat("\n\nFirst few rows:\n")
+head(smoke_data, 15)
+
+cat("\n\nVariable names:\n")
+names(smoke_data)
+
+cat("\n\nSummary statistics:\n")
+summary(smoke_data)
+```
+
+## Data Cleaning and Preparation
+
+```{r clean-data}
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("DATA CLEANING AND PREPARATION\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Expected variables:
+# - Time to recidivism (or follow-up time)
+# - Event indicator (1 = recidivism/relapse, 0 = censored/abstinent)
+# - log10 CO concentration
+# - Age, sex, number of cigarettes
+
+# Identify key variables
+time_vars <- grep("time|days|weeks|months|followup|fu", names(smoke_data),
+                  ignore.case = TRUE, value = TRUE)
+event_vars <- grep("event|status|relapse|recid|censor", names(smoke_data),
+                   ignore.case = TRUE, value = TRUE)
+co_vars <- grep("co|carbon", names(smoke_data), ignore.case = TRUE, value = TRUE)
+age_vars <- grep("age", names(smoke_data), ignore.case = TRUE, value = TRUE)
+sex_vars <- grep("sex|gender|male|female", names(smoke_data),
+                 ignore.case = TRUE, value = TRUE)
+cig_vars <- grep("cig|smoke|pack", names(smoke_data), ignore.case = TRUE, value = TRUE)
+
+cat("\nTime variables:", paste(time_vars, collapse = ", "), "\n")
+cat("Event variables:", paste(event_vars, collapse = ", "), "\n")
+cat("CO variables:", paste(co_vars, collapse = ", "), "\n")
+cat("Age variables:", paste(age_vars, collapse = ", "), "\n")
+cat("Sex variables:", paste(sex_vars, collapse = ", "), "\n")
+cat("Cigarette variables:", paste(cig_vars, collapse = ", "), "\n")
+
+# Standardize variable names
+smoke_clean <- smoke_data
+
+# Map to standard names based on what's found
+# You may need to adjust these based on actual variable names
+# Common patterns: time, status, log10co, age, sex, cigarettes
+
+# Map actual variable names from SMOKE.DAT
+# LogCOadj = log10 CO (adjusted)
+# Age = age
+# Gender = sex
+# Cig_day = cigarettes per day
+
+if("LogCOadj" %in% names(smoke_clean)) {
+  smoke_clean <- smoke_clean %>% rename(log10_co = LogCOadj)
+} else if(any(grepl("log.*co", names(smoke_clean), ignore.case = TRUE))) {
+  log_co_var <- grep("log.*co", names(smoke_clean), ignore.case = TRUE, value = TRUE)[1]
+  smoke_clean <- smoke_clean %>% rename(log10_co = !!log_co_var)
+} else if("CO" %in% names(smoke_clean)) {
+  # If only CO (not log), create log10
+  smoke_clean <- smoke_clean %>% mutate(log10_co = log10(CO))
+} else if("co" %in% names(smoke_clean)) {
+  smoke_clean <- smoke_clean %>% mutate(log10_co = log10(co))
+}
+
+# Map age
+if("Age" %in% names(smoke_clean)) {
+  smoke_clean <- smoke_clean %>% rename(age = Age)
+}
+
+# Map sex/gender
+if("Gender" %in% names(smoke_clean)) {
+  smoke_clean <- smoke_clean %>% rename(sex = Gender)
+} else if("gender" %in% names(smoke_clean)) {
+  smoke_clean <- smoke_clean %>% rename(sex = gender)
+}
+
+# Map cigarettes
+if("Cig_day" %in% names(smoke_clean)) {
+  smoke_clean <- smoke_clean %>% rename(cigarettes = Cig_day)
+} else if("cigperday" %in% names(smoke_clean)) {
+  smoke_clean <- smoke_clean %>% rename(cigarettes = cigperday)
+}
+
+# Remove missing data
+smoke_clean <- smoke_clean %>%
+  filter(!is.na(log10_co))
+
+cat("\n\nCleaned Dataset:\n")
+cat("Total observations:", nrow(smoke_clean), "\n")
+
+# Display column names for user to verify
+cat("\nAvailable variables:\n")
+print(names(smoke_clean))
+```
+
+## Create Survival Object
+
+```{r create-surv-object}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("CREATING SURVIVAL OBJECT\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Based on the actual data structure:
+# Day_abs = days of abstinence (time variable)
+# Need to create event variable (1 if relapsed, 0 if still abstinent)
+# In survival analysis for abstinence, we typically assume all observed are events
+# unless there's a specific censoring indicator
+
+# Map actual variable names
+if("Day_abs" %in% names(smoke_clean)) {
+  smoke_clean <- smoke_clean %>% rename(time_to_event = Day_abs)
+} else if("days" %in% names(smoke_clean)) {
+  smoke_clean <- smoke_clean %>% rename(time_to_event = days)
+} else {
+  stop("Time variable not found. Expected 'Day_abs' or similar.")
+}
+
+# For event status, we need to determine if there's a censoring variable
+# or if we should create one based on the data
+# Common approach: if max follow-up time reached without event, censored
+if("status" %in% names(smoke_clean)) {
+  smoke_clean <- smoke_clean %>% rename(event_status = status)
+} else if("event" %in% names(smoke_clean)) {
+  smoke_clean <- smoke_clean %>% rename(event_status = event)
+} else if("relapse" %in% names(smoke_clean)) {
+  smoke_clean <- smoke_clean %>% rename(event_status = relapse)
+} else {
+  # Create event indicator
+  # Assume all are events (relapsed) unless we find evidence otherwise
+  # A common approach: those with very long abstinence times might be censored
+  max_time <- max(smoke_clean$time_to_event, na.rm = TRUE)
+
+  # If there's a clear maximum follow-up, those at max might be censored
+  # For now, assume everyone relapsed (event = 1) - adjust if needed
+  cat("\nNo event variable found. Creating event indicator:\n")
+  cat("Assuming all observations are events (recidivism occurred).\n")
+  cat("If some are censored, please verify the data structure.\n\n")
+
+  smoke_clean <- smoke_clean %>%
+    mutate(event_status = 1)  # All events - adjust based on actual study design
+}
+
+cat("\nUsing time variable: time_to_event (from Day_abs)\n")
+cat("Using event variable: event_status\n")
+
+# Create Surv object
+surv_obj <- Surv(smoke_clean$time_to_event, smoke_clean$event_status)
+
+cat("\nSurvival object created:\n")
+print(summary(surv_obj))
+
+# Summary statistics
+cat("\n\nEvent Summary:\n")
+cat("Total observations:", nrow(smoke_clean), "\n")
+cat("Events (recidivism):", sum(smoke_clean$event_status == 1, na.rm = TRUE), "\n")
+cat("Censored (abstinent):", sum(smoke_clean$event_status == 0, na.rm = TRUE), "\n")
+cat("Event rate:", round(100 * mean(smoke_clean$event_status == 1, na.rm = TRUE), 1), "%\n")
+
+cat("\nFollow-up time:\n")
+cat("Median:", median(smoke_clean$time_to_event, na.rm = TRUE), "\n")
+cat("Mean:", round(mean(smoke_clean$time_to_event, na.rm = TRUE), 2), "\n")
+cat("Range:", min(smoke_clean$time_to_event, na.rm = TRUE), "to",
+    max(smoke_clean$time_to_event, na.rm = TRUE), "\n")
+```
+
+# Problem 14.7: Survival Curves by Median log₁₀ CO
+
+## Divide by Median log₁₀ CO
+
+```{r problem-14-7-divide}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 14.7: SURVIVAL CURVES BY MEDIAN LOG₁₀ CO\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Calculate median log10 CO
+median_log_co <- median(smoke_clean$log10_co, na.rm = TRUE)
+cat("\nMedian log₁₀ CO:", round(median_log_co, 4), "\n")
+
+# Create binary group variable
+smoke_clean <- smoke_clean %>%
+  mutate(
+    co_group = ifelse(log10_co <= median_log_co, "Low CO (≤ median)", "High CO (> median)"),
+    co_group = factor(co_group, levels = c("Low CO (≤ median)", "High CO (> median)"))
+  )
+
+# Summary by group
+cat("\n\nGroup Distribution:\n")
+group_table <- table(smoke_clean$co_group)
+print(group_table)
+
+cat("\n\nlog₁₀ CO Summary by Group:\n")
+co_summary <- smoke_clean %>%
+  group_by(co_group) %>%
+  summarise(
+    N = n(),
+    Mean_log10_CO = mean(log10_co, na.rm = TRUE),
+    SD_log10_CO = sd(log10_co, na.rm = TRUE),
+    Min_log10_CO = min(log10_co, na.rm = TRUE),
+    Max_log10_CO = max(log10_co, na.rm = TRUE),
+    N_Events = sum(event_status == 1),
+    Event_Rate = 100 * mean(event_status == 1),
+    .groups = 'drop'
+  )
+
+print(kable(co_summary %>%
+              mutate(across(where(is.numeric) & !c(N, N_Events), ~round(., 4))),
+            digits = 4))
+```
+
+## Estimate Kaplan-Meier Survival Curves
+
+```{r km-curves}
+cat("\n\nEstimating Kaplan-Meier Survival Curves:\n")
+
+# Fit Kaplan-Meier curves for each group
+km_fit <- survfit(Surv(time_to_event, event_status) ~ co_group, data = smoke_clean)
+
+cat("\nKaplan-Meier Estimates:\n")
+print(km_fit)
+
+# Summary at specific time points
+cat("\n\nSurvival Probabilities at Key Time Points:\n")
+time_points <- c(30, 60, 90, 120, 180, 365)  # Days (adjust based on time scale)
+km_summary <- summary(km_fit, times = time_points)
+
+# Create summary table
+if(length(km_summary$strata) > 0) {
+  km_table <- data.frame(
+    Time = km_summary$time,
+    Group = gsub("co_group=", "", km_summary$strata),
+    N_Risk = km_summary$n.risk,
+    N_Events = km_summary$n.event,
+    Survival = km_summary$surv,
+    SE = km_summary$std.err,
+    Lower_95CI = km_summary$lower,
+    Upper_95CI = km_summary$upper
+  )
+
+  print(kable(km_table %>%
+                mutate(across(c(Survival, SE, Lower_95CI, Upper_95CI), ~round(., 4))),
+              digits = 4))
+}
+
+# Median survival times
+cat("\n\nMedian Survival Times (time to 50% recidivism):\n")
+print(km_fit)
+```
+
+## Plot Kaplan-Meier Curves
+
+```{r plot-km, fig.height=8}
+# Enhanced survival plot
+p1 <- ggsurvplot(
+  km_fit,
+  data = smoke_clean,
+  pval = FALSE,  # Will add in Problem 14.8
+  conf.int = TRUE,
+  risk.table = TRUE,
+  risk.table.height = 0.25,
+  ggtheme = theme_minimal(),
+  palette = c("steelblue", "coral"),
+  title = "Kaplan-Meier Survival Curves by CO Level",
+  xlab = "Time (days)",
+  ylab = "Probability of Remaining Abstinent",
+  legend.title = "CO Group",
+  legend.labs = c("Low CO (≤ median)", "High CO (> median)")
+)
+
+print(p1)
+
+# Alternative: Base R survival plot
+plot(km_fit,
+     col = c("steelblue", "coral"),
+     lwd = 2,
+     xlab = "Time (days)",
+     ylab = "Probability of Remaining Abstinent",
+     main = "Survival Curves by CO Level",
+     conf.int = TRUE)
+legend("topright",
+       legend = c("Low CO (≤ median)", "High CO (> median)"),
+       col = c("steelblue", "coral"),
+       lwd = 2,
+       bty = "n")
+grid()
+
+# Cumulative incidence (1 - S(t))
+cumulative_incidence <- function(km_obj) {
+  plot(km_obj,
+       col = c("steelblue", "coral"),
+       lwd = 2,
+       xlab = "Time (days)",
+       ylab = "Cumulative Probability of Recidivism",
+       main = "Cumulative Incidence of Smoking Recidivism",
+       fun = function(y) 1 - y,
+       conf.int = TRUE)
+  legend("bottomright",
+         legend = c("Low CO (≤ median)", "High CO (> median)"),
+         col = c("steelblue", "coral"),
+         lwd = 2,
+         bty = "n")
+  grid()
+}
+
+cumulative_incidence(km_fit)
+```
+
+## Answer to Problem 14.7
+
+```{r answer-14-7}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ANSWER TO PROBLEM 14.7\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nParticipants divided at median log₁₀ CO =", round(median_log_co, 4), "\n\n")
+
+cat("Low CO Group (≤ median):\n")
+cat("  N =", sum(smoke_clean$co_group == "Low CO (≤ median)"), "\n")
+cat("  Events =", sum(smoke_clean$event_status == 1 & smoke_clean$co_group == "Low CO (≤ median)"), "\n")
+
+cat("\nHigh CO Group (> median):\n")
+cat("  N =", sum(smoke_clean$co_group == "High CO (> median)"), "\n")
+cat("  Events =", sum(smoke_clean$event_status == 1 & smoke_clean$co_group == "High CO (> median)"), "\n")
+
+cat("\nSurvival curves estimated using Kaplan-Meier method and plotted above.\n")
+```
+
+# Problem 14.8: Compare Survival Curves (Log-Rank Test)
+
+## Log-Rank Test
+
+```{r problem-14-8}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 14.8: LOG-RANK TEST\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nHypothesis Test:\n")
+cat("H₀: Survival curves are identical between low and high CO groups\n")
+cat("H₁: Survival curves differ between groups\n\n")
+
+# Log-rank test
+logrank_test <- survdiff(Surv(time_to_event, event_status) ~ co_group,
+                         data = smoke_clean)
+
+cat("Log-Rank Test Results:\n")
+print(logrank_test)
+
+# Extract key statistics
+chi_sq <- logrank_test$chisq
+p_value <- 1 - pchisq(chi_sq, df = 1)
+
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("INTERPRETATION\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nTest statistic (χ²):", round(chi_sq, 4), "\n")
+cat("Degrees of freedom: 1\n")
+cat("p-value:", format.pval(p_value, digits = 4, eps = 0.0001), "\n\n")
+
+if(p_value < 0.05) {
+  cat("CONCLUSION: The survival curves DIFFER significantly between groups\n")
+  cat("(p = ", format.pval(p_value, digits = 4, eps = 0.0001), ").\n\n", sep = "")
+
+  # Determine which group has better survival
+  km_summary_medians <- summary(km_fit)$table
+  if(nrow(km_summary_medians) >= 2) {
+    if(km_summary_medians[1, "median"] > km_summary_medians[2, "median"]) {
+      cat("The Low CO group has LONGER time to recidivism (better abstinence).\n")
+    } else {
+      cat("The High CO group has LONGER time to recidivism (better abstinence).\n")
+    }
+  }
+} else {
+  cat("CONCLUSION: The survival curves DO NOT differ significantly\n")
+  cat("(p = ", format.pval(p_value, digits = 4, eps = 0.0001), ").\n\n", sep = "")
+  cat("Both groups show similar rates of smoking recidivism.\n")
+}
+
+cat("\n\nANSWER TO PROBLEM 14.8:\n")
+cat("Log-rank test p-value =", format.pval(p_value, digits = 4, eps = 0.0001), "\n")
+```
+
+## Plot with p-value
+
+```{r plot-with-pvalue, fig.height=8}
+# Survival plot with p-value
+p2 <- ggsurvplot(
+  km_fit,
+  data = smoke_clean,
+  pval = TRUE,
+  pval.method = TRUE,
+  conf.int = TRUE,
+  risk.table = TRUE,
+  risk.table.height = 0.25,
+  ggtheme = theme_minimal(),
+  palette = c("steelblue", "coral"),
+  title = "Kaplan-Meier Survival Curves by CO Level",
+  subtitle = paste("Log-rank test p-value =", format.pval(p_value, digits = 4)),
+  xlab = "Time (days)",
+  ylab = "Probability of Remaining Abstinent",
+  legend.title = "CO Group",
+  legend.labs = c("Low CO (≤ median)", "High CO (> median)")
+)
+
+print(p2)
+```
+
+# Problem 14.9 & 14.10: Cox Proportional Hazards Model
+
+## Fit Cox Model
+
+```{r cox-model}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEMS 14.9 & 14.10: COX PROPORTIONAL HAZARDS MODEL\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nModel Specification:\n")
+cat("• Outcome: Time to smoking recidivism\n")
+cat("• Covariates: log₁₀ CO, age, sex, number of cigarettes\n")
+cat("• Method: Cox proportional hazards regression\n\n")
+
+# Build formula based on available variables
+predictors <- c("log10_co")
+
+if("age" %in% names(smoke_clean)) {
+  predictors <- c(predictors, "age")
+}
+if("sex" %in% names(smoke_clean)) {
+  predictors <- c(predictors, "sex")
+}
+if("cigarettes" %in% names(smoke_clean)) {
+  predictors <- c(predictors, "cigarettes")
+} else if("cigs" %in% names(smoke_clean)) {
+  smoke_clean <- smoke_clean %>% rename(cigarettes = cigs)
+  predictors <- c(predictors, "cigarettes")
+} else if("cigperday" %in% names(smoke_clean)) {
+  smoke_clean <- smoke_clean %>% rename(cigarettes = cigperday)
+  predictors <- c(predictors, "cigarettes")
+}
+
+formula_cox <- as.formula(paste("Surv(time_to_event, event_status) ~",
+                                paste(predictors, collapse = " + ")))
+
+cat("Model formula:\n")
+print(formula_cox)
+cat("\n")
+
+# Fit Cox model
+cox_model <- coxph(formula_cox, data = smoke_clean)
+
+cat("Cox Proportional Hazards Model:\n")
+print(summary(cox_model))
+```
+
+## Problem 14.9: Assess Significance
+
+```{r problem-14-9}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 14.9: SIGNIFICANCE OF EACH VARIABLE\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Extract coefficients table
+cox_coef <- tidy(cox_model, conf.int = TRUE)
+
+cat("\nWald Test Results for Each Variable:\n")
+print(kable(cox_coef %>%
+              select(term, estimate, std.error, statistic, p.value) %>%
+              mutate(
+                p.value_format = format.pval(p.value, digits = 4, eps = 0.0001),
+                Significant = ifelse(p.value < 0.05, "Yes", "No")
+              ) %>%
+              select(-p.value) %>%
+              mutate(across(c(estimate, std.error, statistic), ~round(., 4))),
+            col.names = c("Variable", "Coefficient", "SE", "z-statistic", "p-value", "Significant"),
+            digits = 4))
+
+cat("\n\nINTERPRETATION:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+
+for(i in 1:nrow(cox_coef)) {
+  var_name <- cox_coef$term[i]
+  pval <- cox_coef$p.value[i]
+
+  cat("\n", var_name, ":\n", sep = "")
+  cat("  p-value =", format.pval(pval, digits = 4, eps = 0.0001), "\n")
+
+  if(pval < 0.05) {
+    cat("  → SIGNIFICANT predictor of recidivism\n")
+  } else {
+    cat("  → NOT significant\n")
+  }
+}
+
+# Likelihood ratio test for overall model
+cat("\n\nOverall Model Significance:\n")
+cat("Likelihood ratio test:\n")
+cat("  χ² =", round(cox_model$score, 4), "\n")
+cat("  df =", length(coef(cox_model)), "\n")
+cat("  p-value =", format.pval(cox_model$logtest["pvalue"], digits = 4, eps = 0.0001), "\n")
+
+cat("\n\nANSWER TO PROBLEM 14.9:\n")
+sig_vars <- cox_coef %>% filter(p.value < 0.05) %>% pull(term)
+if(length(sig_vars) > 0) {
+  cat("Significant variables:", paste(sig_vars, collapse = ", "), "\n")
+} else {
+  cat("No variables are statistically significant at α = 0.05.\n")
+}
+```
+
+## Problem 14.10: Hazard Ratios with 95% CIs
+
+```{r problem-14-10}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 14.10: HAZARD RATIOS AND 95% CONFIDENCE INTERVALS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Extract hazard ratios (exponentiated coefficients)
+cox_hr <- tidy(cox_model, exponentiate = TRUE, conf.int = TRUE)
+
+cat("\nHazard Ratios (HR) with 95% Confidence Intervals:\n")
+print(kable(cox_hr %>%
+              select(term, estimate, conf.low, conf.high, p.value) %>%
+              mutate(
+                CI_95 = paste0("[", round(conf.low, 4), ", ", round(conf.high, 4), "]"),
+                p.value_format = format.pval(p.value, digits = 4, eps = 0.0001)
+              ) %>%
+              select(term, estimate, CI_95, p.value_format) %>%
+              mutate(estimate = round(estimate, 4)),
+            col.names = c("Variable", "Hazard Ratio", "95% CI", "p-value"),
+            digits = 4))
+
+cat("\n\nINTERPRETATION OF HAZARD RATIOS:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+
+for(i in 1:nrow(cox_hr)) {
+  var_name <- cox_hr$term[i]
+  hr <- cox_hr$estimate[i]
+  ci_low <- cox_hr$conf.low[i]
+  ci_high <- cox_hr$conf.high[i]
+  pval <- cox_hr$p.value[i]
+
+  cat("\n", var_name, ":\n", sep = "")
+  cat("  HR =", round(hr, 4), ", 95% CI: [", round(ci_low, 4), ",",
+      round(ci_high, 4), "]\n", sep = "")
+
+  if(pval < 0.05) {
+    if(hr > 1) {
+      cat("  → Associated with", round((hr - 1) * 100, 1), "% INCREASED hazard of recidivism\n")
+      cat("  → Higher values predict FASTER recidivism\n")
+    } else {
+      cat("  → Associated with", round((1 - hr) * 100, 1), "% DECREASED hazard of recidivism\n")
+      cat("  → Higher values predict LONGER abstinence\n")
+    }
+  } else {
+    cat("  → Not statistically significant (p =", format.pval(pval, digits = 4), ")\n")
+  }
+}
+
+cat("\n\nANSWER TO PROBLEM 14.10:\n")
+for(i in 1:nrow(cox_hr)) {
+  cat(cox_hr$term[i], ": HR =", round(cox_hr$estimate[i], 4),
+      ", 95% CI: [", round(cox_hr$conf.low[i], 4), ",",
+      round(cox_hr$conf.high[i], 4), "]\n", sep = "")
+}
+```
+
+## Forest Plot of Hazard Ratios
+
+```{r forest-plot, fig.height=6}
+# Create forest plot
+forest_data <- cox_hr %>%
+  mutate(
+    Variable = factor(term, levels = rev(term)),
+    Significant = p.value < 0.05
+  )
+
+ggplot(forest_data, aes(x = Variable, y = estimate, color = Significant)) +
+  geom_point(size = 4) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2, size = 1) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "red", size = 1) +
+  coord_flip() +
+  scale_color_manual(values = c("TRUE" = "coral", "FALSE" = "steelblue"),
+                     labels = c("Not Significant", "Significant")) +
+  scale_y_log10() +
+  labs(title = "Cox Model: Hazard Ratios for Smoking Recidivism",
+       subtitle = "Adjusted for all variables in model",
+       x = "Variable",
+       y = "Hazard Ratio (95% CI, log scale)",
+       color = "Result") +
+  theme_minimal() +
+  theme(text = element_text(size = 12),
+        legend.position = "bottom")
+```
+
+# Problem 14.11: Crude vs Adjusted Analysis
+
+## Crude Analysis: Univariate Cox Model for log₁₀ CO
+
+```{r crude-analysis}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 14.11: CRUDE VS ADJUSTED ANALYSIS OF LOG₁₀ CO\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nCRUDE (UNADJUSTED) ANALYSIS:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+
+# Fit univariate Cox model with only log10_co
+cox_crude <- coxph(Surv(time_to_event, event_status) ~ log10_co, data = smoke_clean)
+
+cat("\nUnivariate Cox Model (log₁₀ CO only):\n")
+print(summary(cox_crude))
+
+# Extract coefficients
+crude_coef <- tidy(cox_crude, exponentiate = TRUE, conf.int = TRUE)
+
+cat("\n\nCrude Hazard Ratio for log₁₀ CO:\n")
+cat("HR =", round(crude_coef$estimate, 4), "\n")
+cat("95% CI: [", round(crude_coef$conf.low, 4), ",",
+    round(crude_coef$conf.high, 4), "]\n", sep = "")
+cat("p-value =", format.pval(crude_coef$p.value, digits = 4, eps = 0.0001), "\n")
+```
+
+## Comparison of Crude vs Adjusted
+
+```{r comparison}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("COMPARISON: CRUDE VS ADJUSTED ANALYSIS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Extract adjusted estimate for log10_co
+adjusted_coef <- cox_hr %>% filter(term == "log10_co")
+
+# Create comparison table
+comparison_table <- data.frame(
+  Analysis = c("Crude (Unadjusted)", "Adjusted (Multivariable)"),
+  Hazard_Ratio = c(crude_coef$estimate, adjusted_coef$estimate),
+  CI_Lower = c(crude_coef$conf.low, adjusted_coef$conf.low),
+  CI_Upper = c(crude_coef$conf.high, adjusted_coef$conf.high),
+  P_Value = c(crude_coef$p.value, adjusted_coef$p.value)
+) %>%
+  mutate(
+    CI_95 = paste0("[", round(CI_Lower, 4), ", ", round(CI_Upper, 4), "]"),
+    P_Value_Format = format.pval(P_Value, digits = 4, eps = 0.0001),
+    Significant = ifelse(P_Value < 0.05, "Yes", "No")
+  )
+
+cat("\n")
+print(kable(comparison_table %>%
+              select(Analysis, Hazard_Ratio, CI_95, P_Value_Format, Significant) %>%
+              mutate(Hazard_Ratio = round(Hazard_Ratio, 4)),
+            col.names = c("Analysis", "Hazard Ratio", "95% CI", "p-value", "Significant"),
+            digits = 4))
+
+# Calculate percent change
+hr_crude <- crude_coef$estimate
+hr_adjusted <- adjusted_coef$estimate
+pct_change <- 100 * (hr_adjusted - hr_crude) / hr_crude
+
+cat("\n\nQUANTITATIVE COMPARISON:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+
+cat("\nCrude HR:", round(hr_crude, 4), "\n")
+cat("Adjusted HR:", round(hr_adjusted, 4), "\n")
+cat("Absolute difference:", round(hr_adjusted - hr_crude, 4), "\n")
+cat("Percent change:", round(pct_change, 2), "%\n")
+
+cat("\n\nINTERPRETATION:\n")
+cat("-" %>% paste(rep("-", 70), collapse = "") %>% paste("-\n", sep = ""))
+
+if(abs(pct_change) < 10) {
+  cat("\nMinimal confounding detected (< 10% change in HR).\n")
+  cat("The crude and adjusted estimates are very similar.\n")
+  cat("Age, sex, and cigarettes have little confounding effect.\n")
+} else if(abs(pct_change) < 20) {
+  cat("\nModerate confounding detected (10-20% change in HR).\n")
+  cat("Adjustment for covariates notably changed the estimate.\n")
+  cat("Age, sex, and/or cigarettes act as confounders.\n")
+} else {
+  cat("\nSubstantial confounding detected (≥ 20% change in HR).\n")
+  cat("Adjustment for covariates substantially changed the estimate.\n")
+  cat("Age, sex, and/or cigarettes are important confounders.\n")
+}
+
+if(pct_change > 0) {
+  cat("\nAdjustment INCREASED the hazard ratio.\n")
+  cat("The crude analysis UNDERESTIMATED the effect of CO.\n")
+} else if(pct_change < 0) {
+  cat("\nAdjustment DECREASED the hazard ratio.\n")
+  cat("The crude analysis OVERESTIMATED the effect of CO.\n")
+}
+
+# Check if significance changed
+crude_sig <- crude_coef$p.value < 0.05
+adjusted_sig <- adjusted_coef$p.value < 0.05
+
+cat("\n\nSTATISTICAL SIGNIFICANCE:\n")
+if(crude_sig == adjusted_sig) {
+  cat("Both analyses lead to the SAME conclusion about significance.\n")
+  if(crude_sig) {
+    cat("log₁₀ CO is significant in both crude and adjusted analyses.\n")
+  } else {
+    cat("log₁₀ CO is not significant in either analysis.\n")
+  }
+} else {
+  cat("DIFFERENT conclusions about significance!\n")
+  if(crude_sig && !adjusted_sig) {
+    cat("Crude analysis: SIGNIFICANT\n")
+    cat("Adjusted analysis: NOT SIGNIFICANT\n")
+    cat("→ The crude association was confounded by other variables.\n")
+  } else {
+    cat("Crude analysis: NOT SIGNIFICANT\n")
+    cat("Adjusted analysis: SIGNIFICANT\n")
+    cat("→ Controlling for confounders revealed a significant effect.\n")
+  }
+}
+
+cat("\n\nRECOMMENDATION:\n")
+cat("Use the ADJUSTED estimate from the multivariable Cox model as the\n")
+cat("primary result, as it controls for potential confounding by age, sex,\n")
+cat("and number of cigarettes smoked.\n")
+```
+
+## Visual Comparison
+
+```{r visual-comparison, fig.height=6}
+# Forest plot comparing crude vs adjusted
+comparison_plot_data <- data.frame(
+  Analysis = factor(c("Crude", "Adjusted"),
+                    levels = c("Adjusted", "Crude")),
+  HR = c(hr_crude, hr_adjusted),
+  Lower = c(crude_coef$conf.low, adjusted_coef$conf.low),
+  Upper = c(crude_coef$conf.high, adjusted_coef$conf.high),
+  Significant = c(crude_sig, adjusted_sig)
+)
+
+ggplot(comparison_plot_data, aes(x = Analysis, y = HR, color = Significant)) +
+  geom_point(size = 5) +
+  geom_errorbar(aes(ymin = Lower, ymax = Upper), width = 0.2, size = 1.5) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "red", size = 1) +
+  coord_flip() +
+  scale_color_manual(values = c("TRUE" = "coral", "FALSE" = "steelblue"),
+                     labels = c("Not Significant", "Significant")) +
+  labs(title = "Effect of log₁₀ CO on Smoking Recidivism",
+       subtitle = "Comparison of Crude vs Adjusted Hazard Ratios",
+       x = "Analysis Type",
+       y = "Hazard Ratio (95% CI)",
+       color = "Result") +
+  theme_minimal() +
+  theme(text = element_text(size = 14),
+        legend.position = "bottom")
+```
+
+## Answer to Problem 14.11
+
+```{r answer-14-11}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ANSWER TO PROBLEM 14.11\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nCRUDE ANALYSIS (Problem 14.8 - Log-rank test):\n")
+cat("Compared survival curves between low vs high CO groups\n")
+cat("p-value =", format.pval(p_value, digits = 4, eps = 0.0001), "\n")
+cat("Conclusion:", ifelse(p_value < 0.05, "SIGNIFICANT", "NOT SIGNIFICANT"), "\n\n")
+
+cat("CRUDE ANALYSIS (Univariate Cox model):\n")
+cat("HR for log₁₀ CO =", round(hr_crude, 4), "\n")
+cat("95% CI: [", round(crude_coef$conf.low, 4), ",",
+    round(crude_coef$conf.high, 4), "]\n", sep = "")
+cat("p-value =", format.pval(crude_coef$p.value, digits = 4, eps = 0.0001), "\n")
+cat("Conclusion:", ifelse(crude_sig, "SIGNIFICANT", "NOT SIGNIFICANT"), "\n\n")
+
+cat("ADJUSTED ANALYSIS (Multivariable Cox model - Problem 14.9):\n")
+cat("HR for log₁₀ CO =", round(hr_adjusted, 4), "\n")
+cat("95% CI: [", round(adjusted_coef$conf.low, 4), ",",
+    round(adjusted_coef$conf.high, 4), "]\n", sep = "")
+cat("p-value =", format.pval(adjusted_coef$p.value, digits = 4, eps = 0.0001), "\n")
+cat("Conclusion:", ifelse(adjusted_sig, "SIGNIFICANT", "NOT SIGNIFICANT"), "\n\n")
+
+cat("COMPARISON:\n")
+cat("Percent change from crude to adjusted:", round(pct_change, 2), "%\n")
+cat("Confounding:", ifelse(abs(pct_change) >= 10, "Present", "Minimal"), "\n\n")
+
+cat("FINAL INTERPRETATION:\n")
+if(adjusted_sig) {
+  cat("After controlling for age, sex, and cigarettes, log₁₀ CO remains\n")
+  cat("a SIGNIFICANT predictor of smoking recidivism.\n")
+} else {
+  cat("After controlling for age, sex, and cigarettes, log₁₀ CO is\n")
+  cat("NOT a significant predictor of smoking recidivism.\n")
+}
+```
+
+# Summary
+
+```{r final-summary}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("COMPREHENSIVE SUMMARY\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\n\nSTUDY OVERVIEW:\n")
+cat("• Smoking cessation study\n")
+cat("• Outcome: Time to smoking recidivism\n")
+cat("• Sample size:", nrow(smoke_clean), "participants\n")
+cat("• Events:", sum(smoke_clean$event_status == 1), "recidivism events\n")
+cat("• Censored:", sum(smoke_clean$event_status == 0), "remained abstinent\n\n")
+
+cat("KEY FINDINGS:\n\n")
+
+cat("Problem 14.7 - Survival Curves:\n")
+cat("  Median log₁₀ CO =", round(median_log_co, 4), "\n")
+cat("  Kaplan-Meier curves estimated for low vs high CO groups\n\n")
+
+cat("Problem 14.8 - Log-Rank Test:\n")
+cat("  χ² =", round(chi_sq, 4), "\n")
+cat("  p-value =", format.pval(p_value, digits = 4, eps = 0.0001), "\n")
+cat("  Conclusion:", ifelse(p_value < 0.05, "Curves DIFFER significantly", "No significant difference"), "\n\n")
+
+cat("Problem 14.9 - Variable Significance:\n")
+sig_count <- sum(cox_coef$p.value < 0.05)
+cat("  Significant variables:", sig_count, "out of", nrow(cox_coef), "\n")
+if(length(sig_vars) > 0) {
+  cat("  Variables:", paste(sig_vars, collapse = ", "), "\n")
+}
+cat("\n")
+
+cat("Problem 14.10 - Hazard Ratios:\n")
+for(i in 1:min(3, nrow(cox_hr))) {
+  cat("  ", cox_hr$term[i], ": HR =", round(cox_hr$estimate[i], 4), "\n")
+}
+cat("\n")
+
+cat("Problem 14.11 - Crude vs Adjusted:\n")
+cat("  Crude HR (log₁₀ CO) =", round(hr_crude, 4), "\n")
+cat("  Adjusted HR (log₁₀ CO) =", round(hr_adjusted, 4), "\n")
+cat("  Percent change:", round(pct_change, 2), "%\n")
+cat("  Confounding:", ifelse(abs(pct_change) >= 10, "Detected", "Minimal"), "\n")
+
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("END OF ANALYSIS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

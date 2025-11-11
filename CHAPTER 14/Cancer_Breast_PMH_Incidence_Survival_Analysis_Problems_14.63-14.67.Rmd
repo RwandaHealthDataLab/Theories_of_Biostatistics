@@ -1,0 +1,1192 @@
+---
+title: "Cancer - Breast Cancer and Postmenopausal Hormone Use"
+subtitle: "Problems 14.63-14.67: Survival Analysis of PMH and Breast Cancer Incidence"
+author: "Biostatistics Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    code_folding: show
+    theme: united
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  comment = NA
+)
+```
+
+# Introduction
+
+## Study Overview
+
+This is a **prospective cohort study** from the Nurses' Health Study (NHS) examining the relationship between **postmenopausal hormone (PMH) use** and **breast cancer incidence**.
+
+**Study Design:**
+- **Ascertainment**: 1990, postmenopausal women free of cancer
+- **Follow-up**: 1990-2000 (up to 10 years)
+- **Sample size**: 1,200 women
+  - 200 current PMH users in 1990
+  - 1,000 never PMH users in 1990
+- **Outcome**: Breast cancer incidence (53 cases total)
+
+**PMH Exposure Variables:**
+1. **PMH status** (1990): Current user vs. Never user
+2. **Duration of estrogen use** (months as of 1990)
+3. **Duration of estrogen + progesterone use** (months as of 1990)
+
+**Time Variables:**
+- **Date of 1990 questionnaire return** (baseline)
+- **Follow-up date**: Date of breast cancer diagnosis (cases) or last questionnaire up to 2000 (controls)
+- **Follow-up time**: Months from baseline to event/censoring
+
+## Research Questions
+
+**Problem 14.63**: Compare breast cancer incidence between current PMH users vs. never users (unadjusted survival analysis).
+
+**Problem 14.64**: Assess dose-response relationship - does duration of PMH use affect incidence?
+
+**Problem 14.65**: Compare PMH groups on potential confounders (age, reproductive factors, BMI, family history, etc.).
+
+**Problem 14.66**: Adjusted analysis comparing PMH groups, controlling for confounders identified in 14.65.
+
+**Problem 14.67**: Test for interaction effects between PMH use and other risk factors.
+
+## Key Statistical Concepts
+
+- **Survival analysis**: Time-to-event (breast cancer diagnosis)
+- **Censoring**: Women who didn't develop cancer by end of follow-up
+- **Kaplan-Meier curves**: Non-parametric survival estimates
+- **Cox proportional hazards**: Hazard ratios for PMH exposure
+- **Dose-response**: Duration of use as continuous predictor
+- **Confounding**: Adjustment for baseline risk factors
+- **Effect modification**: Interaction between PMH and other factors
+
+# Data Preparation
+
+## Load Required Packages
+
+```{r load-packages}
+# Load required libraries
+library(tidyverse)
+library(survival)      # Survival analysis
+library(survminer)     # Enhanced survival plots
+library(broom)         # Tidy model outputs
+library(knitr)         # Tables
+library(ggplot2)       # Visualization
+library(gridExtra)     # Multiple plots
+library(tableone)      # Table 1 creation
+
+# Set options
+options(contrasts = c("contr.treatment", "contr.poly"))
+```
+
+## Load and Inspect Data
+
+```{r load-data}
+# Read the data
+breast_data <- read.table("Rosner_FundamentalsBiostatistics_8e_Data_Sets/ASCII-tab/BREAST.DAT.txt",
+                          header = TRUE, sep = "\t")
+
+# Display data structure
+cat("Dataset Structure:\n")
+str(breast_data)
+
+cat("\n\nFirst few rows:\n")
+head(breast_data, 20)
+
+cat("\n\nVariable names:\n")
+names(breast_data)
+
+cat("\n\nDimensions:\n")
+cat("Rows:", nrow(breast_data), "\n")
+cat("Columns:", ncol(breast_data), "\n")
+
+cat("\n\nSummary statistics:\n")
+summary(breast_data)
+```
+
+## Data Cleaning and Variable Creation
+
+```{r clean-data}
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("DATA CLEANING AND VARIABLE CREATION\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Create clean dataset with meaningful variable names
+# Actual variables: Id, case, age, agemenar, agemenop, afb, parity, bbd, famhx,
+#                   bmi, hgt, alcohol, pmh, dur3, dur4, csmk, psmk, foluptm
+breast_clean <- breast_data %>%
+  rename(
+    id = Id,
+    case_status = case,
+    age_baseline = age,
+    age_menarche = agemenar,
+    age_menopause = agemenop,
+    age_first_birth = afb,
+    parity = parity,
+    bbd = bbd,
+    fam_history = famhx,
+    bmi = bmi,
+    height = hgt,
+    alcohol = alcohol,
+    pmh_status = pmh,
+    estrogen_duration = dur3,
+    estprog_duration = dur4,
+    current_smoker = csmk,
+    past_smoker = psmk,
+    followup_time = foluptm
+  ) %>%
+  mutate(
+    # Create factor variables with labels
+    case = factor(case_status, levels = 0:1, labels = c("Control", "Case")),
+
+    # PMH status
+    pmh_group = factor(pmh_status,
+                      levels = c(2, 3),
+                      labels = c("Never User", "Current User")),
+
+    # Benign breast disease
+    bbd_yn = factor(bbd, levels = 0:1, labels = c("No", "Yes")),
+
+    # Family history
+    fam_hx_yn = factor(fam_history, levels = 0:1, labels = c("No", "Yes")),
+
+    # Smoking status
+    smoker_current = factor(current_smoker, levels = 0:1, labels = c("No", "Yes")),
+    smoker_past = factor(past_smoker, levels = 0:1, labels = c("No", "Yes")),
+
+    # Combined smoking variable
+    smoking_status = case_when(
+      current_smoker == 1 ~ "Current",
+      past_smoker == 1 ~ "Past",
+      TRUE ~ "Never"
+    ),
+    smoking_status = factor(smoking_status, levels = c("Never", "Past", "Current")),
+
+    # Nulliparous indicator (age_first_birth = 98)
+    nulliparous = ifelse(age_first_birth == 98, 1, 0),
+    nulliparous_yn = factor(nulliparous, levels = 0:1, labels = c("Parous", "Nulliparous")),
+
+    # Total PMH duration (sum of estrogen and estrogen+progesterone)
+    total_pmh_duration = estrogen_duration + estprog_duration,
+
+    # Categorize PMH duration
+    pmh_duration_cat = case_when(
+      pmh_status == 2 ~ "Never",
+      total_pmh_duration == 0 ~ "Current, 0 months",
+      total_pmh_duration > 0 & total_pmh_duration <= 60 ~ "Current, 1-60 months",
+      total_pmh_duration > 60 ~ "Current, >60 months",
+      TRUE ~ "Other"
+    ),
+    pmh_duration_cat = factor(pmh_duration_cat,
+                             levels = c("Never", "Current, 0 months",
+                                       "Current, 1-60 months", "Current, >60 months")),
+
+    # Event and time variables for survival analysis
+    event = case_status,
+    time = followup_time
+  )
+
+cat("\nData cleaning completed\n")
+cat("Sample size:", nrow(breast_clean), "\n")
+
+cat("\nCase distribution:\n")
+print(table(breast_clean$case))
+
+cat("\nPMH status distribution:\n")
+print(table(breast_clean$pmh_group))
+
+cat("\nCases by PMH status:\n")
+print(table(breast_clean$pmh_group, breast_clean$case))
+```
+
+## Descriptive Statistics
+
+```{r descriptive-stats}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("DESCRIPTIVE STATISTICS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Overall statistics
+cat("OVERALL COHORT:\n")
+cat("Total women:", nrow(breast_clean), "\n")
+cat("Breast cancer cases:", sum(breast_clean$case_status), "\n")
+cat("Controls:", sum(breast_clean$case_status == 0), "\n")
+cat("Crude incidence rate:", round(100 * mean(breast_clean$case_status), 2), "%\n")
+
+cat("\n\nBY PMH STATUS:\n")
+pmh_summary <- breast_clean %>%
+  group_by(pmh_group) %>%
+  summarise(
+    n = n(),
+    cases = sum(case_status),
+    incidence_rate = round(100 * mean(case_status), 2),
+    mean_followup = mean(followup_time),
+    sd_followup = sd(followup_time)
+  )
+print(pmh_summary)
+
+# Follow-up time summary
+cat("\n\nFOLLOW-UP TIME:\n")
+cat("Mean:", round(mean(breast_clean$followup_time), 1), "months\n")
+cat("Median:", round(median(breast_clean$followup_time), 1), "months\n")
+cat("Range:", round(min(breast_clean$followup_time), 1), "-",
+    round(max(breast_clean$followup_time), 1), "months\n")
+cat("SD:", round(sd(breast_clean$followup_time), 1), "months\n")
+
+# PMH duration summary (among current users)
+cat("\n\nPMH DURATION (among current users):\n")
+duration_summary <- breast_clean %>%
+  filter(pmh_status == 3) %>%
+  summarise(
+    n = n(),
+    mean_estrogen = mean(estrogen_duration, na.rm = TRUE),
+    sd_estrogen = sd(estrogen_duration, na.rm = TRUE),
+    mean_estprog = mean(estprog_duration, na.rm = TRUE),
+    sd_estprog = sd(estprog_duration, na.rm = TRUE),
+    mean_total = mean(total_pmh_duration, na.rm = TRUE),
+    sd_total = sd(total_pmh_duration, na.rm = TRUE)
+  )
+print(duration_summary)
+```
+
+# Problem 14.63: PMH Use and Breast Cancer Incidence (Unadjusted)
+
+## Kaplan-Meier Survival Curves
+
+```{r problem-14-63-km}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 14.63: COMPARE CURRENT vs NEVER PMH USERS (UNADJUSTED)\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nAPPROACH: Survival analysis considering both events and timing\n")
+cat("Event: Breast cancer diagnosis\n")
+cat("Time: Follow-up time in months\n\n")
+
+# Fit Kaplan-Meier curves by PMH status
+km_fit_63 <- survfit(Surv(time, event) ~ pmh_group,
+                     data = breast_clean)
+
+cat("Kaplan-Meier Survival Estimates:\n")
+print(km_fit_63)
+
+cat("\n\nSurvival probabilities at specific time points:\n")
+summary(km_fit_63, times = c(12, 24, 60, 120))
+```
+
+## Visualization
+
+```{r plot-14-63, fig.height=7}
+# Plot Kaplan-Meier curves (survival = free of breast cancer)
+ggsurvplot(
+  km_fit_63,
+  data = breast_clean,
+  pval = TRUE,
+  pval.method = TRUE,
+  conf.int = FALSE,
+  risk.table = TRUE,
+  risk.table.height = 0.25,
+  title = "Breast Cancer-Free Survival by PMH Status",
+  xlab = "Time (months)",
+  ylab = "Proportion Free of Breast Cancer",
+  legend.title = "PMH Status",
+  legend.labs = c("Never User", "Current User"),
+  palette = c("#2E9FDF", "#E7B800"),
+  break.x.by = 24,
+  ggtheme = theme_bw()
+)
+```
+
+## Log-Rank Test
+
+```{r logrank-14-63}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("LOG-RANK TEST\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Log-rank test
+logrank_63 <- survdiff(Surv(time, event) ~ pmh_group,
+                       data = breast_clean)
+
+print(logrank_63)
+
+# Extract test statistics
+chi_sq_63 <- logrank_63$chisq
+p_value_63 <- 1 - pchisq(chi_sq_63, 1)
+
+cat("\n\nTest Summary:\n")
+cat(sprintf("Chi-square statistic: %.3f\n", chi_sq_63))
+cat(sprintf("Degrees of freedom: 1\n"))
+cat(sprintf("P-value: %.4f\n", p_value_63))
+
+if(p_value_63 < 0.05) {
+  cat("\nConclusion: SIGNIFICANT difference in breast cancer incidence (p < 0.05)\n")
+} else {
+  cat("\nConclusion: NO significant difference in breast cancer incidence (p >= 0.05)\n")
+}
+```
+
+## Cox Proportional Hazards Model
+
+```{r cox-14-63}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("COX PROPORTIONAL HAZARDS MODEL (UNADJUSTED)\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Fit Cox model
+cox_63 <- coxph(Surv(time, event) ~ pmh_group,
+                data = breast_clean)
+
+cat("Cox Model Summary:\n")
+print(summary(cox_63))
+
+# Extract hazard ratio
+hr_63 <- exp(coef(cox_63))
+ci_63 <- exp(confint(cox_63))
+
+cat("\n\nHazard Ratio (Current vs Never PMH Users):\n")
+cat(sprintf("HR = %.3f (95%% CI: %.3f - %.3f)\n", hr_63, ci_63[1], ci_63[2]))
+
+if(hr_63 > 1) {
+  cat(sprintf("Interpretation: Current PMH users have %.0f%% higher hazard of breast cancer\n",
+              (hr_63 - 1) * 100))
+  cat("compared to never users.\n")
+} else {
+  cat(sprintf("Interpretation: Current PMH users have %.0f%% lower hazard of breast cancer\n",
+              (1 - hr_63) * 100))
+  cat("compared to never users.\n")
+}
+
+# Calculate incidence rates per 1000 person-years
+cat("\n\nINCIDENCE RATES:\n")
+incidence_rates <- breast_clean %>%
+  group_by(pmh_group) %>%
+  summarise(
+    n = n(),
+    cases = sum(event),
+    person_months = sum(time),
+    person_years = person_months / 12,
+    rate_per_1000py = (cases / person_years) * 1000
+  )
+print(incidence_rates)
+```
+
+## Answer to Problem 14.63
+
+```{r answer-14-63}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ANSWER TO PROBLEM 14.63\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nQUESTION: Compare breast cancer incidence between current and never PMH users\n")
+cat("METHOD: Survival analysis accounting for both events and timing\n\n")
+
+cat("RESULTS:\n\n")
+
+cat("1. Case Counts:\n")
+case_counts <- table(breast_clean$pmh_group, breast_clean$case)
+print(case_counts)
+
+cat("\n2. Incidence Rates:\n")
+for(i in 1:nrow(incidence_rates)) {
+  cat(sprintf("   %s: %.2f per 1000 person-years\n",
+              incidence_rates$pmh_group[i],
+              incidence_rates$rate_per_1000py[i]))
+}
+
+cat("\n3. Statistical Tests:\n")
+cat(sprintf("   Log-rank test: χ² = %.3f, p = %.4f\n", chi_sq_63, p_value_63))
+cat(sprintf("   Hazard Ratio: %.3f (95%% CI: %.3f - %.3f)\n", hr_63, ci_63[1], ci_63[2]))
+
+cat("\nCONCLUSION:\n")
+if(p_value_63 < 0.05) {
+  cat("There IS a statistically significant difference in breast cancer incidence\n")
+  cat("between current PMH users and never users (p < 0.05).\n")
+  if(hr_63 > 1) {
+    cat("\nCurrent PMH users have a HIGHER risk of breast cancer.\n")
+  } else {
+    cat("\nCurrent PMH users have a LOWER risk of breast cancer.\n")
+  }
+} else {
+  cat("There is NO statistically significant difference in breast cancer incidence\n")
+  cat("between current PMH users and never users (p >= 0.05).\n")
+}
+```
+
+# Problem 14.64: Duration of PMH Use (Dose-Response)
+
+## Duration Analysis Among Current Users
+
+```{r problem-14-64-duration}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 14.64: DOSE-RESPONSE BY DURATION OF USE\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Summary of duration variables
+cat("DURATION SUMMARY (among current users only):\n\n")
+
+duration_detail <- breast_clean %>%
+  filter(pmh_status == 3) %>%
+  summarise(
+    n = n(),
+    cases = sum(event),
+
+    estrogen_mean = mean(estrogen_duration, na.rm = TRUE),
+    estrogen_sd = sd(estrogen_duration, na.rm = TRUE),
+    estrogen_median = median(estrogen_duration, na.rm = TRUE),
+    estrogen_range = paste(min(estrogen_duration, na.rm = TRUE),
+                          max(estrogen_duration, na.rm = TRUE), sep = "-"),
+
+    estprog_mean = mean(estprog_duration, na.rm = TRUE),
+    estprog_sd = sd(estprog_duration, na.rm = TRUE),
+    estprog_median = median(estprog_duration, na.rm = TRUE),
+    estprog_range = paste(min(estprog_duration, na.rm = TRUE),
+                         max(estprog_duration, na.rm = TRUE), sep = "-"),
+
+    total_mean = mean(total_pmh_duration, na.rm = TRUE),
+    total_sd = sd(total_pmh_duration, na.rm = TRUE),
+    total_median = median(total_pmh_duration, na.rm = TRUE),
+    total_range = paste(min(total_pmh_duration, na.rm = TRUE),
+                       max(total_pmh_duration, na.rm = TRUE), sep = "-")
+  )
+
+cat("Estrogen duration (months):\n")
+cat(sprintf("  Mean (SD): %.1f (%.1f)\n", duration_detail$estrogen_mean, duration_detail$estrogen_sd))
+cat(sprintf("  Median: %.1f\n", duration_detail$estrogen_median))
+cat(sprintf("  Range: %s\n", duration_detail$estrogen_range))
+
+cat("\nEstrogen + Progesterone duration (months):\n")
+cat(sprintf("  Mean (SD): %.1f (%.1f)\n", duration_detail$estprog_mean, duration_detail$estprog_sd))
+cat(sprintf("  Median: %.1f\n", duration_detail$estprog_median))
+cat(sprintf("  Range: %s\n", duration_detail$estprog_range))
+
+cat("\nTotal PMH duration (months):\n")
+cat(sprintf("  Mean (SD): %.1f (%.1f)\n", duration_detail$total_mean, duration_detail$total_sd))
+cat(sprintf("  Median: %.1f\n", duration_detail$total_median))
+cat(sprintf("  Range: %s\n", duration_detail$total_range))
+```
+
+## Cox Model with Duration as Continuous Variable
+
+```{r cox-duration-continuous}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("COX MODEL: DURATION AS CONTINUOUS VARIABLE\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Model 1: Estrogen duration only
+cox_estrogen <- coxph(Surv(time, event) ~ estrogen_duration,
+                      data = breast_clean %>% filter(pmh_status == 3))
+
+cat("Model 1: Estrogen Duration (among current users)\n")
+print(summary(cox_estrogen))
+
+# Model 2: Estrogen + Progesterone duration
+cox_estprog <- coxph(Surv(time, event) ~ estprog_duration,
+                     data = breast_clean %>% filter(pmh_status == 3))
+
+cat("\n\nModel 2: Estrogen + Progesterone Duration (among current users)\n")
+print(summary(cox_estprog))
+
+# Model 3: Total duration
+cox_total_dur <- coxph(Surv(time, event) ~ total_pmh_duration,
+                       data = breast_clean %>% filter(pmh_status == 3))
+
+cat("\n\nModel 3: Total PMH Duration (among current users)\n")
+print(summary(cox_total_dur))
+
+# Model 4: Both types of duration
+cox_both_dur <- coxph(Surv(time, event) ~ estrogen_duration + estprog_duration,
+                      data = breast_clean %>% filter(pmh_status == 3))
+
+cat("\n\nModel 4: Both Duration Types (among current users)\n")
+print(summary(cox_both_dur))
+```
+
+## Cox Model Comparing Never, Current by Duration Category
+
+```{r cox-duration-categorical}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("COX MODEL: DURATION CATEGORIES (ALL SUBJECTS)\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Distribution by duration category
+cat("Distribution by PMH duration category:\n")
+dur_cat_table <- table(breast_clean$pmh_duration_cat, breast_clean$case)
+print(dur_cat_table)
+
+# Cox model with duration categories
+cox_dur_cat <- coxph(Surv(time, event) ~ pmh_duration_cat,
+                     data = breast_clean)
+
+cat("\n\nCox Model with Duration Categories:\n")
+print(summary(cox_dur_cat))
+
+# Extract hazard ratios
+hr_dur_cat <- tidy(cox_dur_cat, exponentiate = TRUE, conf.int = TRUE)
+cat("\n\nHazard Ratios (vs Never Users):\n")
+print(hr_dur_cat)
+```
+
+## Test for Linear Trend
+
+```{r trend-test}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("TEST FOR LINEAR TREND\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Among all subjects, using total duration (0 for never users)
+breast_trend <- breast_clean %>%
+  mutate(
+    duration_all = ifelse(pmh_status == 2, 0, total_pmh_duration)
+  )
+
+cox_trend <- coxph(Surv(time, event) ~ duration_all,
+                   data = breast_trend)
+
+cat("Cox Model: Total Duration (0 for never users)\n")
+print(summary(cox_trend))
+
+hr_per_month <- exp(coef(cox_trend))
+cat("\n\nHazard ratio per month of PMH use:", sprintf("%.4f", hr_per_month), "\n")
+cat("Hazard ratio per year (12 months):", sprintf("%.3f", hr_per_month^12), "\n")
+```
+
+## Answer to Problem 14.64
+
+```{r answer-14-64}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ANSWER TO PROBLEM 14.64\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nQUESTION: Is there a dose-response relationship with duration of PMH use?\n\n")
+
+cat("RESULTS:\n\n")
+
+cat("1. Duration as Continuous Variable (among current users):\n")
+hr_total <- exp(coef(cox_total_dur))
+ci_total <- exp(confint(cox_total_dur))
+cat(sprintf("   Total duration: HR = %.4f per month (95%% CI: %.4f - %.4f)\n",
+            hr_total, ci_total[1], ci_total[2]))
+cat(sprintf("   P-value: %.4f\n", summary(cox_total_dur)$coefficients[5]))
+
+cat("\n2. Duration Categories (vs Never Users):\n")
+for(i in 1:nrow(hr_dur_cat)) {
+  cat(sprintf("   %s: HR = %.3f (95%% CI: %.3f - %.3f), p = %.4f\n",
+              gsub("pmh_duration_cat", "", hr_dur_cat$term[i]),
+              hr_dur_cat$estimate[i],
+              hr_dur_cat$conf.low[i],
+              hr_dur_cat$conf.high[i],
+              hr_dur_cat$p.value[i]))
+}
+
+cat("\n3. Linear Trend Test (all subjects):\n")
+hr_trend <- exp(coef(cox_trend))
+ci_trend <- exp(confint(cox_trend))
+cat(sprintf("   HR per month: %.4f (95%% CI: %.4f - %.4f)\n",
+            hr_trend, ci_trend[1], ci_trend[2]))
+cat(sprintf("   HR per year: %.3f\n", hr_trend^12))
+cat(sprintf("   P-value: %.4f\n", summary(cox_trend)$coefficients[5]))
+
+cat("\nCONCLUSION:\n")
+p_trend <- summary(cox_trend)$coefficients[5]
+if(p_trend < 0.05) {
+  cat("There IS a statistically significant dose-response relationship (p < 0.05).\n")
+  if(hr_trend > 1) {
+    cat("Longer duration of PMH use is associated with HIGHER breast cancer risk.\n")
+  } else {
+    cat("Longer duration of PMH use is associated with LOWER breast cancer risk.\n")
+  }
+} else {
+  cat("There is NO statistically significant dose-response relationship (p >= 0.05).\n")
+}
+```
+
+# Problem 14.65: Compare Groups on Potential Confounders
+
+## Table 1: Baseline Characteristics by PMH Status
+
+```{r problem-14-65-table1}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 14.65: COMPARE GROUPS ON POTENTIAL CONFOUNDERS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Define variables for Table 1
+table1_vars <- c(
+  "age_baseline",
+  "age_menarche",
+  "age_menopause",
+  "age_first_birth",
+  "parity",
+  "nulliparous_yn",
+  "bbd_yn",
+  "fam_hx_yn",
+  "bmi",
+  "height",
+  "alcohol",
+  "smoking_status"
+)
+
+# Create Table 1
+table1 <- CreateTableOne(
+  vars = table1_vars,
+  strata = "pmh_group",
+  data = breast_clean,
+  test = TRUE
+)
+
+cat("\nTABLE 1: Baseline Characteristics by PMH Status\n")
+cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+print(table1, showAllLevels = FALSE, formatOptions = list(big.mark = ","))
+
+cat("\n\nStatistical tests:\n")
+print(table1, test = TRUE, showAllLevels = FALSE)
+```
+
+## Detailed Comparisons
+
+```{r detailed-comparisons}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("DETAILED STATISTICAL COMPARISONS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Continuous variables - t-tests
+continuous_vars <- c("age_baseline", "age_menarche", "age_menopause",
+                    "bmi", "height", "alcohol")
+
+cat("\nCONTINUOUS VARIABLES (t-tests):\n\n")
+for(var in continuous_vars) {
+  # Skip age_first_birth due to nulliparous coding
+  if(var == "age_first_birth") next
+
+  formula_str <- paste(var, "~ pmh_group")
+  t_result <- t.test(as.formula(formula_str), data = breast_clean)
+
+  means <- breast_clean %>%
+    group_by(pmh_group) %>%
+    summarise(mean = mean(!!sym(var), na.rm = TRUE),
+             sd = sd(!!sym(var), na.rm = TRUE))
+
+  cat(sprintf("%s:\n", var))
+  cat(sprintf("  Never: %.2f (%.2f)\n", means$mean[1], means$sd[1]))
+  cat(sprintf("  Current: %.2f (%.2f)\n", means$mean[2], means$sd[2]))
+  cat(sprintf("  Difference: %.2f, p = %.4f %s\n\n",
+              means$mean[2] - means$mean[1],
+              t_result$p.value,
+              ifelse(t_result$p.value < 0.05, "*", "")))
+}
+
+# Categorical variables - chi-square tests
+cat("\nCATEGORICAL VARIABLES (Chi-square tests):\n\n")
+
+# Benign breast disease
+bbd_table <- table(breast_clean$pmh_group, breast_clean$bbd_yn)
+bbd_test <- chisq.test(bbd_table)
+cat("Benign Breast Disease:\n")
+print(bbd_table)
+cat(sprintf("Chi-square = %.3f, p = %.4f %s\n\n",
+            bbd_test$statistic, bbd_test$p.value,
+            ifelse(bbd_test$p.value < 0.05, "*", "")))
+
+# Family history
+fh_table <- table(breast_clean$pmh_group, breast_clean$fam_hx_yn)
+fh_test <- chisq.test(fh_table)
+cat("Family History:\n")
+print(fh_table)
+cat(sprintf("Chi-square = %.3f, p = %.4f %s\n\n",
+            fh_test$statistic, fh_test$p.value,
+            ifelse(fh_test$p.value < 0.05, "*", "")))
+
+# Nulliparous
+null_table <- table(breast_clean$pmh_group, breast_clean$nulliparous_yn)
+null_test <- chisq.test(null_table)
+cat("Nulliparous:\n")
+print(null_table)
+cat(sprintf("Chi-square = %.3f, p = %.4f %s\n\n",
+            null_test$statistic, null_test$p.value,
+            ifelse(null_test$p.value < 0.05, "*", "")))
+
+# Smoking status
+smoke_table <- table(breast_clean$pmh_group, breast_clean$smoking_status)
+smoke_test <- chisq.test(smoke_table)
+cat("Smoking Status:\n")
+print(smoke_table)
+cat(sprintf("Chi-square = %.3f, p = %.4f %s\n\n",
+            smoke_test$statistic, smoke_test$p.value,
+            ifelse(smoke_test$p.value < 0.05, "*", "")))
+```
+
+## Answer to Problem 14.65
+
+```{r answer-14-65}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ANSWER TO PROBLEM 14.65\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nQUESTION: Compare current and never PMH users on potential confounders\n\n")
+
+cat("SIGNIFICANT DIFFERENCES (p < 0.05):\n\n")
+
+# Collect significant differences
+sig_diffs <- c()
+
+# Check each variable
+age_test <- t.test(age_baseline ~ pmh_group, data = breast_clean)
+if(age_test$p.value < 0.05) {
+  sig_diffs <- c(sig_diffs, sprintf("Age: p = %.4f", age_test$p.value))
+}
+
+bmi_test <- t.test(bmi ~ pmh_group, data = breast_clean)
+if(bmi_test$p.value < 0.05) {
+  sig_diffs <- c(sig_diffs, sprintf("BMI: p = %.4f", bmi_test$p.value))
+}
+
+if(bbd_test$p.value < 0.05) {
+  sig_diffs <- c(sig_diffs, sprintf("Benign breast disease: p = %.4f", bbd_test$p.value))
+}
+
+if(fh_test$p.value < 0.05) {
+  sig_diffs <- c(sig_diffs, sprintf("Family history: p = %.4f", fh_test$p.value))
+}
+
+if(null_test$p.value < 0.05) {
+  sig_diffs <- c(sig_diffs, sprintf("Nulliparous: p = %.4f", null_test$p.value))
+}
+
+if(smoke_test$p.value < 0.05) {
+  sig_diffs <- c(sig_diffs, sprintf("Smoking status: p = %.4f", smoke_test$p.value))
+}
+
+if(length(sig_diffs) > 0) {
+  for(diff in sig_diffs) {
+    cat("  -", diff, "\n")
+  }
+} else {
+  cat("  None - groups are well balanced\n")
+}
+
+cat("\nCONCLUSION:\n")
+if(length(sig_diffs) > 0) {
+  cat("The PMH groups differ on", length(sig_diffs), "potential confounders.\n")
+  cat("These variables should be controlled for in adjusted analyses.\n")
+} else {
+  cat("The PMH groups are well balanced on baseline characteristics.\n")
+  cat("However, adjustment may still improve precision.\n")
+}
+
+cat("\nCONFOUNDERS TO ADJUST FOR IN PROBLEM 14.66:\n")
+cat("- Age at baseline\n")
+cat("- Reproductive factors (age at menarche, menopause, first birth, parity)\n")
+cat("- Benign breast disease\n")
+cat("- Family history of breast cancer\n")
+cat("- BMI\n")
+cat("- Alcohol use\n")
+cat("- Smoking status\n")
+```
+
+# Problem 14.66: Adjusted Analysis
+
+## Multivariable Cox Model
+
+```{r problem-14-66-adjusted}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 14.66: ADJUSTED ANALYSIS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nAPPROACH: Multivariable Cox proportional hazards model\n")
+cat("Adjusting for potential confounders\n\n")
+
+# Build multivariable model
+cox_adjusted <- coxph(
+  Surv(time, event) ~ pmh_group + age_baseline + age_menarche +
+    age_menopause + nulliparous_yn + parity + bbd_yn + fam_hx_yn +
+    bmi + alcohol + smoking_status,
+  data = breast_clean
+)
+
+cat("Multivariable Cox Model:\n")
+print(summary(cox_adjusted))
+
+# Extract adjusted hazard ratio for PMH
+cat("\n\nADJUSTED HAZARD RATIO FOR PMH:\n")
+hr_adj <- exp(coef(cox_adjusted)["pmh_groupCurrent User"])
+ci_adj <- exp(confint(cox_adjusted)["pmh_groupCurrent User", ])
+
+cat(sprintf("Adjusted HR = %.3f (95%% CI: %.3f - %.3f)\n",
+            hr_adj, ci_adj[1], ci_adj[2]))
+
+cat("\n\nComparison: Unadjusted vs Adjusted:\n")
+cat(sprintf("Unadjusted HR: %.3f (95%% CI: %.3f - %.3f)\n",
+            hr_63, ci_63[1], ci_63[2]))
+cat(sprintf("Adjusted HR:   %.3f (95%% CI: %.3f - %.3f)\n",
+            hr_adj, ci_adj[1], ci_adj[2]))
+
+pct_change <- abs((hr_adj - hr_63) / hr_63) * 100
+cat(sprintf("Change: %.1f%%\n", pct_change))
+
+if(pct_change > 10) {
+  cat("⚠ Substantial confounding detected (>10% change)\n")
+} else {
+  cat("✓ Minimal confounding (<10% change)\n")
+}
+```
+
+## Examine Other Risk Factors
+
+```{r other-risk-factors}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("OTHER BREAST CANCER RISK FACTORS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Extract all hazard ratios
+hr_all <- tidy(cox_adjusted, exponentiate = TRUE, conf.int = TRUE)
+
+cat("\nHazard Ratios for All Variables:\n\n")
+for(i in 1:nrow(hr_all)) {
+  sig_marker <- ifelse(hr_all$p.value[i] < 0.05, "*", " ")
+  cat(sprintf("%-30s HR = %.3f (95%% CI: %.3f - %.3f) p = %.4f %s\n",
+              hr_all$term[i],
+              hr_all$estimate[i],
+              hr_all$conf.low[i],
+              hr_all$conf.high[i],
+              hr_all$p.value[i],
+              sig_marker))
+}
+
+cat("\n* = p < 0.05\n")
+
+# Identify significant risk factors
+sig_factors <- hr_all %>% filter(p.value < 0.05)
+cat("\n\nStatistically Significant Risk Factors:\n")
+if(nrow(sig_factors) > 0) {
+  for(i in 1:nrow(sig_factors)) {
+    direction <- ifelse(sig_factors$estimate[i] > 1, "increases", "decreases")
+    cat(sprintf("  - %s: %s risk\n", sig_factors$term[i], direction))
+  }
+} else {
+  cat("  None at p < 0.05 level\n")
+}
+```
+
+## Answer to Problem 14.66
+
+```{r answer-14-66}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ANSWER TO PROBLEM 14.66\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nQUESTION: Compare PMH groups adjusting for confounders\n\n")
+
+cat("RESULTS:\n\n")
+
+# Extract p-value first
+p_adj <- summary(cox_adjusted)$coefficients["pmh_groupCurrent User", "Pr(>|z|)"]
+
+cat("Adjusted Hazard Ratio (Current vs Never PMH):\n")
+cat(sprintf("  HR = %.3f (95%% CI: %.3f - %.3f)\n", hr_adj, ci_adj[1], ci_adj[2]))
+cat(sprintf("  P-value: %.4f
+", p_adj))
+
+cat("\nAdjustment Variables:\n")
+cat("  - Age at baseline\n")
+cat("  - Age at menarche, menopause\n")
+cat("  - Nulliparous status, parity\n")
+cat("  - Benign breast disease\n")
+cat("  - Family history\n")
+cat("  - BMI, alcohol use\n")
+cat("  - Smoking status\n")
+
+cat("\nCONCLUSION:\n")
+if(p_adj < 0.05) {
+  cat("After adjusting for confounders, there IS a statistically significant\n")
+  cat("association between current PMH use and breast cancer incidence (p < 0.05).\n")
+  if(hr_adj > 1) {
+    cat(sprintf("\nCurrent PMH users have %.0f%% higher risk compared to never users.\n",
+                (hr_adj - 1) * 100))
+  }
+} else {
+  cat("After adjusting for confounders, there is NO statistically significant\n")
+  cat("association between current PMH use and breast cancer incidence (p >= 0.05).\n")
+}
+
+cat("\nIMPACT OF ADJUSTMENT:\n")
+cat(sprintf("The hazard ratio changed by %.1f%% after adjustment.\n", pct_change))
+if(pct_change > 10) {
+  cat("This suggests meaningful confounding by baseline characteristics.\n")
+} else {
+  cat("This suggests minimal confounding - groups were relatively balanced.\n")
+}
+```
+
+# Problem 14.67: Interaction Effects
+
+## Test Interactions with PMH
+
+```{r problem-14-67-interactions}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("PROBLEM 14.67: INTERACTION EFFECTS\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nTesting for effect modification (interaction) between PMH and other risk factors\n\n")
+
+# Test key interactions
+interaction_results <- list()
+
+# 1. PMH × Age
+cat("1. PMH × Age:\n")
+cox_int_age <- coxph(
+  Surv(time, event) ~ pmh_group * age_baseline + age_menarche +
+    age_menopause + nulliparous_yn + parity + bbd_yn + fam_hx_yn +
+    bmi + alcohol + smoking_status,
+  data = breast_clean
+)
+int_age_p <- summary(cox_int_age)$coefficients["pmh_groupCurrent User:age_baseline", "Pr(>|z|)"]
+cat(sprintf("   Interaction p-value: %.4f %s\n\n",
+            int_age_p, ifelse(int_age_p < 0.05, "*", "")))
+interaction_results$age <- int_age_p
+
+# 2. PMH × Family History
+cat("2. PMH × Family History:\n")
+cox_int_fh <- coxph(
+  Surv(time, event) ~ pmh_group * fam_hx_yn + age_baseline + age_menarche +
+    age_menopause + nulliparous_yn + parity + bbd_yn +
+    bmi + alcohol + smoking_status,
+  data = breast_clean
+)
+int_fh_p <- summary(cox_int_fh)$coefficients["pmh_groupCurrent User:fam_hx_ynYes", "Pr(>|z|)"]
+cat(sprintf("   Interaction p-value: %.4f %s\n\n",
+            int_fh_p, ifelse(int_fh_p < 0.05, "*", "")))
+interaction_results$fam_history <- int_fh_p
+
+# 3. PMH × BMI
+cat("3. PMH × BMI:\n")
+cox_int_bmi <- coxph(
+  Surv(time, event) ~ pmh_group * bmi + age_baseline + age_menarche +
+    age_menopause + nulliparous_yn + parity + bbd_yn + fam_hx_yn +
+    alcohol + smoking_status,
+  data = breast_clean
+)
+int_bmi_p <- summary(cox_int_bmi)$coefficients["pmh_groupCurrent User:bmi", "Pr(>|z|)"]
+cat(sprintf("   Interaction p-value: %.4f %s\n\n",
+            int_bmi_p, ifelse(int_bmi_p < 0.05, "*", "")))
+interaction_results$bmi <- int_bmi_p
+
+# 4. PMH × Benign Breast Disease
+cat("4. PMH × Benign Breast Disease:\n")
+cox_int_bbd <- coxph(
+  Surv(time, event) ~ pmh_group * bbd_yn + age_baseline + age_menarche +
+    age_menopause + nulliparous_yn + parity + fam_hx_yn +
+    bmi + alcohol + smoking_status,
+  data = breast_clean
+)
+int_bbd_p <- summary(cox_int_bbd)$coefficients["pmh_groupCurrent User:bbd_ynYes", "Pr(>|z|)"]
+cat(sprintf("   Interaction p-value: %.4f %s\n\n",
+            int_bbd_p, ifelse(int_bbd_p < 0.05, "*", "")))
+interaction_results$bbd <- int_bbd_p
+
+# 5. PMH × Nulliparity
+cat("5. PMH × Nulliparity:\n")
+cox_int_null <- coxph(
+  Surv(time, event) ~ pmh_group * nulliparous_yn + age_baseline + age_menarche +
+    age_menopause + parity + bbd_yn + fam_hx_yn +
+    bmi + alcohol + smoking_status,
+  data = breast_clean
+)
+int_null_p <- summary(cox_int_null)$coefficients["pmh_groupCurrent User:nulliparous_ynNulliparous", "Pr(>|z|)"]
+cat(sprintf("   Interaction p-value: %.4f %s\n\n",
+            int_null_p, ifelse(int_null_p < 0.05, "*", "")))
+interaction_results$nulliparous <- int_null_p
+```
+
+## Stratified Analyses for Significant Interactions
+
+```{r stratified-analyses}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("STRATIFIED ANALYSES\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Check if any interactions are significant
+sig_interactions <- names(interaction_results)[sapply(interaction_results, function(p) p < 0.10)]
+
+if(length(sig_interactions) > 0) {
+  cat("\nInteractions with p < 0.10:\n")
+  for(int_var in sig_interactions) {
+    cat(sprintf("  - PMH × %s (p = %.4f)\n", int_var, interaction_results[[int_var]]))
+  }
+
+  cat("\n\nPerforming stratified analyses...\n")
+
+  # Example: Stratify by family history if significant
+  if("fam_history" %in% sig_interactions) {
+    cat("\n\nSTRATIFIED BY FAMILY HISTORY:\n\n")
+
+    # No family history
+    cox_fh_no <- coxph(Surv(time, event) ~ pmh_group,
+                       data = breast_clean %>% filter(fam_history == 0))
+    hr_fh_no <- exp(coef(cox_fh_no))
+    ci_fh_no <- exp(confint(cox_fh_no))
+
+    cat("No Family History:\n")
+    cat(sprintf("  HR = %.3f (95%% CI: %.3f - %.3f)\n",
+                hr_fh_no, ci_fh_no[1], ci_fh_no[2]))
+
+    # Family history present
+    cox_fh_yes <- coxph(Surv(time, event) ~ pmh_group,
+                        data = breast_clean %>% filter(fam_history == 1))
+    hr_fh_yes <- exp(coef(cox_fh_yes))
+    ci_fh_yes <- exp(confint(cox_fh_yes))
+
+    cat("\nFamily History Present:\n")
+    cat(sprintf("  HR = %.3f (95%% CI: %.3f - %.3f)\n",
+                hr_fh_yes, ci_fh_yes[1], ci_fh_yes[2]))
+
+    cat(sprintf("\nRatio of HRs: %.3f\n", hr_fh_yes / hr_fh_no))
+  }
+
+} else {
+  cat("\nNo significant interactions detected at p < 0.10 level.\n")
+  cat("PMH effect appears consistent across subgroups.\n")
+}
+```
+
+## Answer to Problem 14.67
+
+```{r answer-14-67}
+cat("\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("ANSWER TO PROBLEM 14.67\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+cat("\nQUESTION: Are there interaction effects between PMH and other risk factors?\n\n")
+
+cat("INTERACTIONS TESTED:\n\n")
+
+interaction_table <- data.frame(
+  Interaction = names(interaction_results),
+  P_Value = sprintf("%.4f", unlist(interaction_results)),
+  Significant = ifelse(unlist(interaction_results) < 0.05, "Yes*", "No")
+)
+
+print(kable(interaction_table, format = "simple"))
+
+cat("\n* = p < 0.05\n")
+
+cat("\nCONCLUSION:\n")
+sig_int_05 <- sum(unlist(interaction_results) < 0.05)
+if(sig_int_05 > 0) {
+  cat(sprintf("There ARE %d statistically significant interaction(s) at p < 0.05.\n", sig_int_05))
+  cat("\nThis suggests that the effect of PMH on breast cancer risk differs\n")
+  cat("depending on the level of other risk factors (effect modification).\n")
+
+  cat("\nSignificant interactions:\n")
+  for(int_var in names(interaction_results)) {
+    if(interaction_results[[int_var]] < 0.05) {
+      cat(sprintf("  - PMH × %s\n", int_var))
+    }
+  }
+} else {
+  cat("There are NO statistically significant interactions at p < 0.05.\n")
+  cat("\nThis suggests that the effect of PMH on breast cancer risk is relatively\n")
+  cat("consistent across different levels of other risk factors.\n")
+  cat("\nThe main effect model (Problem 14.66) is appropriate.\n")
+}
+```
+
+# Comprehensive Summary
+
+```{r comprehensive-summary}
+cat("\n\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+cat("COMPREHENSIVE SUMMARY\n")
+cat("=" %>% paste(rep("=", 70), collapse = "") %>% paste("=\n", sep = ""))
+
+# Create summary table
+summary_table <- data.frame(
+  Problem = c("14.63", "14.64", "14.65", "14.66", "14.67"),
+  Analysis = c(
+    "PMH vs No PMH (unadjusted)",
+    "Duration dose-response",
+    "Compare groups on confounders",
+    "PMH vs No PMH (adjusted)",
+    "Interaction effects"
+  ),
+  Key_Result = c(
+    sprintf("HR=%.2f, p=%.4f", hr_63, p_value_63),
+    sprintf("Trend p=%.4f", summary(cox_trend)$coefficients[5]),
+    sprintf("%d significant diffs", length(sig_diffs)),
+    sprintf("Adj HR=%.2f, p=%.4f", hr_adj, p_adj),
+    sprintf("%d significant interactions", sig_int_05)
+  )
+)
+
+print(kable(summary_table, format = "simple"))
+
+cat("\n\nKEY FINDINGS:\n\n")
+
+cat("1. PMH Effect on Breast Cancer:\n")
+cat(sprintf("   Unadjusted HR: %.3f (p = %.4f)\n", hr_63, p_value_63))
+cat(sprintf("   Adjusted HR: %.3f (p = %.4f)\n", hr_adj, p_adj))
+
+cat("\n2. Dose-Response Relationship:\n")
+cat(sprintf("   HR per month of use: %.4f (p = %.4f)\n",
+            exp(coef(cox_trend)), summary(cox_trend)$coefficients[5]))
+
+cat("\n3. Baseline Balance:\n")
+if(length(sig_diffs) > 0) {
+  cat(sprintf("   Groups differ on %d confounders\n", length(sig_diffs)))
+} else {
+  cat("   Groups are well balanced\n")
+}
+
+cat("\n4. Effect Modification:\n")
+if(sig_int_05 > 0) {
+  cat(sprintf("   %d significant interaction(s) detected\n", sig_int_05))
+} else {
+  cat("   No significant interactions\n")
+}
+
+cat("\n5. Clinical Implications:\n")
+if(hr_adj > 1 && p_adj < 0.05) {
+  cat("   - Current PMH use is associated with increased breast cancer risk\n")
+  cat("   - Risk appears to increase with longer duration of use\n")
+  cat("   - Effect persists after adjusting for other risk factors\n")
+} else {
+  cat("   - No significant association detected\n")
+  cat("   - Additional follow-up or larger sample may be needed\n")
+}
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
